@@ -1,0 +1,3 @@
+# The oldest macOS RustyBar runs on, for Rust and for the C of Lua alike
+[env]
+MACOSX_DEPLOYMENT_TARGET = "13.0"

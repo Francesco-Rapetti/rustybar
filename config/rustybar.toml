@@ -1,0 +1,62 @@
+# RustyBar: https://github.com/Francesco-Rapetti/rustybar
+# Every key below shows its default: delete what you don't change. The bar reloads by itself when
+# you save this file or a widget in widgets/*.lua.
+
+[bar]
+height = 40          # the bar; the pills are centered in it
+margin = 8           # from the screen edges to the first and last pill
+topmost = false      # above the macOS menu bar when it slides in
+offset = 0           # moves the bar down, e.g. to try RustyBar under another bar
+popup_gap = 6        # between the pills and their popups
+
+[theme]
+preset = "catppuccin-mocha"   # or "catppuccin-latte"
+primary = "mauve"             # the accent: focused workspace, today, actions, sliders and bars
+font = "Helvetica Neue"
+font_size = 13
+small_size = 11
+icon_size = 14
+pill_height = 28
+pill_radius = 10
+pill_border = 2
+pill_padding = 10
+item_gap = 8
+popup_radius = 10
+popup_opacity = 0.9
+popup_blur = true
+animations = true             # they also stop with Reduce Motion in System Settings
+
+# Override or add palette colors, by name or hex:
+# [theme.colors]
+# base = "#1e1e2e"
+
+[layout]
+left = ["apple", "aerospace", "front_app"]
+center = []
+right = ["system", "battery", "clock"]
+
+[displays]
+compact_on_notch = true   # icons and short times on screens with a notch
+hide_on_notch = []
+large_width = 3840        # from this width a screen is "large"
+
+# Options of each widget, by its name in [layout]:
+#
+# [widgets.clock]
+# date = "EEE dd/MM"      # Unicode date pattern; the time follows the region of the Mac
+#
+# [widgets.apple]
+# icon = "apple.logo"     # any SF Symbol
+#
+# [widgets.aerospace]
+# workspaces = ["1", "2", "3"]   # a fixed list; by default the ones AeroSpace knows
+# hide_empty = true              # hide the empty ones, except the focused one
+#
+# [widgets.system]
+# warning = 75            # CPU and GPU turn yellow from here
+# critical = 90           # and red from here
+#
+# Two widgets of the same kind: give the second a name of its own and its type.
+# [widgets.clock_utc]
+# type = "clock"
+# timezone = "UTC"

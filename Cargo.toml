@@ -1,0 +1,31 @@
+[package]
+name = "rustybar"
+version = "0.1.0"
+edition = "2024"
+description = "A light, animated, scriptable status bar for macOS"
+license = "MIT"
+
+[dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-quartz-core = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-core-text = "0.3"
+block2 = "0.6"
+dispatch2 = "0.3"
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.1.8"
+mlua = { version = "0.12.2", features = ["lua54", "vendored"] }
+notify = "8"
+objc2-io-kit = "0.3.2"
+objc2-event-kit = "0.3.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
