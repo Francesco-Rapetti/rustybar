@@ -440,6 +440,7 @@ impl App {
             }
         }
         self.render_popup(animate);
+        crate::gfx::trim_cache(256);
         if !self.first_frame_logged && !self.bars.is_empty() {
             self.first_frame_logged = true;
             crate::log(&format!("first frame in {} ms", self.started.elapsed().as_millis()));

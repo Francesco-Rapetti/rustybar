@@ -1,0 +1,6 @@
+[
+  {"title": "Standup", "start": -50, "end": -35, "meet": true},
+  {"title": "Design review", "start": 12, "end": 42, "meet": true},
+  {"title": "Lunch with Sam", "start": 90, "end": 150},
+  {"title": "Release day", "all_day": true}
+]

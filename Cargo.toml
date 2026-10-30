@@ -23,6 +23,9 @@ mlua = { version = "0.12.2", features = ["lua54", "vendored"] }
 notify = "8"
 objc2-io-kit = "0.3.2"
 objc2-event-kit = "0.3.2"
+objc2-core-wlan = "0.3"
+objc2-io-bluetooth = "0.3"
+objc2-core-location = "0.3"
 
 [profile.release]
 lto = true

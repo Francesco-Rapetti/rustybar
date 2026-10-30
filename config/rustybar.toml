@@ -33,7 +33,7 @@ animations = true             # they also stop with Reduce Motion in System Sett
 [layout]
 left = ["apple", "aerospace", "front_app"]
 center = []
-right = ["system", "battery", "clock"]
+right = ["audio", "network", "events", "system", "battery", "clock", "notifications"]
 
 [displays]
 compact_on_notch = true   # icons and short times on screens with a notch
@@ -55,6 +55,16 @@ large_width = 3840        # from this width a screen is "large"
 # [widgets.system]
 # warning = 75            # CPU and GPU turn yellow from here
 # critical = 90           # and red from here
+#
+# [widgets.events]
+# soon = 30               # minutes before an event when its time turns yellow
+# sooner = 15             # peach
+# imminent = 5            # red
+#
+# [widgets.notifications]
+# apps = ["com.tinyspeck.slackmacgap", "Mail"]   # Dock badges to count: bundle ids or Dock names
+# brewfile = "~/Brewfile"  # the Homebrew packages to check for updates, every hour
+# brew = true              # or all of them
 #
 # Two widgets of the same kind: give the second a name of its own and its type.
 # [widgets.clock_utc]

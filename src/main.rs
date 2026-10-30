@@ -9,6 +9,7 @@ mod i18n;
 mod iokit;
 mod ipc;
 mod lua;
+mod mock;
 mod runtime;
 mod service;
 mod surface;

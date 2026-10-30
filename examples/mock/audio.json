@@ -1,0 +1,17 @@
+{
+  "outputs": [
+    {"uid": "builtin-out", "name": "MacBook Pro Speakers", "transport": "builtin", "type": "speaker", "default": true},
+    {"uid": "AA-BB-CC-DD-EE-01:output", "name": "AirPods Pro", "transport": "bluetooth", "type": "headphones", "battery": 15},
+    {"uid": "display-1", "name": "Studio Display", "transport": "display", "type": "speaker"}
+  ],
+  "inputs": [
+    {"uid": "builtin-in", "name": "MacBook Pro Microphone", "transport": "builtin", "type": "microphone", "default": true},
+    {"uid": "AA-BB-CC-DD-EE-01:input", "name": "AirPods Pro", "transport": "bluetooth", "type": "headset", "battery": 15}
+  ],
+  "output_volume": {"level": 40},
+  "input_volume": "fixed",
+  "bluetooth": [
+    {"name": "AirPods Pro", "address": "AA-BB-CC-DD-EE-01", "type": "headphones"},
+    {"name": "Boom Speaker", "address": "AA-BB-CC-DD-EE-02", "type": "speaker"}
+  ]
+}

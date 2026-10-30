@@ -192,20 +192,26 @@ enum Key {
 }
 
 thread_local! {
+    /// The bitmaps drawn since the last trim, and in `OLD` the ones from before it: a hit there
+    /// moves back here, so what is still on screen stays cached and what moved on (the minutes of
+    /// a clock, past CPU loads) goes at the next trim.
     static CACHE: RefCell<HashMap<Key, Option<Bitmap>>> = RefCell::new(HashMap::new());
+    static OLD: RefCell<HashMap<Key, Option<Bitmap>>> = RefCell::new(HashMap::new());
     static FONTS: RefCell<HashMap<FontSpec, CFRetained<CTFont>>> = RefCell::new(HashMap::new());
     static METRICS: RefCell<HashMap<(String, FontSpec), TextMetrics>> = RefCell::new(HashMap::new());
 }
 
-/// Drops all cached bitmaps whose key wasn't used since the last call: called after a full render
-/// so that, for example, the digits of a clock that moved on don't pile up.
+/// Keeps the caches bounded, called after every render: once more than `max_entries` bitmaps were
+/// drawn since the last trim, they become the old ones and the old ones are dropped. 0 drops
+/// everything (a reload).
 pub fn trim_cache(max_entries: usize) {
-    CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() > max_entries {
-            c.clear();
-        }
-    });
+    if CACHE.with(|c| c.borrow().len()) > max_entries {
+        let recent = CACHE.with(|c| c.take());
+        OLD.with(|o| o.replace(recent));
+    }
+    if max_entries == 0 {
+        OLD.with(|o| o.borrow_mut().clear());
+    }
     METRICS.with(|m| {
         let mut m = m.borrow_mut();
         if m.len() > max_entries * 4 {
@@ -287,7 +293,10 @@ fn cached(key: Key, make: impl FnOnce() -> Option<Bitmap>) -> Option<Bitmap> {
     if let Some(hit) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
         return hit;
     }
-    let made = make();
+    let made = match OLD.with(|o| o.borrow_mut().remove(&key)) {
+        Some(old) => old,
+        None => make(),
+    };
     CACHE.with(|c| c.borrow_mut().insert(key, made.clone()));
     made
 }
@@ -303,23 +312,81 @@ fn draw_nsimage(image: &NSImage, w: f64, h: f64, scale: f64) -> Option<Bitmap> {
     finish(&ctx, w, h)
 }
 
+/// `wifi@0.5`: a symbol with a variable value, which lights part of it (two bars of three).
+fn symbol_image(name: &str, size: f64, weight: Weight, color: Rgba) -> Option<Retained<NSImage>> {
+    let base = match name.split_once('@') {
+        Some((name, value)) => NSImage::imageWithSystemSymbolName_variableValue_accessibilityDescription(
+            &NSString::from_str(name),
+            value.parse().unwrap_or(1.0),
+            None,
+        )?,
+        None => NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None)?,
+    };
+    let sized = NSImageSymbolConfiguration::configurationWithPointSize_weight(size, weight.ns());
+    let colors = NSArray::from_retained_slice(&[color.ns()]);
+    let palette = NSImageSymbolConfiguration::configurationWithPaletteColors(&colors);
+    let config = sized.configurationByApplyingConfiguration(&palette);
+    base.imageWithSymbolConfiguration(&config)
+}
+
 /// An SF Symbol at `size` points and `weight`, in `color`. The bitmap has the symbol's own
 /// proportions: its height follows the point size, as for text.
+///
+/// `laptopcomputer+speaker.wave.2.fill+mic.fill` is a symbol with badges: the others, small, at
+/// its bottom right, cut out of it with a gap around them (a Mac that plays and records).
 pub fn symbol(name: &str, size: f64, weight: Weight, color: Rgba, scale: f64) -> Option<Bitmap> {
     let key = Key::Symbol(name.to_string(), (size * 100.0) as u32, weight, color.key(), (scale * 100.0) as u32);
     cached(key, || {
         let _mtm = MainThreadMarker::new()?;
-        let base = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-            &NSString::from_str(name),
-            None,
-        )?;
-        let sized = NSImageSymbolConfiguration::configurationWithPointSize_weight(size, weight.ns());
-        let colors = NSArray::from_retained_slice(&[color.ns()]);
-        let palette = NSImageSymbolConfiguration::configurationWithPaletteColors(&colors);
-        let config = sized.configurationByApplyingConfiguration(&palette);
-        let image = base.imageWithSymbolConfiguration(&config)?;
+        let mut names = name.split('+');
+        let base = names.next()?;
+        let image = symbol_image(base, size, weight, color)?;
+        let badges: Vec<Retained<NSImage>> = {
+            let names: Vec<&str> = names.collect();
+            let badge_size = size * if names.len() > 1 { 0.57 } else { 0.7 };
+            names.iter().filter_map(|b| symbol_image(b, badge_size, weight, color)).collect()
+        };
         let NSSize { width, height } = image.size();
-        draw_nsimage(&image, width.ceil(), height.ceil(), scale)
+        if badges.is_empty() {
+            return draw_nsimage(&image, width.ceil(), height.ceil(), scale);
+        }
+        // The badges' corner sticks out a little to the right and below the symbol
+        let unit = size / 14.0;
+        let (gap, out) = (1.2 * unit, 0.4 * unit);
+        let sizes: Vec<NSSize> = badges.iter().map(|b| b.size()).collect();
+        let badges_width = sizes.iter().map(|s| s.width).sum::<f64>() + gap * (sizes.len() - 1) as f64;
+        // On glasses a badge would hide a lens: they go further right
+        let right = if base == "eyeglasses" { badges_width * 0.6 } else { out };
+        let w = (width + right).max(badges_width).ceil();
+        let h = (height + out).max(sizes.iter().map(|s| s.height).fold(0.0, f64::max)).ceil();
+        let ctx = bitmap_context(w, h, scale)?;
+        let ns_ctx = NSGraphicsContext::graphicsContextWithCGContext_flipped(&ctx, false);
+        NSGraphicsContext::saveGraphicsState_class();
+        NSGraphicsContext::setCurrentContext(Some(&ns_ctx));
+        image.drawInRect(NSRect::new(CGPoint::new(0.0, out), CGSize::new(width, height)));
+        let mut x = w;
+        let places: Vec<NSRect> = sizes
+            .iter()
+            .map(|s| {
+                x -= s.width;
+                let r = NSRect::new(CGPoint::new(x, 0.0), *s);
+                x -= gap;
+                r
+            })
+            .collect();
+        // The gap: each badge, moved around itself, erases what's under it
+        for (badge, r) in badges.iter().zip(&places) {
+            for i in 0..16 {
+                let a = i as f64 * std::f64::consts::PI / 8.0;
+                let moved = NSRect::new(CGPoint::new(r.origin.x + gap * a.cos(), r.origin.y + gap * a.sin()), r.size);
+                badge.drawInRect_fromRect_operation_fraction(moved, NSRect::ZERO, objc2_app_kit::NSCompositingOperation::DestinationOut, 1.0);
+            }
+        }
+        for (badge, r) in badges.iter().zip(&places) {
+            badge.drawInRect(*r);
+        }
+        NSGraphicsContext::restoreGraphicsState_class();
+        finish(&ctx, w, h)
     })
 }
 
@@ -335,11 +402,19 @@ pub fn app_icon(bundle_id: &str, size: f64, scale: f64) -> Option<Bitmap> {
     })
 }
 
-/// An image file (PNG, PDF, SVG…) scaled to `w`×`h` points, optionally tinted with `tint`.
+/// An image file (PNG, PDF, SVG…) scaled to `w`×`h` points, or an image of an app,
+/// `/Applications/Some.app#name` (one of its resources, as `NSBundle.imageForResource` finds it).
 pub fn image_file(path: &str, w: f64, h: f64, scale: f64) -> Option<Bitmap> {
     let key = Key::File(path.to_string(), (w * 100.0) as u32, (h * 100.0) as u32, (scale * 100.0) as u32);
     cached(key, || {
-        let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &NSString::from_str(path))?;
+        let image = match path.split_once(".app#") {
+            Some((app, name)) => {
+                let bundle = objc2_foundation::NSBundle::bundleWithPath(&NSString::from_str(&format!("{app}.app")))?;
+                let image: Option<Retained<NSImage>> = unsafe { objc2::msg_send![&*bundle, imageForResource: &*NSString::from_str(name)] };
+                image?
+            }
+            None => NSImage::initWithContentsOfFile(NSImage::alloc(), &NSString::from_str(path))?,
+        };
         draw_nsimage(&image, w, h, scale)
     })
 }

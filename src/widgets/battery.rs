@@ -18,7 +18,7 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2::{AnyThread, msg_send};
-use objc2_foundation::{NSArray, NSProcessInfo, NSString, NSUserDefaults, ns_string};
+use objc2_foundation::{NSProcessInfo, NSString, NSUserDefaults, ns_string};
 
 use super::{Cx, Event, Rx, Widget};
 use crate::gfx::{Rgba, Weight};
@@ -366,13 +366,10 @@ fn capitalize(s: &str) -> String {
 
 // IOKit and libnotify
 
-use crate::iokit::{CFTypeRef, Dict, borrowed, cf, number, owned, string};
+use crate::iokit::{CFTypeRef, Dict, number, owned, string};
 
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
-    fn IOPSCopyPowerSourcesInfo() -> CFTypeRef;
-    fn IOPSCopyPowerSourcesList(blob: CFTypeRef) -> CFTypeRef;
-    fn IOPSGetPowerSourceDescription(blob: CFTypeRef, ps: CFTypeRef) -> CFTypeRef;
     fn IOPSCopyExternalPowerAdapterDetails() -> CFTypeRef;
     fn IOPSNotificationCreateRunLoopSource(callback: extern "C" fn(*mut c_void), context: *mut c_void) -> CFTypeRef;
 }
@@ -425,15 +422,7 @@ impl Drop for RunLoopSource {
 
 /// The internal battery as IOKit describes it, as `pmset -g ps` does.
 fn internal_battery() -> Option<Retained<Dict>> {
-    unsafe {
-        let info: Retained<AnyObject> = owned(IOPSCopyPowerSourcesInfo())?;
-        let info_ref = cf(&*info);
-        let list: Retained<NSArray<AnyObject>> = owned(IOPSCopyPowerSourcesList(info_ref))?;
-        list.iter().find_map(|ps| {
-            let d: Retained<Dict> = borrowed(IOPSGetPowerSourceDescription(info_ref, cf(&*ps)))?;
-            (string(&d, ns_string!("Type")).as_deref() == Some("InternalBattery")).then_some(d)
-        })
-    }
+    crate::iokit::power_sources(false).into_iter().find(|d| string(d, ns_string!("Type")).as_deref() == Some("InternalBattery"))
 }
 
 fn cycle_count() -> Option<i64> {

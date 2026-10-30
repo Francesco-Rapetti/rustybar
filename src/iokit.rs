@@ -18,6 +18,23 @@ unsafe extern "C" {
     fn IOIteratorNext(iterator: u32) -> u32;
     fn IORegistryEntryCreateCFProperty(entry: u32, key: CFTypeRef, allocator: CFTypeRef, options: u32) -> CFTypeRef;
     fn IOObjectRelease(object: u32) -> i32;
+    fn IOPSCopyPowerSourcesInfo() -> CFTypeRef;
+    fn IOPSCopyPowerSourcesByType(kind: i32) -> CFTypeRef;
+    fn IOPSCopyPowerSourcesList(blob: CFTypeRef) -> CFTypeRef;
+    fn IOPSGetPowerSourceDescription(blob: CFTypeRef, ps: CFTypeRef) -> CFTypeRef;
+}
+
+/// The power sources as `pmset -g ps` lists them (the internal battery, a UPS) or, with
+/// `accessories`, as `pmset -g accps` does: the devices that report their battery, such as mice,
+/// keyboards and headphones.
+pub fn power_sources(accessories: bool) -> Vec<Retained<Dict>> {
+    unsafe {
+        let blob = if accessories { IOPSCopyPowerSourcesByType(4) } else { IOPSCopyPowerSourcesInfo() };
+        let Some(info) = owned::<AnyObject>(blob) else { return Vec::new() };
+        let info_ref = cf(&*info);
+        let Some(list) = owned::<objc2_foundation::NSArray<AnyObject>>(IOPSCopyPowerSourcesList(info_ref)) else { return Vec::new() };
+        list.iter().filter_map(|ps| borrowed::<Dict>(IOPSGetPowerSourceDescription(info_ref, cf(&*ps)))).collect()
+    }
 }
 
 /// A CF object we own (a Copy or Create function's).
@@ -110,3 +127,4 @@ pub fn services(class: &std::ffi::CStr) -> Vec<Entry> {
     }
     drain(it)
 }
+

@@ -4,8 +4,10 @@ A status bar for macOS, written in Rust: one process that reads everything in-pr
 driven by events, with Core Animation for the animations and popups that you can build out of
 real components (grids, scrolling lists, sliders, toggles, progress bars) in Lua.
 
-At rest, with the built-in widgets, it uses about **15 MB** of memory, **~0% CPU**, starts **no
-processes**, and draws its first frame in **about 40 ms**.
+At rest, with every built-in widget in the bar, it uses about **18 MB** of memory and **~0.1%
+CPU** in a single process, and draws its first frame in **about 50 ms**. For comparison, the
+SketchyBar setup it replaces took about 176 MB in 15 processes and ~1.3% CPU, and started some 150
+processes a minute.
 
 ## Widgets
 
@@ -17,11 +19,22 @@ processes**, and draws its first frame in **about 40 ms**.
 | `system` | CPU, GPU and memory, colored by load and memory pressure | Usage bars, details and the top apps for each, Activity Monitor |
 | `battery` | The charge, with an icon for its state | State, Charge Limit (macOS 26.4+) and Charge to Full Now, battery health, Battery settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
+| `audio` | The output and the input in use, with the battery of Bluetooth devices; the Mac's own speakers and microphone, or both halves of a headset, show as one | The volume of each, the devices to switch to, the paired Bluetooth headphones and speakers to connect or disconnect |
+| `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | Addresses (local and public), router and VPN, wired services, Wi-Fi on and off, the nearby networks to join (the password is asked once and kept in the keychain) |
+| `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | Today's events; a click joins the Google Meet call or shows the event in Calendar |
+| `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, the packages to update one by one or all at once |
 
-Widgets that read nothing new until something changes don't poll: AeroSpace events come from its
-socket, the battery from IOKit and PowerUIAgent notifications, the front app from NSWorkspace,
-the clock from a timer aligned to the minute. CPU, GPU and memory are read every 2 seconds
-in-process, and the bar is redrawn only when a value changes.
+Widgets don't poll what macOS can tell them: AeroSpace events come from its socket, the battery
+from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, the sound from CoreAudio
+listeners, the network from the System Configuration store, the calendars from EventKit, the clock
+from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
+memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility). The bar is redrawn
+only when a value changes.
+
+A few things still run a process: `brew outdated` every hour and on wake (only with `brewfile` or
+`brew = true`), `system_profiler` for AirPods batteries and paired devices when the audio popup
+opens and every 2 minutes while a Bluetooth device is in use, and `curl` for the public IP when the
+network popup opens.
 
 Until a widget has its first data, the bar shows its last known state, dimmed, or a shimmering
 placeholder the very first time. A widget that fails shows an error pill; the rest of the bar
@@ -44,6 +57,16 @@ its log is `~/Library/Logs/rustybar.log`. `service uninstall` removes it.
 macOS remembers permissions by code signature. With the default ad hoc signature it asks again
 after every build; `scripts/signing-cert.sh` creates a local signing certificate once, and
 `scripts/bundle.sh` uses it from then on (or set `RUSTYBAR_SIGN_IDENTITY` to a Developer ID).
+
+RustyBar asks for each permission the first time a widget needs it:
+
+| Permission | Widget | For |
+| --- | --- | --- |
+| Calendars | `events` | Today's events (at start) |
+| Location | `network` | The nearby Wi-Fi networks and joining them (when its popup opens); the name of the current network doesn't need it |
+| Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
+| Accessibility | `notifications` | The Dock badges (at start, only with `apps`); without it the rest of the widget works |
+| Automation | `apple`, `clock` | Restart, Shut Down and Log Out; showing a day in Calendar |
 
 To keep the macOS menu bar out of the way, turn on *Automatically hide and show the menu bar* in
 System Settings → Control Center.
@@ -118,6 +141,16 @@ Lua runs inside RustyBar, sandboxed: no `os.execute`, `io.popen` or `os.exit`, a
 takes more than 250 ms is stopped. Anything slow goes through `rb.exec`.
 
 `rustybar check` loads the config and the Lua widgets and reports the first error.
+
+## Made-up data
+
+With `RUSTYBAR_MOCK` set to a folder, the widgets that read personal data (`audio`, `network`,
+`events`, `notifications`) read `<folder>/<widget>.json` instead and their actions do nothing, for
+screenshots and demos. [examples/mock](examples/mock) has one file for each:
+
+```bash
+RUSTYBAR_MOCK=examples/mock target/release/rustybar
+```
 
 ## Command line
 

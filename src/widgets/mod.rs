@@ -12,9 +12,13 @@ use crate::ui::{Action, Align, Node};
 
 pub mod aerospace;
 pub mod apple;
+pub mod audio;
 pub mod battery;
 pub mod clock;
+pub mod events;
 pub mod front_app;
+pub mod network;
+pub mod notifications;
 pub mod system;
 
 /// Something that happened outside the widget.
@@ -202,7 +206,11 @@ pub trait Widget: Any {
 /// Creates the widget of kind `kind` (the name in `[layout]`, or its `type`).
 pub fn create(kind: &str, options: &Options) -> Option<Box<dyn Widget>> {
     Some(match kind {
+        "audio" => Box::new(audio::Audio::new(options)),
+        "network" => Box::new(network::Network::new(options)),
+        "notifications" => Box::new(notifications::Notifications::new(options)),
         "clock" => Box::new(clock::Clock::new(options)),
+        "events" => Box::new(events::Events::new(options)),
         "front_app" => Box::new(front_app::FrontApp::default()),
         "apple" => Box::new(apple::Apple::new(options)),
         "aerospace" => Box::new(aerospace::Aerospace::new(options)),

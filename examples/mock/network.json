@@ -1,0 +1,12 @@
+{
+  "wifi_device": "en0", "wifi_power": true, "primary": "en0", "ssid": "Home", "band": "5",
+  "address": "192.168.1.24", "router": "192.168.1.1", "vpn": "Office", "vpn_address": "10.8.0.2",
+  "wired": [{"name": "USB 10/100/1000 LAN", "enabled": true, "connected": false}],
+  "public_ip": "203.0.113.42",
+  "networks": [
+    {"name": "Home", "level": 3, "security": "personal", "known": true},
+    {"name": "Office Guest", "level": 2, "security": "open", "known": true},
+    {"name": "Corner Cafe", "level": 2, "security": "personal", "known": false},
+    {"name": "Library", "level": 1, "security": "enterprise", "known": false}
+  ]
+}

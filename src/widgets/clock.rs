@@ -32,6 +32,8 @@ pub struct Clock {
     reset: u32,
     first_weekday: u32,
     weekdays: Vec<String>,
+    /// Only the latest chain of minute timers runs: a wake starts a new one.
+    tick: u64,
 }
 
 fn today() -> (i32, u32, u32) {
@@ -121,6 +123,7 @@ impl Clock {
             reset: 0,
             first_weekday,
             weekdays,
+            tick: 0,
         };
         c.tick();
         c
@@ -142,7 +145,13 @@ impl Clock {
             libc::localtime_r(&t, &mut tm);
             60 - tm.tm_sec
         };
-        cx.after::<Clock>(secs as f64 + 0.05, |w, cx| w.schedule(cx));
+        self.tick += 1;
+        let tick = self.tick;
+        cx.after::<Clock>(secs as f64 + 0.05, move |w, cx| {
+            if w.tick == tick {
+                w.schedule(cx);
+            }
+        });
     }
 
     fn month_title(&self, index: i32) -> String {
