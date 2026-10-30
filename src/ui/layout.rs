@@ -46,6 +46,13 @@ impl Layout {
                 }
             }
             Kind::AppIcon { size, .. } => (*size, *size),
+            // One side 0: the image's proportions decide it
+            Kind::Image { path, width, height, tint } if *width == 0.0 || *height == 0.0 => {
+                match gfx::image_file(path, *width, *height, *tint, self.scale) {
+                    Some(b) => (b.width, b.height),
+                    None => (*width, *height),
+                }
+            }
             Kind::Image { width, height, .. } => (*width, *height),
             Kind::Slider { .. } => (120.0, 16.0),
             Kind::Progress { .. } => (60.0, 6.0),

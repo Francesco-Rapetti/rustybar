@@ -10,17 +10,17 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{
-    NSColor, NSFontWeight, NSFontWeightBold, NSFontWeightHeavy, NSFontWeightLight,
+    NSFontWeight, NSFontWeightBold, NSFontWeightHeavy, NSFontWeightLight,
     NSFontWeightMedium, NSFontWeightRegular, NSFontWeightSemibold, NSGraphicsContext, NSImage,
     NSImageSymbolConfiguration, NSWorkspace,
 };
 use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType, CGPoint, CGSize};
 use objc2_core_graphics::{
-    CGBitmapContextCreate, CGBitmapContextCreateImage, CGColor, CGColorSpace, CGContext, CGImage,
-    CGImageAlphaInfo, CGImageByteOrderInfo,
+    CGBitmapContextCreate, CGBitmapContextCreateImage, CGBlendMode, CGColor, CGColorSpace, CGContext,
+    CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
 };
 use objc2_core_text::{CTFont, CTLine, kCTFontAttributeName, kCTForegroundColorAttributeName};
-use objc2_foundation::{NSArray, NSRect, NSSize, NSString};
+use objc2_foundation::{NSRect, NSSize, NSString};
 
 /// A color as straight (not premultiplied) sRGB components, 0..1.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -59,10 +59,6 @@ impl Rgba {
 
     pub fn cg(self) -> CFRetained<CGColor> {
         CGColor::new_srgb(self.0, self.1, self.2, self.3)
-    }
-
-    pub fn ns(self) -> Retained<NSColor> {
-        NSColor::colorWithSRGBRed_green_blue_alpha(self.0, self.1, self.2, self.3)
     }
 
     fn key(self) -> u32 {
@@ -188,7 +184,7 @@ enum Key {
     Text(String, FontSpec, u32, u32),
     Symbol(String, u32, Weight, u32, u32),
     App(String, u32, u32),
-    File(String, u32, u32, u32),
+    File(String, u32, u32, Option<u32>, u32),
 }
 
 thread_local! {
@@ -303,17 +299,36 @@ fn cached(key: Key, make: impl FnOnce() -> Option<Bitmap>) -> Option<Bitmap> {
 
 /// Draws an NSImage filling `w`×`h` points into a new bitmap.
 fn draw_nsimage(image: &NSImage, w: f64, h: f64, scale: f64) -> Option<Bitmap> {
+    draw_tinted(image, w, h, None, scale)
+}
+
+/// Draws an NSImage filling `w`×`h` points, then paints `tint` over it: source atop paints only
+/// where the image is, keeping its antialiased edges.
+fn draw_tinted(image: &NSImage, w: f64, h: f64, tint: Option<Rgba>, scale: f64) -> Option<Bitmap> {
     let ctx = bitmap_context(w, h, scale)?;
     let ns_ctx = NSGraphicsContext::graphicsContextWithCGContext_flipped(&ctx, false);
     NSGraphicsContext::saveGraphicsState_class();
     NSGraphicsContext::setCurrentContext(Some(&ns_ctx));
     image.drawInRect(NSRect::new(CGPoint::new(0.0, 0.0), CGSize::new(w, h)));
     NSGraphicsContext::restoreGraphicsState_class();
+    if let Some(color) = tint {
+        self::tint(&ctx, w, h, color);
+    }
     finish(&ctx, w, h)
 }
 
+/// Paints `color` where the context isn't transparent.
+fn tint(ctx: &CGContext, w: f64, h: f64, color: Rgba) {
+    CGContext::set_blend_mode(Some(ctx), CGBlendMode::SourceAtop);
+    CGContext::set_fill_color_with_color(Some(ctx), Some(&color.cg()));
+    CGContext::fill_rect(Some(ctx), objc2_core_foundation::CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(w, h)));
+}
+
 /// `wifi@0.5`: a symbol with a variable value, which lights part of it (two bars of three).
-fn symbol_image(name: &str, size: f64, weight: Weight, color: Rgba) -> Option<Retained<NSImage>> {
+/// Monochrome, in black: the caller paints it in its color afterwards, which keeps the glyphs that
+/// fill symbols cut out of their shape (the bars of `pause.circle.fill`); a palette of one color
+/// would fill them too.
+fn symbol_image(name: &str, size: f64, weight: Weight) -> Option<Retained<NSImage>> {
     let base = match name.split_once('@') {
         Some((name, value)) => NSImage::imageWithSystemSymbolName_variableValue_accessibilityDescription(
             &NSString::from_str(name),
@@ -323,9 +338,7 @@ fn symbol_image(name: &str, size: f64, weight: Weight, color: Rgba) -> Option<Re
         None => NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None)?,
     };
     let sized = NSImageSymbolConfiguration::configurationWithPointSize_weight(size, weight.ns());
-    let colors = NSArray::from_retained_slice(&[color.ns()]);
-    let palette = NSImageSymbolConfiguration::configurationWithPaletteColors(&colors);
-    let config = sized.configurationByApplyingConfiguration(&palette);
+    let config = sized.configurationByApplyingConfiguration(&NSImageSymbolConfiguration::configurationPreferringMonochrome());
     base.imageWithSymbolConfiguration(&config)
 }
 
@@ -340,15 +353,15 @@ pub fn symbol(name: &str, size: f64, weight: Weight, color: Rgba, scale: f64) ->
         let _mtm = MainThreadMarker::new()?;
         let mut names = name.split('+');
         let base = names.next()?;
-        let image = symbol_image(base, size, weight, color)?;
+        let image = symbol_image(base, size, weight)?;
         let badges: Vec<Retained<NSImage>> = {
             let names: Vec<&str> = names.collect();
             let badge_size = size * if names.len() > 1 { 0.57 } else { 0.7 };
-            names.iter().filter_map(|b| symbol_image(b, badge_size, weight, color)).collect()
+            names.iter().filter_map(|b| symbol_image(b, badge_size, weight)).collect()
         };
         let NSSize { width, height } = image.size();
         if badges.is_empty() {
-            return draw_nsimage(&image, width.ceil(), height.ceil(), scale);
+            return draw_tinted(&image, width.ceil(), height.ceil(), Some(color), scale);
         }
         // The badges' corner sticks out a little to the right and below the symbol
         let unit = size / 14.0;
@@ -386,6 +399,7 @@ pub fn symbol(name: &str, size: f64, weight: Weight, color: Rgba, scale: f64) ->
             badge.drawInRect(*r);
         }
         NSGraphicsContext::restoreGraphicsState_class();
+        tint(&ctx, w, h, color);
         finish(&ctx, w, h)
     })
 }
@@ -403,9 +417,11 @@ pub fn app_icon(bundle_id: &str, size: f64, scale: f64) -> Option<Bitmap> {
 }
 
 /// An image file (PNG, PDF, SVG…) scaled to `w`×`h` points, or an image of an app,
-/// `/Applications/Some.app#name` (one of its resources, as `NSBundle.imageForResource` finds it).
-pub fn image_file(path: &str, w: f64, h: f64, scale: f64) -> Option<Bitmap> {
-    let key = Key::File(path.to_string(), (w * 100.0) as u32, (h * 100.0) as u32, (scale * 100.0) as u32);
+/// `/Applications/Some.app#name` (one of its resources, as `NSBundle.imageForResource` finds it),
+/// in `tint` if given. A height of 0 keeps the image's proportions at width `w`, and a width of 0
+/// at height `h`.
+pub fn image_file(path: &str, w: f64, h: f64, tint: Option<Rgba>, scale: f64) -> Option<Bitmap> {
+    let key = Key::File(path.to_string(), (w * 100.0) as u32, (h * 100.0) as u32, tint.map(|t| t.key()), (scale * 100.0) as u32);
     cached(key, || {
         let image = match path.split_once(".app#") {
             Some((app, name)) => {
@@ -415,6 +431,12 @@ pub fn image_file(path: &str, w: f64, h: f64, scale: f64) -> Option<Bitmap> {
             }
             None => NSImage::initWithContentsOfFile(NSImage::alloc(), &NSString::from_str(path))?,
         };
-        draw_nsimage(&image, w, h, scale)
+        let NSSize { width, height } = image.size();
+        let (w, h) = match (w, h) {
+            (w, 0.0) if width > 0.0 => (w, (w * height / width).round()),
+            (0.0, h) if height > 0.0 => ((h * width / height).round(), h),
+            size => size,
+        };
+        draw_tinted(&image, w, h, tint, scale)
     })
 }

@@ -14,9 +14,12 @@ pub mod aerospace;
 pub mod apple;
 pub mod audio;
 pub mod battery;
+pub mod claude;
 pub mod clock;
+pub mod docker;
 pub mod events;
 pub mod front_app;
+pub mod home;
 pub mod network;
 pub mod notifications;
 pub mod system;
@@ -109,6 +112,7 @@ pub struct Cx<'a> {
 pub enum Effect {
     Redraw,
     ClosePopup,
+    TogglePopup,
 }
 
 impl Cx<'_> {
@@ -119,6 +123,12 @@ impl Cx<'_> {
 
     pub fn close_popup(&mut self) {
         self.effects.push(Effect::ClosePopup);
+    }
+
+    /// Opens this widget's popup on the screen under the mouse, or closes it: for a widget with
+    /// more than one pill, whose click picks what the popup shows first.
+    pub fn toggle_popup(&mut self) {
+        self.effects.push(Effect::TogglePopup);
     }
 
     /// Calls `f` on this widget every `secs` seconds, until a reload.
@@ -210,11 +220,14 @@ pub fn create(kind: &str, options: &Options) -> Option<Box<dyn Widget>> {
         "network" => Box::new(network::Network::new(options)),
         "notifications" => Box::new(notifications::Notifications::new(options)),
         "clock" => Box::new(clock::Clock::new(options)),
+        "docker" => Box::new(docker::Docker::new(options)),
         "events" => Box::new(events::Events::new(options)),
         "front_app" => Box::new(front_app::FrontApp::default()),
+        "home" => Box::new(home::Home::new(options)),
         "apple" => Box::new(apple::Apple::new(options)),
         "aerospace" => Box::new(aerospace::Aerospace::new(options)),
         "battery" => Box::new(battery::Battery::default()),
+        "claude" => Box::new(claude::Claude::new(options)),
         "system" => Box::new(system::System::new(options)),
         _ => return None,
     })

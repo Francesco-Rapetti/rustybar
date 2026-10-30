@@ -260,19 +260,24 @@ impl App {
         let widget = &mut *slot.widget;
         let result = catch_unwind(AssertUnwindSafe(|| f(widget, &mut cx)));
         let effects = std::mem::take(&mut cx.effects);
+        let name = name.to_string();
         if result.is_err() {
             slot.failed = Some(format!("crashed: see {}", crate::service::log_path().display()));
             crate::log(&format!("widget {name} panicked"));
             self.dirty = true;
         }
-        self.apply(effects);
+        self.apply(&name, effects);
     }
 
-    fn apply(&mut self, effects: Vec<Effect>) {
+    fn apply(&mut self, widget: &str, effects: Vec<Effect>) {
         for e in effects {
             match e {
                 Effect::Redraw => self.dirty = true,
                 Effect::ClosePopup => self.close_popup(),
+                Effect::TogglePopup => {
+                    let display = self.mouse_display();
+                    self.toggle_popup(widget, display);
+                }
             }
         }
     }

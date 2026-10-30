@@ -23,18 +23,25 @@ processes a minute.
 | `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | Addresses (local and public), router and VPN, wired services, Wi-Fi on and off, the nearby networks to join (the password is asked once and kept in the keychain) |
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | Today's events; a click joins the Google Meet call or shows the event in Calendar |
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, the packages to update one by one or all at once |
+| `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
+| `claude` | How much of the Claude plan each account has used: the 5-hour session and the week | For each account the plan, both limits with a bar and when they reset, log in and log out |
+| `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | The engine and its resources, the running containers with their state, CPU, memory, image, ports and uptime, Docker Desktop |
 
 Widgets don't poll what macOS can tell them: AeroSpace events come from its socket, the battery
 from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, the sound from CoreAudio
-listeners, the network from the System Configuration store, the calendars from EventKit, the clock
+listeners, the network from the System Configuration store, the calendars from EventKit, Home
+Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
 from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
 memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility). The bar is redrawn
 only when a value changes.
 
 A few things still run a process: `brew outdated` every hour and on wake (only with `brewfile` or
 `brew = true`), `system_profiler` for AirPods batteries and paired devices when the audio popup
-opens and every 2 minutes while a Bluetooth device is in use, and `curl` for the public IP when the
-network popup opens.
+opens and every 2 minutes while a Bluetooth device is in use, `curl` for the public IP when the
+network popup opens, and Claude Code (`claude auth status` and `claude -p`, for each account) every
+5 minutes, on wake and when the Claude popup opens: it's the only way to the plan's numbers. It
+asks for them without sending a message, so it doesn't use the plan. The keychain is read and
+written through `security`, once for each secret.
 
 Until a widget has its first data, the bar shows its last known state, dimmed, or a shimmering
 placeholder the very first time. A widget that fails shows an error pill; the rest of the bar
@@ -67,6 +74,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
 | Accessibility | `notifications` | The Dock badges (at start, only with `apps`); without it the rest of the widget works |
 | Automation | `apple`, `clock` | Restart, Shut Down and Log Out; showing a day in Calendar |
+| Local Network | `home` | Reaching a Home Assistant server on your network (at start) |
 
 To keep the macOS menu bar out of the way, turn on *Automatically hide and show the menu bar* in
 System Settings → Control Center.
@@ -93,6 +101,67 @@ timezone = "UTC"
 
 On screens with a notch the widgets switch to their compact form (`compact_on_notch`), and
 `hide_on_notch` lists the ones to leave out there.
+
+### Home Assistant
+
+The widget shows the entities you list, in groups, and needs a
+[long-lived access token](https://www.home-assistant.io/docs/authentication/#your-account-profile)
+(your profile → Security), saved in the login keychain:
+
+```bash
+pbpaste | rustybar secret set home-assistant
+```
+
+```toml
+[widgets.home]
+server = "https://home.example.com"   # or http://homeassistant.local:8123
+dashboard = "/lovelace/0"             # what "Open Home Assistant" opens, a path or a URL
+
+[[widgets.home.groups]]
+title = "Lights"
+entities = ["light.living_room", { id = "switch.desk_lamp", name = "Desk", icon = "lightbulb" }]
+
+[[widgets.home.groups]]
+title = "Climate"
+entities = ["climate.living_room", "vacuum.robot", "scene.movie_night"]
+```
+
+Lights, switches, fans, `input_boolean`, covers, climates, vacuums, scripts and scenes each get a
+tile of their kind (scripts and scenes are chips). A 3D printer, e.g. from the Bambu Lab
+integration, gets a wide tile with its progress and a pill in the bar while it prints:
+
+```toml
+[widgets.home.printer]
+plug = "switch.printer"               # its tile turns it on, and off at a second click
+off = "script.printer_off"            # what turns it off: a script that waits for it to cool
+status = "sensor.printer_status"
+progress = "sensor.printer_progress"  # %
+remaining = "sensor.printer_remaining" # hours
+```
+
+Lua widgets can read and drive Home Assistant too, with `rb.home` (see below); `watch` lists the
+entities they need besides the tiles.
+
+### Claude
+
+The `claude` widget needs [Claude Code](https://claude.com/claude-code) logged in. The account of
+`~/.claude` comes first; others, each with its own Claude Code config dir, follow:
+
+```toml
+[widgets.claude]
+color = "#d97757"      # of the first account
+warning = 75           # the numbers turn yellow from here
+critical = 90          # and red from here
+accounts = [{ dir = "~/.claude-work", color = "sky" }]
+```
+
+With more than one account, on large screens each has its own pill and popup; elsewhere one pill
+shows the busiest and its popup has them all.
+
+### Docker
+
+The `docker` widget finds the Engine API socket of Docker Desktop, OrbStack, colima, Rancher
+Desktop or `DOCKER_HOST=unix://…` by itself, and has no options.
 
 ## Lua widgets
 
@@ -136,6 +205,9 @@ rb.widget {
   URL to open, `"popup"`, or a shell command.
 - **Functions**: `rb.exec(cmd, function(stdout, status, stderr) … end)` (in the background), `rb.shell(cmd)`, `rb.open(url)`,
   `rb.redraw()`, `rb.close_popup()`, `rb.trigger(name, args)`, `rb.color(name)`, `rb.theme`.
+- **Home Assistant** (with the `home` widget in the config): `rb.home.state(id)` (the state and
+  attributes, or `nil`), `rb.home.online()`, `rb.home.call(domain, service, data)`, and the event
+  `home_assistant` whenever a state changes.
 
 Lua runs inside RustyBar, sandboxed: no `os.execute`, `io.popen` or `os.exit`, and a call that
 takes more than 250 ms is stopped. Anything slow goes through `rb.exec`.
@@ -145,7 +217,7 @@ takes more than 250 ms is stopped. Anything slow goes through `rb.exec`.
 ## Made-up data
 
 With `RUSTYBAR_MOCK` set to a folder, the widgets that read personal data (`audio`, `network`,
-`events`, `notifications`) read `<folder>/<widget>.json` instead and their actions do nothing, for
+`events`, `notifications`, `home`, `claude`, `docker`) read `<folder>/<widget>.json` instead and their actions do nothing, for
 screenshots and demos. [examples/mock](examples/mock) has one file for each:
 
 ```bash
@@ -160,6 +232,7 @@ rustybar msg query                   the widgets, their state and where they are
 rustybar msg trigger <event> k=v…    send an event to every widget (Lua: event(self, name, args))
 rustybar msg popup <widget>          open or close a popup
 rustybar msg quit
+rustybar secret set home-assistant   save the Home Assistant token, read from stdin, in the keychain
 ```
 
 For example, AeroSpace bindings that move windows can run

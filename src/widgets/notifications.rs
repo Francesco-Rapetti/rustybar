@@ -582,7 +582,8 @@ fn aerospace_restart() -> Option<String> {
     }
 }
 
-fn notify(group: &str, title: &str, message: &str, execute: &str) {
+/// A notification of `terminal-notifier`, if installed; a click runs `execute`.
+pub(crate) fn notify(group: &str, title: &str, message: &str, execute: &str) {
     if runtime::which("terminal-notifier").is_some() {
         runtime::fire("terminal-notifier", &["-group", group, "-title", title, "-message", message, "-execute", execute]);
     }

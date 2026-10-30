@@ -917,26 +917,14 @@ fn try_join(name: &str, allowed: bool, typed: Option<String>) -> Joined {
     Joined::Password { wrong: false }
 }
 
-/// The passwords typed in the popup, in the login keychain. Items made by `security` are read
-/// back by it without asking; `sketchybar-wifi` is where SketchyBar kept them.
+/// The passwords typed in the popup, in the login keychain; `sketchybar-wifi` is where SketchyBar
+/// kept them.
 fn saved_password(name: &str) -> Option<String> {
-    ["rustybar-wifi", "sketchybar-wifi"].iter().find_map(|service| {
-        let out = std::process::Command::new("/usr/bin/security").args(["find-generic-password", "-s", service, "-a", name, "-w"]).output().ok()?;
-        let password = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
-        (out.status.success() && !password.is_empty()).then_some(password)
-    })
+    ["rustybar-wifi", "sketchybar-wifi"].iter().find_map(|service| crate::secret::get(service, Some(name)))
 }
 
-/// The command goes on stdin, never in the arguments, which any process can read.
 fn save_password(name: &str, password: &str) {
-    use std::io::Write;
-    let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let Ok(mut child) = std::process::Command::new("/usr/bin/security").arg("-i").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() else { return };
-    if let Some(stdin) = child.stdin.as_mut() {
-        let _ = writeln!(stdin, "add-generic-password -U -s rustybar-wifi -a \"{}\" -w \"{}\"", quote(name), quote(password));
-    }
-    drop(child.stdin.take());
-    let _ = child.wait();
+    crate::secret::set("rustybar-wifi", name, password);
 }
 
 /// Asks for the password of a network, as macOS does; None if cancelled.

@@ -299,7 +299,7 @@ impl Widget for Events {
                 ];
                 if any_meet {
                     row.push(match &e.meet {
-                        Some(_) if std::path::Path::new(MEETINGBAR).exists() => Node::new(crate::ui::Kind::Image { path: format!("{MEETINGBAR}#google_meet_icon"), width: 16.0, height: 16.0 }).key("meet"),
+                        Some(_) if std::path::Path::new(MEETINGBAR).exists() => Node::image(format!("{MEETINGBAR}#google_meet_icon"), 16.0, 16.0, None).key("meet"),
                         Some(_) => Node::symbol("video.fill", 12.0, Weight::Semibold, th.green).key("meet"),
                         None => Node::default().size(16.0, 16.0).key("meet"),
                     });

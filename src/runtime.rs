@@ -119,10 +119,25 @@ pub fn which(name: &str) -> Option<String> {
 
 /// Runs a command to completion, killing it after `timeout`. For worker threads only.
 pub fn run(program: &str, args: &[&str], stdin: Option<&str>, timeout: Duration) -> Output {
+    run_with(program, args, stdin, timeout, &[], None)
+}
+
+/// `run`, with more environment variables (an empty value removes one) and in the folder `dir`.
+pub fn run_with(program: &str, args: &[&str], stdin: Option<&str>, timeout: Duration, env: &[(&str, &str)], dir: Option<&std::path::Path>) -> Output {
     let Some(path) = which(program) else {
         return Output { status: None, stdout: String::new(), stderr: format!("{program}: not found") };
     };
     let mut cmd = Command::new(path);
+    for (k, v) in env {
+        if v.is_empty() {
+            cmd.env_remove(k);
+        } else {
+            cmd.env(k, v);
+        }
+    }
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
     cmd.args(args)
         .env("PATH", user_path())
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })

@@ -1,0 +1,34 @@
+{
+  "online": true,
+  "groups": [
+    {"title": "Lights", "entities": ["light.living_room", {"id": "switch.bedroom_lamp", "icon": "lightbulb"}, "switch.coffee_machine", "cover.living_room_blind"]},
+    {"title": "Climate", "entities": ["climate.living_room"]},
+    {"title": "Other", "entities": ["switch.printer", "vacuum.robot", "script.good_night", "scene.movie_night", "scene.all_off"]}
+  ],
+  "printer": {
+    "plug": "switch.printer", "off": "script.printer_off",
+    "status": "sensor.printer_status", "progress": "sensor.printer_progress", "remaining": "sensor.printer_remaining"
+  },
+  "states": {
+    "light.living_room": {"state": "on", "attributes": {"friendly_name": "Living Room", "brightness": 178, "supported_color_modes": ["brightness"]}},
+    "switch.bedroom_lamp": {"state": "off", "attributes": {"friendly_name": "Bedroom Lamp"}},
+    "switch.coffee_machine": {"state": "on", "attributes": {"friendly_name": "Coffee Machine"}},
+    "cover.living_room_blind": {"state": "open", "attributes": {"friendly_name": "Blind", "current_position": 60}},
+    "climate.living_room": {
+      "state": "cool",
+      "attributes": {
+        "friendly_name": "Air Conditioner", "current_temperature": 26.5, "temperature": 24,
+        "min_temp": 16, "max_temp": 30, "target_temp_step": 0.5,
+        "hvac_modes": ["off", "cool", "heat", "dry", "fan_only", "auto"]
+      }
+    },
+    "switch.printer": {"state": "on", "attributes": {"friendly_name": "3D Printer"}},
+    "vacuum.robot": {"state": "docked", "attributes": {"friendly_name": "Vacuum"}},
+    "script.good_night": {"state": "off", "attributes": {"friendly_name": "Good Night"}},
+    "scene.movie_night": {"state": "2026-10-30T20:00:00+00:00", "attributes": {"friendly_name": "Movie Night"}},
+    "scene.all_off": {"state": "2026-10-30T08:00:00+00:00", "attributes": {"friendly_name": "All Off"}},
+    "sensor.printer_status": {"state": "running", "attributes": {}},
+    "sensor.printer_progress": {"state": "45", "attributes": {}},
+    "sensor.printer_remaining": {"state": "1.33", "attributes": {}}
+  }
+}

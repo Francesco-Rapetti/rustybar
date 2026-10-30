@@ -10,10 +10,13 @@ mod iokit;
 mod ipc;
 mod lua;
 mod mock;
+mod net;
 mod runtime;
+mod secret;
 mod service;
 mod surface;
 mod theme;
+mod time;
 mod ui;
 mod widgets;
 
@@ -59,6 +62,7 @@ const USAGE: &str = "usage:
   rustybar check           check the config and the Lua widgets
   rustybar service install start RustyBar at login, and again if it crashes (a LaunchAgent)
   rustybar service uninstall
+  rustybar secret set home-assistant   save the Home Assistant token, read from stdin, in the keychain
   rustybar --version";
 
 fn main() {
@@ -100,6 +104,16 @@ fn main() {
                 _ => Err(USAGE.to_string()),
             };
             match result {
+                Ok(msg) => println!("{msg}"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        Some("secret") => {
+            match secret::command(&args[1..]) {
                 Ok(msg) => println!("{msg}"),
                 Err(e) => {
                     eprintln!("{e}");

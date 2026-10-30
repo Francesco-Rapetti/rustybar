@@ -281,10 +281,10 @@ impl Surface {
                     entry.sig = Some(sig);
                 }
             }
-            Kind::Image { path: file, width, height } => {
-                let sig = format!("i|{file}|{width}|{height}|{scale}");
+            Kind::Image { path: file, width, height, tint } => {
+                let sig = format!("i|{file}|{width}|{height}|{tint:?}|{scale}");
                 if entry.sig.as_deref() != Some(&sig) {
-                    match gfx::image_file(file, *width, *height, scale) {
+                    match gfx::image_file(file, *width, *height, *tint, scale) {
                         Some(b) => unsafe { layer.setContents(Some(b.as_contents())) },
                         None => unsafe { layer.setContents(None) },
                     }

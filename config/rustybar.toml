@@ -66,6 +66,26 @@ large_width = 3840        # from this width a screen is "large"
 # brewfile = "~/Brewfile"  # the Homebrew packages to check for updates, every hour
 # brew = true              # or all of them
 #
+# [widgets.home]           # the token: pbpaste | rustybar secret set home-assistant
+# server = "http://homeassistant.local:8123"
+# dashboard = "/"          # what "Open Home Assistant" opens: a path on the server or a URL
+# watch = []               # entities Lua widgets read with rb.home.state, besides the tiles
+# [[widgets.home.groups]]  # a title and its tiles, as many groups as you like
+# title = "Lights"
+# entities = ["light.living_room", { id = "switch.desk_lamp", name = "Desk", icon = "lightbulb" }]
+# [widgets.home.printer]   # a 3D printer: a wide tile and a pill while it prints
+# plug = "switch.printer"
+# off = "script.printer_off"             # turns it off, at a second click
+# status = "sensor.printer_status"
+# progress = "sensor.printer_progress"   # %
+# remaining = "sensor.printer_remaining" # hours
+#
+# [widgets.claude]
+# color = "#d97757"       # of the account of ~/.claude
+# warning = 75            # the numbers turn yellow from here
+# critical = 90           # and red from here
+# accounts = [{ dir = "~/.claude-work", color = "sky" }]   # more Claude Code config dirs
+#
 # Two widgets of the same kind: give the second a name of its own and its type.
 # [widgets.clock_utc]
 # type = "clock"

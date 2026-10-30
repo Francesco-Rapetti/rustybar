@@ -36,6 +36,8 @@
   <string>macOS shows the names of the Wi-Fi networks only to apps with this permission.</string>
   <key>NSLocationUsageDescription</key>
   <string>macOS shows the names of the Wi-Fi networks only to apps with this permission.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>RustyBar connects to your Home Assistant server.</string>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>RustyBar connects and disconnects your Bluetooth audio devices.</string>
 </dict>

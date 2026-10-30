@@ -48,10 +48,14 @@ pub enum Kind {
         bundle_id: String,
         size: f64,
     },
+    /// Drawn in `tint` where it isn't transparent, when given: one-color logos (a menu bar icon,
+    /// a mask icon) in any color.
     Image {
         path: String,
         width: f64,
         height: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tint: Option<Rgba>,
     },
     /// 0..1; dragging moves it, releasing sends `on_click` with the value.
     Slider {
@@ -199,6 +203,10 @@ impl Node {
 
     pub fn app_icon(bundle_id: impl Into<String>, size: f64) -> Node {
         Node::new(Kind::AppIcon { bundle_id: bundle_id.into(), size })
+    }
+
+    pub fn image(path: impl Into<String>, width: f64, height: f64, tint: Option<Rgba>) -> Node {
+        Node::new(Kind::Image { path: path.into(), width, height, tint })
     }
 
     pub fn spacer() -> Node {

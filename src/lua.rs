@@ -184,6 +184,19 @@ impl Host {
                 Ok(inner.theme.borrow().color(&name).map(hex))
             })?,
         )?;
+        // rb.home: the states of Home Assistant that the `home` widget follows, and its services
+        let home = lua.create_table()?;
+        home.set("state", lua.create_function(|lua, id: String| match crate::widgets::home::state(&id) {
+            Some(v) => json_to_lua(lua, &v),
+            None => Ok(Value::Nil),
+        })?)?;
+        home.set("online", lua.create_function(|_, ()| Ok(crate::widgets::home::online()))?)?;
+        home.set("call", lua.create_function(|_, (domain, service, data): (String, String, Option<Value>)| {
+            let data = data.map(|d| lua_to_json(&d)).filter(|d| d.is_object()).unwrap_or_else(|| serde_json::json!({}));
+            crate::widgets::home::call(&domain, &service, data);
+            Ok(())
+        })?)?;
+        rb.set("home", home)?;
         g.set("rb", rb.clone())?;
         // require("rustybar") gives the same table
         let loaded: Table = lua.globals().get::<Table>("package")?.get("loaded")?;
@@ -363,11 +376,12 @@ impl Convert<'_> {
                 self.color(t, "color").unwrap_or(theme.text),
             ),
             "app" => Node::app_icon(first.unwrap_or_default(), self.num(t, "size").unwrap_or(18.0)),
-            "image" => Node::new(Kind::Image {
-                path: first.unwrap_or_default(),
-                width: self.num(t, "w").unwrap_or(16.0),
-                height: self.num(t, "h").unwrap_or(16.0),
-            }),
+            "image" => Node::image(
+                first.unwrap_or_default(),
+                self.num(t, "w").unwrap_or(16.0),
+                self.num(t, "h").unwrap_or(16.0),
+                self.color(t, "color"),
+            ),
             "slider" => Node::new(Kind::Slider {
                 value: self.num(t, "value").unwrap_or(0.0),
                 color: self.color(t, "color").unwrap_or(theme.primary),
@@ -603,4 +617,45 @@ impl Widget for LuaWidget {
     }
 
     crate::any_widget!();
+}
+
+fn json_to_lua(lua: &Lua, v: &serde_json::Value) -> mlua::Result<Value> {
+    use serde_json::Value as J;
+    Ok(match v {
+        J::Null => Value::Nil,
+        J::Bool(b) => Value::Boolean(*b),
+        J::Number(n) => match n.as_i64() {
+            Some(i) => Value::Integer(i),
+            None => Value::Number(n.as_f64().unwrap_or(0.0)),
+        },
+        J::String(s) => Value::String(lua.create_string(s)?),
+        J::Array(a) => {
+            let t = lua.create_table()?;
+            for (i, x) in a.iter().enumerate() {
+                t.set(i + 1, json_to_lua(lua, x)?)?;
+            }
+            Value::Table(t)
+        }
+        J::Object(o) => {
+            let t = lua.create_table()?;
+            for (k, x) in o {
+                t.set(k.as_str(), json_to_lua(lua, x)?)?;
+            }
+            Value::Table(t)
+        }
+    })
+}
+
+/// A table with items 1… is an array, any other an object.
+fn lua_to_json(v: &Value) -> serde_json::Value {
+    use serde_json::Value as J;
+    match v {
+        Value::Boolean(b) => J::Bool(*b),
+        Value::Integer(i) => J::from(*i),
+        Value::Number(n) => serde_json::Number::from_f64(*n).map(J::Number).unwrap_or(J::Null),
+        Value::String(s) => J::String(s.to_string_lossy()),
+        Value::Table(t) if t.raw_len() > 0 => J::Array(t.sequence_values::<Value>().flatten().map(|x| lua_to_json(&x)).collect()),
+        Value::Table(t) => J::Object(t.pairs::<String, Value>().flatten().map(|(k, x)| (k, lua_to_json(&x))).collect()),
+        _ => J::Null,
+    }
 }

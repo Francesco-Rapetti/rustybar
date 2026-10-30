@@ -33,7 +33,9 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   layer con animazioni implicite), `gfx.rs` (testo, SF Symbols e icone in bitmap, con cache a due
   generazioni ripulita dopo ogni render), `theme.rs`, `config.rs`, `lua.rs` + `prelude.lua`,
   `ipc.rs`, `cache.rs` (ultimo stato su disco per l'avvio), `service.rs` (LaunchAgent), `iokit.rs`,
-  `i18n.rs` (`t("italiano", "english")`), `mock.rs`.
+  `i18n.rs` (`t("italiano", "english")`), `mock.rs`, `net.rs` (WebSocket e richieste HTTP con
+  NSURLSession, HTTP/1.1 su socket Unix), `secret.rs` (portachiavi via `security`, e
+  `rustybar secret set`), `time.rs` (ora locale, ISO 8601, durate come `2 h 57 min`).
 - `widgets/`: un file per widget, registrato in `widgets::create`. Il trait `Widget` ha `start`,
   `bar`, `popup`, `ready`, `action(name, value, cx)` ed `event` (`Wake`, `ScreensChanged`,
   `Trigger`, `PopupOpened`, `PopupClosed`). `Cx` dà `redraw`, `close_popup`, `after`, `every`,
@@ -48,7 +50,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   NSWorkspace…) e niente processi lanciati a regime: si legge in-process. Ciò che non ha eventi va
   su un timer in-process e ridisegna solo se il valore cambia. Un processo esterno solo dove non c'è
   alternativa, e documentato nel README (oggi: `brew` ogni ora, `system_profiler` con Bluetooth
-  attivo, `curl` all'apertura del popup di rete).
+  attivo, `curl` all'apertura del popup di rete, `claude` ogni 5 minuti, `security` una volta per
+  segreto).
 - AppKit e i layer solo sul main thread; il lavoro bloccante in `cx.background` o in un thread con
   `handle.alive()`.
 - Ogni widget che legge dati personali ha i dati finti: `crate::mock::load::<T>("<widget>")`, un file
@@ -83,15 +86,24 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 - **M2**: `audio` + Bluetooth, `network` (Wi-Fi, VPN, reti vicine), `events` (calendari),
   `notifications` (badge del Dock, crash, Homebrew); dati finti in `examples/mock`. Misurata con
   tutti i widget: ~18 MB, ~0,1% CPU, 1 processo (SketchyBar: ~176 MB, 15 processi, ~1,3%).
+- **M3** (in corso): `home` (Home Assistant), `claude` e `docker`, con specifica nel doc del modulo
+  e dati finti; `rustybar secret set home-assistant`, `rb.home` in Lua, immagini colorate
+  (`tint`) e SF Symbols monocromatici colorati dopo (i buchi dei simboli `.fill` restano).
+  Misurata con i dati finti: ~18 MB, ~0,2% CPU, 0 processi in 60 s; coi dati veri (home, claude,
+  docker): ~19 MB, ~0% CPU, 0 processi. Provati dal vero, uguali a SketchyBar: `home` (connessione,
+  stati in diretta, token importato, `rb.home`, `POST` dei servizi), `claude` (tre account, popup),
+  `docker` (avvio, `/events`, stats, si nasconde quando Docker si ferma); con l'utente i riquadri
+  di `home` sui dispositivi veri e i pill dei singoli account di `claude`.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che RustyBar.app abbia Accessibilità.
+  Della M3: la riconnessione di `home` al risveglio, login e logout di `claude`.
 
-## Prossimo: M3
+## M3
 
 Per ogni widget, prima di scrivere codice, leggi nei dotfiles plugin, helper, sezione del README e
 screenshot e scrivi la specifica del comportamento (testi, colori, stati, azioni): RustyBar deve fare
-le stesse cose.
+le stesse cose. Fatti 1–3 (da provare dal vero, vedi Stato); restano 4–6.
 
 1. **Home Assistant** (`plugins/home.sh`, `helpers/home_assistant.swift`,
    `helpers/home_assistant_icons.js`): popup a plancia con riquadri per luci e prese (luminosità),

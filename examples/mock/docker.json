@@ -1,0 +1,15 @@
+{
+  "engine": {"os": "Docker Desktop", "version": "29.0.1", "cpus": 8, "memory": 8270000000, "images": 14, "stopped": 2},
+  "containers": [
+    {"name": "mailpit", "image": "mailpit:latest", "state": "running", "ports": [1025, 8025], "started": 270000},
+    {"name": "minio", "image": "minio:latest", "state": "paused", "ports": [9000, 9001], "started": 90000},
+    {"name": "shop-api-1", "image": "shop-api:dev", "state": "running", "health": "healthy", "ports": [3000], "started": 7300},
+    {"name": "shop-cache-1", "image": "redis:7-alpine", "state": "running", "ports": [6379], "started": 7300},
+    {"name": "shop-db-1", "image": "postgres:16", "state": "running", "health": "starting", "ports": [5432], "started": 40},
+    {"name": "shop-web-1", "image": "nginx:1.27-alpine", "state": "running", "ports": [8080], "started": 7300}
+  ],
+  "usage": {
+    "mailpit": [0.1, 22], "minio": [0.0, 142], "shop-api-1": [3.8, 186],
+    "shop-cache-1": [0.3, 9], "shop-db-1": [0.9, 74], "shop-web-1": [0.4, 12]
+  }
+}
