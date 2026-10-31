@@ -74,7 +74,7 @@ fn month_of(index: i32) -> (i32, u32) {
     (index.div_euclid(12), index.rem_euclid(12) as u32 + 1)
 }
 
-fn formatter(template: &str, tz: Option<&NSTimeZone>) -> Retained<NSDateFormatter> {
+pub(crate) fn formatter(template: &str, tz: Option<&NSTimeZone>) -> Retained<NSDateFormatter> {
     let f = NSDateFormatter::new();
     f.setLocale(Some(&NSLocale::autoupdatingCurrentLocale()));
     if let Some(tz) = tz {

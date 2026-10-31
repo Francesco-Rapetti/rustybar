@@ -8,11 +8,13 @@
 //! which is setuid and sees the system processes too, the GPU time from the IORegistry and the
 //! memory from libproc (only the user's processes: the others are closed to it).
 //! Options: `warning` (75) and `critical` (90).
+//! With made-up data (see `mock`) the numbers, the GPU and the lists come from `system.json`.
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 use objc2_foundation::{NSBundle, NSFileManager, NSProcessInfo, NSString};
+use serde::Deserialize;
 
 use super::{Cx, Event, Rx, Widget};
 use crate::config::Options;
@@ -27,7 +29,8 @@ const TOP: usize = 5;
 const NAME_WIDTH: f64 = 190.0;
 const VALUE_WIDTH: f64 = 48.0;
 
-#[derive(Clone, Copy, PartialEq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum Pressure {
     #[default]
     Normal,
@@ -63,12 +66,35 @@ struct Details {
     memory_top: Vec<(App, f64)>,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(default)]
 struct Memory {
     used: f64,
     app: f64,
     wired: f64,
     compressed: f64,
+}
+
+/// Made-up data (see `mock`): percentages, fractions for user, system and idle, sizes in GB, and
+/// the lists as `[name, bundle id, value]` (a percentage, or GB for the memory).
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Mock {
+    cpu: u32,
+    gpu: Option<u32>,
+    ram: u32,
+    pressure: Pressure,
+    total: f64,
+    gpu_model: String,
+    gpu_cores: Option<i64>,
+    user: f64,
+    system: f64,
+    idle: f64,
+    memory: Memory,
+    swap: f64,
+    cpu_top: Vec<(String, String, f64)>,
+    gpu_top: Vec<(String, String, f64)>,
+    memory_top: Vec<(String, String, f64)>,
 }
 
 pub struct System {
@@ -83,11 +109,13 @@ pub struct System {
     details: Option<Details>,
     gpu_times: Option<(HashMap<i32, u64>, Instant)>,
     reading: bool,
+    /// The details of the made-up data, always shown.
+    mock: Option<Details>,
 }
 
 impl System {
     pub fn new(options: &Options) -> System {
-        System {
+        let mut s = System {
             warning: options.f64("warning").unwrap_or(75.0) as u32,
             critical: options.f64("critical").unwrap_or(90.0) as u32,
             values: Values::default(),
@@ -98,7 +126,28 @@ impl System {
             details: None,
             gpu_times: None,
             reading: false,
+            mock: None,
+        };
+        if let Some(m) = crate::mock::load::<Mock>("system") {
+            const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+            let list = |l: Vec<(String, String, f64)>, unit: f64| l.into_iter().map(|(name, bundle, v)| (App { bundle, name }, v * unit)).collect();
+            s.values = Values { cpu: Some(m.cpu), gpu: m.gpu, ram: Some(m.ram), pressure: m.pressure };
+            s.total = m.total * GB;
+            s.gpu_model = gpu_name(m.gpu_model, m.gpu_cores);
+            let memory = Memory { used: m.memory.used * GB, app: m.memory.app * GB, wired: m.memory.wired * GB, compressed: m.memory.compressed * GB };
+            s.mock = Some(Details {
+                user: m.user,
+                system: m.system,
+                idle: m.idle,
+                memory,
+                swap: m.swap * GB,
+                cpu_top: list(m.cpu_top, 1.0),
+                gpu_top: list(m.gpu_top, 1.0),
+                memory_top: list(m.memory_top, GB),
+            });
+            s.loaded = true;
         }
+        s
     }
 
     fn tick(&mut self, cx: &mut Cx) {
@@ -224,6 +273,9 @@ impl System {
 
 impl Widget for System {
     fn start(&mut self, cx: &mut Cx) {
+        if self.mock.is_some() {
+            return;
+        }
         self.gpu_model = gpu_model();
         self.tick(cx);
         // The CPU needs two readings: the second one soon, so the bar doesn't wait 2 seconds
@@ -264,8 +316,9 @@ impl Widget for System {
     fn popup(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
         let v = &self.values;
-        let d = self.details.clone().unwrap_or_default();
-        let has = self.details.is_some();
+        let details = self.details.as_ref().or(self.mock.as_ref());
+        let d = details.cloned().unwrap_or_default();
+        let has = details.is_some();
         let mut rows = Vec::new();
         let cpu = v.cpu.unwrap_or(0);
         let cpu_details = if has {
@@ -310,11 +363,17 @@ impl Widget for System {
     fn action(&mut self, name: &str, _value: Option<f64>, cx: &mut Cx) {
         if name == "activity" {
             cx.close_popup();
+            if self.mock.is_some() {
+                return;
+            }
             runtime::open_app("com.apple.ActivityMonitor");
         }
     }
 
     fn event(&mut self, event: &Event, cx: &mut Cx) {
+        if self.mock.is_some() {
+            return;
+        }
         match event {
             // The lists need two readings of the GPU time: the first now, the details soon after
             Event::PopupOpened => {
@@ -416,13 +475,18 @@ fn gpu_utilization() -> Option<u32> {
         .map(|v| v.clamp(0, 100) as u32)
 }
 
-/// e.g. "Apple M4 Pro · 16 core"
 fn gpu_model() -> String {
     let gpus = iokit::services(c"IOAccelerator");
     let model = gpus.iter().find_map(|g| g.string("model")).unwrap_or_default();
-    match gpus.iter().find_map(|g| g.number("gpu-core-count")) {
-        Some(n) if !model.is_empty() => format!("{model} · {n} core"),
-        Some(n) => format!("{n} core"),
+    gpu_name(model, gpus.iter().find_map(|g| g.number("gpu-core-count")))
+}
+
+/// e.g. "Apple M4 Pro · 16 core"
+fn gpu_name(model: String, cores: Option<i64>) -> String {
+    let core = t("core", "cores");
+    match cores {
+        Some(n) if !model.is_empty() => format!("{model} · {n} {core}"),
+        Some(n) => format!("{n} {core}"),
         None => model,
     }
 }

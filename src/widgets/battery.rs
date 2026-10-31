@@ -10,6 +10,8 @@
 //!
 //! IOKit says when the battery changes and PowerUIAgent when the limit does, so nothing polls. The
 //! Charge Limit is PowerUIAgent's, asked through the private framework of System Settings.
+//!
+//! With made-up data (see `mock`) the state comes from `battery.json` and the clicks do nothing.
 
 use std::ffi::{c_char, c_int, c_void};
 use std::time::Instant;
@@ -19,6 +21,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2::{AnyThread, msg_send};
 use objc2_foundation::{NSProcessInfo, NSString, NSUserDefaults, ns_string};
+
+use serde::Deserialize;
 
 use super::{Cx, Event, Rx, Widget};
 use crate::gfx::{Rgba, Weight};
@@ -31,16 +35,19 @@ const LIMITS: [u8; 5] = [80, 85, 90, 95, 100];
 const MCL_ON: usize = 1;
 const MCL_PAUSED: usize = 3;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum LimitState {
     /// A Mac without the Charge Limit.
+    #[default]
     None,
     Off,
     On,
     Paused,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
 struct Status {
     percent: i64,
     ac: bool,
@@ -61,8 +68,18 @@ struct Status {
     cycles: Option<i64>,
 }
 
+/// Made-up data (see `mock`): the state, and the maximum capacity (`"92%"`).
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Mock {
+    #[serde(flatten)]
+    status: Status,
+    max_capacity: Option<String>,
+}
+
 #[derive(Default)]
 pub struct Battery {
+    mock: bool,
     status: Option<Status>,
     loaded: bool,
     /// From system_profiler, the only one that says it: at most once a day, when the popup opens.
@@ -178,6 +195,13 @@ impl Battery {
 
 impl Widget for Battery {
     fn start(&mut self, cx: &mut Cx) {
+        if let Some(m) = crate::mock::load::<Mock>("battery") {
+            self.mock = true;
+            self.status = Some(m.status);
+            self.max_capacity = m.max_capacity.map(|c| (c, Instant::now()));
+            self.loaded = true;
+            return;
+        }
         // IOKit: any change of the battery, the adapter, the charge or the time left
         let handle = Box::new(cx.handle::<Battery>());
         self.source = RunLoopSource::new(handle);
@@ -298,6 +322,10 @@ impl Widget for Battery {
     }
 
     fn action(&mut self, name: &str, _value: Option<f64>, cx: &mut Cx) {
+        if self.mock {
+            cx.close_popup();
+            return;
+        }
         if name == "settings" {
             cx.close_popup();
             runtime::open("x-apple.systempreferences:com.apple.Battery-Settings.extension");
@@ -324,6 +352,9 @@ impl Widget for Battery {
     }
 
     fn event(&mut self, event: &Event, cx: &mut Cx) {
+        if self.mock {
+            return;
+        }
         match event {
             Event::Wake => self.update(cx),
             Event::PopupOpened => {

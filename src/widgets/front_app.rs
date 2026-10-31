@@ -1,4 +1,5 @@
-//! The name of the app in front, from NSWorkspace's activation notification.
+//! The name of the app in front, from NSWorkspace's activation notification; with made-up data
+//! (see `mock`), the `name` of `front_app.json`.
 
 use std::ptr::NonNull;
 
@@ -7,6 +8,7 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification};
 use objc2_foundation::{NSNotification, NSObjectProtocol};
+use serde::Deserialize;
 
 use super::{Cx, Rx, Widget};
 use crate::ui::Node;
@@ -18,6 +20,13 @@ pub struct FrontApp {
     observer: Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
 }
 
+/// Made-up data (see `mock`).
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Mock {
+    name: String,
+}
+
 impl FrontApp {
     fn set(&mut self, app: &NSRunningApplication) {
         self.name = app.localizedName().map(|n| n.to_string()).unwrap_or_default();
@@ -27,6 +36,10 @@ impl FrontApp {
 
 impl Widget for FrontApp {
     fn start(&mut self, cx: &mut Cx) {
+        if let Some(m) = crate::mock::load::<Mock>("front_app") {
+            self.name = m.name;
+            return;
+        }
         let ws = NSWorkspace::sharedWorkspace();
         if let Some(app) = ws.frontmostApplication() {
             self.set(&app);

@@ -233,7 +233,8 @@ fn line(text: &str, spec: &FontSpec, color: Rgba) -> CFRetained<CTLine> {
     let keys: [&CFString; 2] = unsafe { [kCTFontAttributeName, kCTForegroundColorAttributeName] };
     let values: [&CFType; 2] = [&font, &cg];
     let attrs = CFDictionary::<CFString, CFType>::from_slices(&keys, &values);
-    let string = CFString::from_str(text);
+    // The narrow no-break space of 12-hour times ("11:24 AM") has no width in Helvetica Neue
+    let string = CFString::from_str(&text.replace('\u{202f}', "\u{a0}"));
     unsafe {
         let attributed =
             objc2_core_foundation::CFAttributedString::new(None, Some(&string), Some(attrs.as_ref()))

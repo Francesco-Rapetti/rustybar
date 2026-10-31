@@ -130,6 +130,8 @@ fn main() {
             println!("{USAGE}");
             return;
         }
+        // AppKit's own defaults, e.g. `-AppleLanguages '(en)'`: the bar starts with them
+        Some(flag) if flag.starts_with("-Apple") || flag.starts_with("-NS") => {}
         Some(other) => {
             eprintln!("unknown command {other}\n{USAGE}");
             std::process::exit(2);

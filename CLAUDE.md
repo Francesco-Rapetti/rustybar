@@ -18,7 +18,12 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `open -n target/RustyBar.app --env RUSTYBAR_CONFIG_DIR=<cartella> --stdout <log> --stderr <log>`.
 - `rustybar msg query` (widget, stato, posizione), `msg popup <widget>`, `msg reload`,
   `msg trigger <evento> k=v…`, `msg quit`; `rustybar check` controlla config e widget Lua.
-- `RUSTYBAR_DEBUG=1` registra i clic nel log; `RUSTYBAR_MOCK=examples/mock` usa i dati finti.
+- `RUSTYBAR_DEBUG=1` registra i clic nel log; `RUSTYBAR_MOCK=examples/mock` usa i dati finti (tutti
+  i widget tranne `clock`); `-AppleLanguages '(en)' -AppleLocale en_US` dopo il binario, o dopo
+  `--args` con `open`, la fa in inglese.
+- `scripts/screenshots.py`: gli screenshot del README in `docs/screenshots`, finestra per finestra
+  (niente di quello che c'è dietro) su uno sfondo neutro, dalla barra coi dati finti in inglese e
+  ogni widget nel layout; il mouse sullo schermo principale. Guardali tutti prima di usarli.
 - `scripts/measure.py [PID] [SECONDI]`: memoria, CPU e processi avviati da RustyBar (e da SketchyBar,
   se gira), per confrontarle.
 
@@ -93,7 +98,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   docker): ~19 MB, ~0% CPU, 0 processi. Provati dal vero, uguali a SketchyBar: `home` (connessione,
   stati in diretta, token importato, `rb.home`, `POST` dei servizi), `claude` (tre account, popup),
   `docker` (avvio, `/events`, stats, si nasconde quando Docker si ferma); con l'utente i riquadri
-  di `home` sui dispositivi veri e i pill dei singoli account di `claude`.
+  di `home` sui dispositivi veri e i pill dei singoli account di `claude`. Screenshot del README:
+  dati finti anche per `apple`, `aerospace`, `front_app`, `system` e `battery`.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che RustyBar.app abbia Accessibilità.
@@ -103,7 +109,7 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 
 Per ogni widget, prima di scrivere codice, leggi nei dotfiles plugin, helper, sezione del README e
 screenshot e scrivi la specifica del comportamento (testi, colori, stati, azioni): RustyBar deve fare
-le stesse cose. Fatti 1–3 (da provare dal vero, vedi Stato); restano 4–6.
+le stesse cose. Fatti 1–4; restano 5 e 6, con l'utente.
 
 1. **Home Assistant** (`plugins/home.sh`, `helpers/home_assistant.swift`,
    `helpers/home_assistant_icons.js`): popup a plancia con riquadri per luci e prese (luminosità),

@@ -1,0 +1,12 @@
+{
+  "percent": 72,
+  "ac": true,
+  "charging": true,
+  "minutes": 25,
+  "limit": 80,
+  "limit_state": "on",
+  "watts": 96,
+  "health": "Good",
+  "cycles": 48,
+  "max_capacity": "99%"
+}

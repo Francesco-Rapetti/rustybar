@@ -9,6 +9,8 @@ CPU** in a single process, and draws its first frame in **about 50 ms**. For com
 SketchyBar setup it replaces took about 176 MB in 15 processes and ~1.3% CPU, and started some 150
 processes a minute.
 
+![The right end of the bar: sound, network, the next event, CPU, GPU and memory, battery, clock and notifications](docs/screenshots/bar.png)
+
 ## Widgets
 
 | Widget | What it shows | Popup |
@@ -26,6 +28,35 @@ processes a minute.
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
 | `claude` | How much of the Claude plan each account has used: the 5-hour session and the week | For each account the plan, both limits with a bar and when they reset, log in and log out |
 | `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | The engine and its resources, the running containers with their state, CPU, memory, image, ports and uptime, Docker Desktop |
+
+Each widget with its popup, on made-up data (see below):
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/home.png" width="372" alt="A dashboard of Home Assistant tiles: lights, a blind, the air conditioner, a 3D printer, a vacuum and scenes"><br><code>home</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/system.png" width="342" alt="CPU, GPU and memory with the apps that use them most"><br><code>system</code></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/claude.png" width="440" alt="Three Claude accounts, each with its session and weekly usage and when they reset"><br><code>claude</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/clock.png" width="290" alt="A calendar that scrolls through the months"><br><code>clock</code></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/network.png" width="308" alt="Addresses, VPN, Ethernet and the Wi-Fi networks to join"><br><code>network</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/docker.png" width="388" alt="The Docker engine and its running containers with CPU, memory, image, ports and uptime"><br><code>docker</code></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/audio.png" width="393" alt="Output and input volume, devices and Bluetooth headphones and speakers"><br><code>audio</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/battery.png" width="308" alt="The battery charging up to its limit, the Charge Limit and battery health"><br><code>battery</code></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/notifications.png" width="370" alt="A crash report, Dock badges and Homebrew updates"><br><code>notifications</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/apple.png" width="244" alt="The Apple menu"><br><code>apple</code></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/events.png" width="364" alt="Today's events, with Google Meet links"><br><code>events</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/aerospace.png" width="348" alt="AeroSpace workspaces with the icons of their windows"><br><code>aerospace</code><br><br><img src="docs/screenshots/front_app.png" width="121" alt="The app in front"><br><code>front_app</code></td>
+</tr>
+</table>
 
 Widgets don't poll what macOS can tell them: AeroSpace events come from its socket, the battery
 from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, the sound from CoreAudio
@@ -216,13 +247,15 @@ takes more than 250 ms is stopped. Anything slow goes through `rb.exec`.
 
 ## Made-up data
 
-With `RUSTYBAR_MOCK` set to a folder, the widgets that read personal data (`audio`, `network`,
-`events`, `notifications`, `home`, `claude`, `docker`) read `<folder>/<widget>.json` instead and their actions do nothing, for
-screenshots and demos. [examples/mock](examples/mock) has one file for each:
+With `RUSTYBAR_MOCK` set to a folder, every widget but the clock reads `<folder>/<widget>.json`
+instead of your Mac, and their actions do nothing, for screenshots and demos.
+[examples/mock](examples/mock) has one file for each. AppKit's own flags pick another language:
 
 ```bash
-RUSTYBAR_MOCK=examples/mock target/release/rustybar
+RUSTYBAR_MOCK=examples/mock target/release/rustybar -AppleLanguages '(en)' -AppleLocale en_US
 ```
+
+`scripts/screenshots.py` takes the screenshots above from a bar started this way.
 
 ## Command line
 

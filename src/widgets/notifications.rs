@@ -237,6 +237,7 @@ impl Notifications {
 impl Widget for Notifications {
     fn start(&mut self, cx: &mut Cx) {
         if self.mock.is_some() {
+            self.tell_workspaces();
             return;
         }
         if !self.apps.is_empty() && !ax_trusted() {
@@ -404,20 +405,11 @@ fn versions(p: &Package) -> String {
     format!("{} → {}", short(&p.installed), short(&p.new))
 }
 
-/// The time of a crash today, else its day.
+/// The time of a crash today, else its day, as the Mac writes them.
 fn when(t: f64) -> String {
-    let local = |t: f64| unsafe {
-        let secs = t as libc::time_t;
-        let mut tm: libc::tm = std::mem::zeroed();
-        libc::localtime_r(&secs, &mut tm);
-        tm
-    };
-    let (then, today) = (local(t), local(now()));
-    if (then.tm_year, then.tm_yday) == (today.tm_year, today.tm_yday) {
-        format!("{:02}:{:02}", then.tm_hour, then.tm_min)
-    } else {
-        format!("{}/{}", then.tm_mday, then.tm_mon + 1)
-    }
+    let (then, today) = (crate::time::local(t), crate::time::local(now()));
+    let template = if (then.tm_year, then.tm_yday) == (today.tm_year, today.tm_yday) { "jmm" } else { "dM" };
+    super::clock::formatter(template, None).stringFromDate(&objc2_foundation::NSDate::dateWithTimeIntervalSince1970(t)).to_string()
 }
 
 // The Dock, through Accessibility

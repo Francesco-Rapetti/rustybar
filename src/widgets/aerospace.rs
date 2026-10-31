@@ -10,6 +10,9 @@
 //!
 //! Options: `workspaces = ["1", "2", …]` shows a fixed list (by default the ones AeroSpace knows),
 //! `hide_empty = false` keeps the empty ones.
+//!
+//! With made-up data (see `mock`) the workspaces and windows come from `aerospace.json` and the
+//! clicks do nothing.
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::net::UnixStream;
@@ -20,6 +23,7 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_core_graphics::{CGWindowListCopyWindowInfo, CGWindowListOption};
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, ns_string};
+use serde::Deserialize;
 
 use super::{Cx, Event, Rx, Widget};
 use crate::config::Options;
@@ -27,13 +31,25 @@ use crate::gfx::Weight;
 use crate::runtime;
 use crate::ui::{Justify, Node};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
 struct Win {
     workspace: String,
     id: u32,
     fullscreen: bool,
     bundle: String,
     app: String,
+}
+
+/// Made-up data (see `mock`).
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Mock {
+    workspaces: Vec<String>,
+    windows: Vec<Win>,
+    focused: String,
+    focused_window: Option<u32>,
+    mode: Option<String>,
 }
 
 /// What a refresh learns from AeroSpace.
@@ -60,13 +76,15 @@ pub struct Aerospace {
     refreshing: bool,
     pending: bool,
     loaded: bool,
+    mock: bool,
     /// The event connection, shut down when the widget goes so its thread ends.
     stream: Arc<Mutex<Option<UnixStream>>>,
 }
 
 impl Aerospace {
     pub fn new(options: &Options) -> Aerospace {
-        Aerospace {
+        let mock = crate::mock::load::<Mock>("aerospace");
+        let mut w = Aerospace {
             fixed: options.strings("workspaces"),
             hide_empty: options.bool("hide_empty").unwrap_or(true),
             workspaces: Vec::new(),
@@ -79,13 +97,25 @@ impl Aerospace {
             refreshing: false,
             pending: false,
             loaded: false,
+            mock: mock.is_some(),
             stream: Arc::new(Mutex::new(None)),
+        };
+        if let Some(m) = mock {
+            (w.workspaces, w.windows, w.focused_ws, w.focused_win) = (m.workspaces, m.windows, m.focused, m.focused_window);
+            if let Some(mode) = m.mode {
+                w.mode = mode;
+            }
+            w.loaded = true;
         }
+        w
     }
 
     /// Asks AeroSpace for the windows again, once at a time: changes during a refresh make one
     /// more after it.
     fn refresh(&mut self, cx: &mut Cx) {
+        if self.mock {
+            return;
+        }
         if self.refreshing {
             self.pending = true;
             return;
@@ -183,6 +213,9 @@ impl Aerospace {
 
 impl Widget for Aerospace {
     fn start(&mut self, cx: &mut Cx) {
+        if self.mock {
+            return;
+        }
         let handle = cx.handle::<Aerospace>();
         let stream = self.stream.clone();
         runtime::spawn("aerospace-events", move || {
@@ -259,6 +292,9 @@ impl Widget for Aerospace {
     }
 
     fn action(&mut self, name: &str, _value: Option<f64>, _cx: &mut Cx) {
+        if self.mock {
+            return;
+        }
         let args: Vec<String> = if let Some(ws) = name.strip_prefix("ws:") {
             vec!["workspace".into(), ws.into()]
         } else if let Some(id) = name.strip_prefix("win:") {

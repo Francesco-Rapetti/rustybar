@@ -1,0 +1,14 @@
+{
+  "workspaces": ["1", "2", "3", "4", "5", "6"],
+  "focused": "2",
+  "focused_window": 21,
+  "windows": [
+    {"workspace": "1", "id": 11, "app": "Safari", "bundle": "com.apple.Safari"},
+    {"workspace": "1", "id": 12, "app": "Mail", "bundle": "com.apple.mail"},
+    {"workspace": "2", "id": 21, "app": "Terminal", "bundle": "com.apple.Terminal"},
+    {"workspace": "2", "id": 22, "app": "Notes", "bundle": "com.apple.Notes"},
+    {"workspace": "3", "id": 31, "app": "Music", "bundle": "com.apple.Music", "fullscreen": true},
+    {"workspace": "4", "id": 41, "app": "Calendar", "bundle": "com.apple.iCal"},
+    {"workspace": "4", "id": 42, "app": "Messages", "bundle": "com.apple.MobileSMS"}
+  ]
+}

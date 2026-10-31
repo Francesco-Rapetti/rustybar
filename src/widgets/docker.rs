@@ -401,7 +401,7 @@ impl Widget for Docker {
             summary.push_str(&format!(" · {}", count(e.stopped, ("fermo", "stopped"), ("fermi", "stopped"))));
         }
         rows.push(Node::default().height(10.0).key("gap"));
-        rows.push(line(Node::text("Container", bold.clone(), th.text), Some(Node::text(summary, small.clone(), th.subtext)), "title"));
+        rows.push(line(Node::text(t("Container", "Containers"), bold.clone(), th.text), Some(Node::text(summary, small.clone(), th.subtext)), "title"));
         rows.push(Node::default().height(2.0).key("title-gap"));
         for c in snap.containers.iter().take(MAX) {
             let (symbol, color, state) = match (c.state.as_str(), c.health.as_str()) {
