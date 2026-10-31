@@ -6,4 +6,4 @@ mod render;
 
 pub use layout::Layout;
 pub use node::{Action, Align, Dir, Justify, Kind, Node};
-pub use render::{HitKind, Surface};
+pub use render::{HitKind, Surface, contains};

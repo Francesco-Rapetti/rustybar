@@ -291,6 +291,9 @@ impl App {
     }
 
     pub fn dispatch(&mut self, action: Action, value: Option<f64>, display: Option<u32>) {
+        if std::env::var_os("RUSTYBAR_DEBUG").is_some() {
+            crate::log(&format!("action {action:?} {value:?}"));
+        }
         match action {
             Action::Widget { widget, name } => {
                 self.with_slot(&widget, |w, cx| w.action(&name, value, cx));
@@ -620,6 +623,13 @@ impl App {
             SurfaceId::Popup => self.popup.as_ref().map(|p| p.display),
         };
         let Some(surface) = self.surface_mut(id) else { return };
+        // What a press lands on, topmost first, and whether it has an action
+        if std::env::var_os("RUSTYBAR_DEBUG").is_some() && matches!(kind, Mouse::Down) {
+            for h in surface.hits.iter().rev().filter(|h| crate::ui::contains(h.rect, p)) {
+                let action = if h.action.is_some() { "" } else { ", no action" };
+                crate::log(&format!("  on {:?} {}{action}", h.kind, h.path));
+            }
+        }
         match kind {
             Mouse::Moved => {
                 if surface.dragging.is_none() {

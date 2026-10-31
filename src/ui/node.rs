@@ -340,6 +340,12 @@ impl Node {
         inner.style.grow = 1.0;
         inner.style.max_width = self.style.max_width.map(|m| (m - pl - pr).max(0.0));
         let mut outer = std::mem::replace(self, inner);
+        // A slider takes its value from where it's pressed, so its action stays with it: on the
+        // box, the drag would end with no action and a click on the padding would send none
+        if matches!(self.kind, Kind::Slider { .. }) {
+            self.on_click = outer.on_click.take();
+            self.hover = outer.hover.take();
+        }
         outer.kind = Kind::Box;
         outer.style.dir = Dir::Row;
         outer.style.align = Align::Stretch;

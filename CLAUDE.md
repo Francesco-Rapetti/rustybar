@@ -24,9 +24,10 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `open -n target/RustyBar.app --env RUSTYBAR_CONFIG_DIR=<cartella> --stdout <log> --stderr <log>`.
 - `rustybar msg query` (widget, stato, posizione), `msg popup <widget>`, `msg reload`,
   `msg trigger <evento> k=v…`, `msg quit`; `rustybar check` controlla config e widget Lua.
-- `RUSTYBAR_DEBUG=1` registra i clic nel log; `RUSTYBAR_MOCK=examples/mock` usa i dati finti (tutti
-  i widget tranne `clock`); `-AppleLanguages '(en)' -AppleLocale en_US` dopo il binario, o dopo
-  `--args` con `open`, la fa in inglese.
+- `RUSTYBAR_DEBUG=1` registra nel log i clic, cosa c'è sotto (e se ha un'azione) e le azioni
+  mandate; `RUSTYBAR_MOCK=examples/mock` usa i dati finti (tutti i widget tranne `clock`);
+  `-AppleLanguages '(en)' -AppleLocale en_US` dopo il binario, o dopo `--args` con `open`, la fa in
+  inglese.
 - `scripts/screenshots.py`: gli screenshot del README in `docs/screenshots`, finestra per finestra
   (niente di quello che c'è dietro) su uno sfondo neutro, dalla barra coi dati finti in inglese e
   ogni widget nel layout; il mouse sullo schermo principale. Guardali tutti prima di usarli.

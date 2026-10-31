@@ -237,7 +237,15 @@ fn post(base: &str, token: &str, domain: &str, service: &str, data: &Value, done
     let url = format!("{base}/api/services/{domain}/{service}");
     let auth = format!("Bearer {token}");
     let body = data.to_string();
-    net::request("POST", &url, &[("Authorization", &auth), ("Content-Type", "application/json")], Some(body.as_bytes()), 10.0, move |status, _| done(status == 200));
+    let what = format!("{domain}.{service} {body}");
+    net::request("POST", &url, &[("Authorization", &auth), ("Content-Type", "application/json")], Some(body.as_bytes()), 10.0, move |status, reply| {
+        // The tile only says it failed: why goes in the log
+        if status != 200 {
+            let reply = String::from_utf8_lossy(&reply);
+            crate::log(&format!("home: {what} → {status} {}", reply.chars().take(300).collect::<String>()));
+        }
+        done(status == 200)
+    });
 }
 
 impl Home {
@@ -1059,7 +1067,12 @@ impl Widget for Home {
         let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
         match kind {
             "tap" => self.tap(rest, cx),
-            "slider" => self.slide(rest, value.unwrap_or(0.0), cx),
+            // Never without a value: 0 would turn the light off
+            "slider" => {
+                if let Some(v) = value {
+                    self.slide(rest, v, cx);
+                }
+            }
             "temp" => {
                 if let Some((id, dir)) = rest.rsplit_once(':') {
                     self.nudge(id, dir == "+", cx);

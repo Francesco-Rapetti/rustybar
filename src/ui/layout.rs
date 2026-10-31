@@ -288,6 +288,16 @@ mod tests {
     }
 
     #[test]
+    fn padded_slider_keeps_its_action() {
+        let action = super::super::Action::Open("x".into());
+        let (color, track) = (gfx::Rgba(1.0, 1.0, 1.0, 1.0), gfx::Rgba(0.0, 0.0, 0.0, 1.0));
+        let mut n = Node::new(Kind::Slider { value: 0.5, color, track }).click(action.clone()).padding(4.0, 0.0, 0.0, 0.0);
+        n.normalize();
+        assert!(matches!(n.kind, Kind::Box) && n.on_click.is_none());
+        assert_eq!(n.children[0].on_click, Some(action));
+    }
+
+    #[test]
     fn grid_has_equal_columns() {
         let cells: Vec<Node> = (0..10).map(|_| boxed(8.0, 8.0)).collect();
         let n = Node::row(cells).columns(7).gap(2.0);
