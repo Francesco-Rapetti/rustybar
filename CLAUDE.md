@@ -12,9 +12,15 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 
 - `cargo build --release`, `cargo test --release`, `cargo clippy --release`. Clippy ha tre avvisi
   vecchi (`ui/layout.rs`, `widgets/aerospace.rs`, `widgets/system.rs`): niente di nuovo oltre a quelli.
-- `scripts/bundle.sh` → `target/RustyBar.app`, con firma ad hoc.
-- Per provarla accanto a SketchyBar: una config di prova in una cartella a parte, con `[bar] offset = 40`
-  (la barra va subito sotto SketchyBar), poi
+- `scripts/bundle.sh` → `target/RustyBar.app`, firmata con il certificato "RustyBar Local" del
+  portachiavi (se manca, ad hoc).
+- La barra vera è `/Applications/RustyBar.app`, avviata dal LaunchAgent
+  `io.github.francesco-rapetti.rustybar` (log in `~/Library/Logs/rustybar.log`) con la config dei
+  dotfiles (`~/.config/rustybar` → `~/Developer/dotfiles/rustybar`; server e account in
+  `rustybar.local.toml`, fuori da git). Per metterci una build: `scripts/bundle.sh`, sostituire
+  l'app in `/Applications`, poi `launchctl kickstart -k gui/$(id -u)/io.github.francesco-rapetti.rustybar`.
+- Per una prova a parte: una config in un'altra cartella, con `[bar] offset = 40` (la barra va
+  subito sotto quella vera), poi
   `open -n target/RustyBar.app --env RUSTYBAR_CONFIG_DIR=<cartella> --stdout <log> --stderr <log>`.
 - `rustybar msg query` (widget, stato, posizione), `msg popup <widget>`, `msg reload`,
   `msg trigger <evento> k=v…`, `msg quit`; `rustybar check` controlla config e widget Lua.
@@ -36,7 +42,9 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   background (`run`, `fire`, `shell`, `open`, `open_app`, `which`).
 - `surface.rs`, `ui/` (`node.rs` albero dichiarativo, `layout.rs` flexbox, `render.rs` diff dei
   layer con animazioni implicite), `gfx.rs` (testo, SF Symbols e icone in bitmap, con cache a due
-  generazioni ripulita dopo ogni render), `theme.rs`, `config.rs`, `lua.rs` + `prelude.lua`,
+  generazioni ripulita dopo ogni render, e del tutto quando un popup si chiude, insieme alle pagine
+  libere di malloc), `theme.rs`, `config.rs` (`rustybar.local.toml` unito sopra `rustybar.toml`),
+  `lua.rs` + `prelude.lua`,
   `ipc.rs`, `cache.rs` (ultimo stato su disco per l'avvio), `service.rs` (LaunchAgent), `iokit.rs`,
   `i18n.rs` (`t("italiano", "english")`), `mock.rs`, `net.rs` (WebSocket e richieste HTTP con
   NSURLSession, HTTP/1.1 su socket Unix), `secret.rs` (portachiavi via `security`, e
@@ -77,12 +85,13 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 - **Permessi (TCC)**: macOS li dà al processo responsabile. Il binario lanciato dal terminale li
   chiederebbe a nome del terminale o di Claude: le funzioni con permessi si provano solo sul bundle
   aperto con `open`. Con i dati finti non si chiede nessun permesso.
-- La firma ad hoc fa richiedere Calendari a ogni build. `scripts/signing-cert.sh` crea un
-  certificato di firma nel portachiavi: **solo con l'OK dell'utente**.
+- La firma ad hoc fa richiedere Calendari a ogni build: per questo c'è il certificato
+  "RustyBar Local" nel portachiavi, fatto con `scripts/signing-cert.sh` e l'OK dell'utente. Non
+  rifarlo né toglierlo senza chiedere.
 - Un clic altrove chiude il popup (monitor globale): se un `msg popup` sembra non aprirsi, è
   probabilmente quello.
-- SketchyBar resta la barra principale finché RustyBar non fa tutto: non toccare la sua config nei
-  dotfiles fuori dal passaggio della M3, e quello insieme all'utente.
+- SketchyBar è spenta, e la sua config resta nei dotfiles come riserva: non toccarla e non
+  riaccenderla senza l'utente.
 
 ## Stato
 
@@ -99,17 +108,22 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   stati in diretta, token importato, `rb.home`, `POST` dei servizi), `claude` (tre account, popup),
   `docker` (avvio, `/events`, stats, si nasconde quando Docker si ferma); con l'utente i riquadri
   di `home` sui dispositivi veri e i pill dei singoli account di `claude`. Screenshot del README:
-  dati finti anche per `apple`, `aerospace`, `front_app`, `system` e `battery`.
+  dati finti anche per `apple`, `aerospace`, `front_app`, `system` e `battery`. Passaggio fatto il
+  31/10/2026: RustyBar è la barra, dal LaunchAgent, con la config dei dotfiles e i binding di
+  AeroSpace; SketchyBar spenta. Misurata dal vero con tutti i widget: ~20 MB all'avvio, ~25 MB dopo
+  aver aperto ogni popup (prima di ripulire alla chiusura erano 31 MB e crescevano), ~0,2% CPU,
+  0 processi in 60 s.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
-  Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che RustyBar.app abbia Accessibilità.
+  Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a
+  RustyBar.app.
   Della M3: la riconnessione di `home` al risveglio, login e logout di `claude`.
 
 ## M3
 
 Per ogni widget, prima di scrivere codice, leggi nei dotfiles plugin, helper, sezione del README e
 screenshot e scrivi la specifica del comportamento (testi, colori, stati, azioni): RustyBar deve fare
-le stesse cose. Fatti 1–4; restano 5 e 6, con l'utente.
+le stesse cose. Fatti 1–5; resta 6, con l'utente.
 
 1. **Home Assistant** (`plugins/home.sh`, `helpers/home_assistant.swift`,
    `helpers/home_assistant_icons.js`): popup a plancia con riquadri per luci e prese (luminosità),

@@ -133,6 +133,10 @@ timezone = "UTC"
 On screens with a notch the widgets switch to their compact form (`compact_on_notch`), and
 `hide_on_notch` lists the ones to leave out there.
 
+What you'd rather keep out of a shared dotfiles repo, such as a server or your accounts, can go in
+`rustybar.local.toml` next to `rustybar.toml`: its tables are merged over those of `rustybar.toml`,
+key by key, and any other value replaces the one there.
+
 ### Home Assistant
 
 The widget shows the entities you list, in groups, and needs a

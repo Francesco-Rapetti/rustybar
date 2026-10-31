@@ -1,5 +1,7 @@
 //! `~/.config/rustybar/rustybar.toml`: the bar, the theme, which widgets go where and their options.
-//! Every key has a default, so an empty file (or none) gives a working bar.
+//! Every key has a default, so an empty file (or none) gives a working bar. `rustybar.local.toml`
+//! next to it, if there is one, goes over it: for what stays out of a shared repo, such as a server
+//! or accounts.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -153,6 +155,10 @@ pub fn config_path() -> PathBuf {
     config_dir().join("rustybar.toml")
 }
 
+pub fn local_path() -> PathBuf {
+    config_dir().join("rustybar.local.toml")
+}
+
 /// Reads the config, writing the default one first if there is none. An error keeps the message
 /// for the bar to show; the caller keeps the config it had.
 pub fn load() -> Result<Config, String> {
@@ -162,7 +168,25 @@ pub fn load() -> Result<Config, String> {
         let _ = std::fs::write(&path, DEFAULT_CONFIG);
     }
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    parse(&text).map_err(|e| format!("{}: {e}", short(&path)))
+    let local = local_path();
+    let Ok(more) = std::fs::read_to_string(&local) else {
+        return parse(&text).map_err(|e| format!("{}: {e}", short(&path)));
+    };
+    let mut table: toml::Table = text.parse().map_err(|e| format!("{}: {e}", short(&path)))?;
+    merge(&mut table, more.parse().map_err(|e| format!("{}: {e}", short(&local)))?);
+    toml::Value::Table(table).try_into().map_err(|e: toml::de::Error| format!("{} + {}: {e}", short(&path), short(&local)))
+}
+
+/// Puts `more` over `base`: tables merge key by key, anything else (arrays too) is replaced.
+fn merge(base: &mut toml::Table, more: toml::Table) {
+    for (key, value) in more {
+        match (base.get_mut(&key), value) {
+            (Some(toml::Value::Table(b)), toml::Value::Table(m)) => merge(b, m),
+            (_, value) => {
+                base.insert(key, value);
+            }
+        }
+    }
 }
 
 pub fn parse(text: &str) -> Result<Config, String> {
@@ -206,6 +230,16 @@ impl Options {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_goes_over() {
+        let mut base: toml::Table = "[layout]\nright = [\"clock\"]\n[widgets.home]\ndashboard = \"/\"".parse().unwrap();
+        merge(&mut base, "[layout]\nright = [\"home\", \"clock\"]\n[widgets.home]\nserver = \"http://ha.local\"".parse().unwrap());
+        let c: Config = toml::Value::Table(base).try_into().unwrap();
+        assert_eq!(c.layout.right, vec!["home", "clock"]);
+        let home = Options(c.widgets["home"].clone());
+        assert_eq!((home.str("server"), home.str("dashboard")), (Some("http://ha.local"), Some("/")));
+    }
 
     #[test]
     fn default_file_parses() {

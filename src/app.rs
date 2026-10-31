@@ -825,6 +825,12 @@ impl App {
             if !app.closing.is_empty() {
                 app.closing.remove(0);
             }
+            // What the popup drew is off screen now: its bitmaps go, and so do the pages malloc
+            // keeps after a free, or they would count in the footprint until something reused them
+            if app.popup.is_none() && app.closing.is_empty() {
+                crate::gfx::trim_cache(0);
+                release_memory();
+            }
         });
         self.dirty = true;
     }
@@ -894,6 +900,15 @@ fn config_error_pill(t: &Theme, err: &str) -> Node {
     .background(t.red)
     .radius(t.pill_radius)
     .click(Action::Open(config::config_path().display().to_string()))
+}
+
+/// Gives the free pages of every malloc zone back to macOS.
+fn release_memory() {
+    unsafe extern "C" {
+        fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: usize) -> usize;
+    }
+    // A null zone is all of them, and a goal of 0 as much as they can
+    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
 }
 
 #[allow(dead_code)]
