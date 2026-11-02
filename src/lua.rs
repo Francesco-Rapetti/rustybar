@@ -213,6 +213,14 @@ impl Host {
         Ok(())
     }
 
+    /// A new theme, for `rb.theme` and the colors the widgets name.
+    pub fn retheme(&self, theme: &Theme) {
+        *self.0.theme.borrow_mut() = theme.clone();
+        if let Err(e) = self.set_theme(theme) {
+            crate::log(&format!("lua: {e}"));
+        }
+    }
+
     /// `rb.theme`: the palette as hex strings and the sizes.
     fn set_theme(&self, theme: &Theme) -> mlua::Result<()> {
         let lua = &self.0.lua;

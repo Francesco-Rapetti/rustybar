@@ -4,6 +4,9 @@
 
 use std::collections::HashMap;
 
+use objc2::rc::Retained;
+use objc2_app_kit::{NSColor, NSColorSpace};
+
 use crate::config::ThemeConfig;
 use crate::gfx::{FontSpec, Rgba, Weight};
 
@@ -37,6 +40,10 @@ pub struct Theme {
     pub popup_blur: bool,
     pub row_radius: f64,
     pub animations: bool,
+    /// Liquid Glass behind the pills and the popups, instead of the palette's `base`.
+    pub glass: bool,
+    /// The pills' glass is clear, as the Dock's, rather than frosted.
+    pub clear_glass: bool,
 }
 
 /// The colors every preset fills, in the order of `Preset::colors`: Catppuccin's, so that `sky` or
@@ -263,11 +270,96 @@ pub const PRESETS: &[Preset] = &[
     },
 ];
 
-/// The preset called `name`, also written as its label (`Rosé Pine Moon`), and Catppuccin's
-/// flavors without the prefix (`latte`).
+/// The preset that follows macOS, and the default: its system colors, light or dark as the Mac is,
+/// the accent of System Settings, and Liquid Glass behind the pills and the popups.
+pub const MACOS: (&str, &str) = ("macos", "macOS");
+
+/// Every preset's name and label, macOS first.
+pub fn presets() -> impl Iterator<Item = (&'static str, &'static str)> {
+    std::iter::once(MACOS).chain(PRESETS.iter().map(|p| (p.name, p.label)))
+}
+
+/// A preset's name as written in the config, as its name.
+fn normalize(name: &str) -> String {
+    name.trim().to_lowercase().replace('é', "e").replace([' ', '_'], "-")
+}
+
+/// The built-in palette called `name`, also written as its label (`Rosé Pine Moon`), and
+/// Catppuccin's flavors without the prefix (`latte`).
 pub fn preset(name: &str) -> Option<&'static Preset> {
-    let name = name.trim().to_lowercase().replace('é', "e").replace([' ', '_'], "-");
+    let name = normalize(name);
     PRESETS.iter().find(|p| p.name == name || p.name.strip_prefix("catppuccin-") == Some(name.as_str()))
+}
+
+pub fn is_macos(name: &str) -> bool {
+    normalize(name) == MACOS.0
+}
+
+pub fn known(name: &str) -> bool {
+    is_macos(name) || preset(name).is_some()
+}
+
+/// The colors of the preset called `name`, by palette name: those of `NAMES` and `accent`, the
+/// default of `primary` (a built-in palette's `mauve`).
+pub fn palette(name: &str) -> Option<Vec<(&'static str, Rgba)>> {
+    if is_macos(name) {
+        return Some(system_palette());
+    }
+    let p = preset(name)?;
+    let mut colors: Vec<(&str, Rgba)> = NAMES.iter().copied().zip(p.colors.iter().map(|v| rgb(*v))).collect();
+    colors.extend(p.color("mauve").map(|c| ("accent", c)));
+    Some(colors)
+}
+
+/// The system colors as macOS draws them now, light or dark, on Catppuccin's names. The grays are
+/// the label color at the opacities of the secondary and tertiary labels and of the fills, so on
+/// glass they let it show through as the system's own controls do.
+fn system_palette() -> Vec<(&'static str, Rgba)> {
+    let srgb = NSColorSpace::sRGBColorSpace();
+    // Resolved in the current appearance: the app's, which is the system's
+    let get = |c: Retained<NSColor>| {
+        c.colorUsingColorSpace(&srgb)
+            .map(|c| Rgba(c.redComponent(), c.greenComponent(), c.blueComponent(), c.alphaComponent()))
+            .unwrap_or(Rgba(1.0, 0.0, 1.0, 1.0))
+    };
+    let label = get(NSColor::labelColor());
+    let secondary = get(NSColor::secondaryLabelColor());
+    let tertiary = get(NSColor::tertiaryLabelColor());
+    let fill = |a: f64| Rgba(label.0, label.1, label.2, a);
+    let base = get(NSColor::windowBackgroundColor());
+    let on_color = get(NSColor::alternateSelectedControlTextColor());
+    let (pink, red, orange) = (get(NSColor::systemPinkColor()), get(NSColor::systemRedColor()), get(NSColor::systemOrangeColor()));
+    vec![
+        ("rosewater", pink),
+        ("flamingo", pink),
+        ("pink", pink),
+        ("mauve", get(NSColor::systemPurpleColor())),
+        ("red", red),
+        ("maroon", red),
+        ("peach", orange),
+        ("yellow", get(NSColor::systemYellowColor())),
+        ("green", get(NSColor::systemGreenColor())),
+        ("teal", get(NSColor::systemMintColor())),
+        ("sky", get(NSColor::systemCyanColor())),
+        ("sapphire", get(NSColor::systemTealColor())),
+        ("blue", get(NSColor::systemBlueColor())),
+        ("lavender", get(NSColor::systemIndigoColor())),
+        ("text", label),
+        ("subtext1", label.mix(secondary, 0.5)),
+        ("subtext0", secondary),
+        ("overlay2", secondary.mix(tertiary, 1.0 / 3.0)),
+        ("overlay1", secondary.mix(tertiary, 2.0 / 3.0)),
+        ("overlay0", tertiary),
+        ("surface2", fill(0.2)),
+        ("surface1", fill(0.14)),
+        ("surface0", fill(0.1)),
+        ("base", base),
+        ("mantle", base.mix(Rgba(0.0, 0.0, 0.0, 1.0), 0.08)),
+        // What the other palettes use for text on their colors (`crust`), as macOS does: white
+        ("crust", on_color),
+        ("accent", get(NSColor::controlAccentColor())),
+        ("on_primary", on_color),
+    ]
 }
 
 fn rgb(v: u32) -> Rgba {
@@ -277,11 +369,14 @@ fn rgb(v: u32) -> Rgba {
 
 impl Theme {
     pub fn from_config(c: &ThemeConfig) -> Theme {
-        let preset = preset(&c.preset).unwrap_or_else(|| {
-            crate::log(&format!("unknown theme preset {:?}, using {}", c.preset, PRESETS[0].name));
-            &PRESETS[0]
-        });
-        let mut palette: HashMap<String, Rgba> = NAMES.iter().zip(preset.colors).map(|(k, v)| (k.to_string(), rgb(v))).collect();
+        let (colors, glass) = match palette(&c.preset) {
+            Some(colors) => (colors, is_macos(&c.preset)),
+            None => {
+                crate::log(&format!("unknown theme preset {:?}, using {}", c.preset, MACOS.0));
+                (system_palette(), true)
+            }
+        };
+        let mut palette: HashMap<String, Rgba> = colors.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         palette.insert("transparent".into(), Rgba::TRANSPARENT);
         palette.insert("white".into(), Rgba(1.0, 1.0, 1.0, 1.0));
         palette.insert("black".into(), Rgba(0.0, 0.0, 0.0, 1.0));
@@ -296,7 +391,7 @@ impl Theme {
                 .unwrap_or(Rgba(1.0, 0.0, 1.0, 1.0))
         };
         let mut theme = Theme {
-            primary: get(&c.primary, "mauve"),
+            primary: get(&c.primary, "accent"),
             on_primary: get("on_primary", "base"),
             text: get("text", "text"),
             subtext: get("subtext", "subtext0"),
@@ -324,6 +419,8 @@ impl Theme {
             popup_blur: c.popup_blur,
             row_radius: c.row_radius,
             animations: c.animations,
+            glass,
+            clear_glass: !c.pill_glass.trim().eq_ignore_ascii_case("regular"),
         };
         palette.insert("primary".into(), theme.primary);
         palette.insert("on_primary".into(), theme.on_primary);
@@ -366,7 +463,7 @@ impl Theme {
 
     /// The background of a dashboard tile: a lit one takes a little of its color.
     pub fn tile(&self, color: Rgba, lit: bool) -> Rgba {
-        if lit { self.surface.with_alpha(0.55).mix(color.with_alpha(0.55), 0.22) } else { self.surface.with_alpha(0.55) }
+        if lit { self.surface.faded(0.55).mix(color.faded(0.55), 0.22) } else { self.surface.faded(0.55) }
     }
 }
 
@@ -378,7 +475,7 @@ fn resolve(palette: &HashMap<String, Rgba>, s: &str) -> Option<Rgba> {
     // `name@0.5`: a palette color with an alpha
     if let Some((name, alpha)) = s.split_once('@') {
         let base = resolve(palette, name)?;
-        return Some(base.with_alpha(alpha.parse().ok()?));
+        return Some(base.faded(alpha.parse().ok()?));
     }
     Rgba::parse(s)
 }
@@ -396,6 +493,19 @@ mod tests {
         assert_eq!(preset("latte").unwrap().name, "catppuccin-latte");
         assert_eq!(preset("Catppuccin Frappé").unwrap().name, "catppuccin-frappe");
         assert!(preset("nope").is_none());
+        assert!(known("macOS") && !known("nope"));
+    }
+
+    /// The system's palette has every name of the others, and glass.
+    #[test]
+    fn macos_has_every_name() {
+        let theme = Theme::from_config(&ThemeConfig::default());
+        assert!(theme.glass);
+        for name in NAMES.iter().chain(&["accent", "on_primary"]) {
+            assert!(theme.color(name).is_some_and(|c| c.3 > 0.0), "{name}");
+        }
+        assert_eq!(theme.primary, theme.color("accent").unwrap());
+        assert!(!Theme::from_config(&ThemeConfig { preset: "dracula".into(), ..Default::default() }).glass);
     }
 
     /// From the text down to the background each shade is farther from the text, in dark and light
@@ -418,7 +528,7 @@ mod tests {
 
     #[test]
     fn resolves_names_hex_and_alpha() {
-        let theme = Theme::from_config(&ThemeConfig::default());
+        let theme = Theme::from_config(&ThemeConfig { preset: "catppuccin-mocha".into(), primary: "mauve".into(), ..Default::default() });
         assert_eq!(theme.color("mauve"), Rgba::parse("#cba6f7"));
         assert_eq!(theme.color("primary"), theme.color("mauve"));
         assert_eq!(theme.color("0xffcba6f7"), Rgba::parse("#cba6f7"));

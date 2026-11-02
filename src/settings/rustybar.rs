@@ -115,7 +115,7 @@ pub fn bar(f: &mut Form) {
 
 // ---- the theme ---------------------------------------------------------------------------------
 
-const ACCENTS: &[&str] = &["rosewater", "flamingo", "pink", "mauve", "red", "maroon", "peach", "yellow", "green", "teal", "sky", "sapphire", "blue", "lavender"];
+const ACCENTS: &[&str] = &["accent", "rosewater", "flamingo", "pink", "mauve", "red", "maroon", "peach", "yellow", "green", "teal", "sky", "sapphire", "blue", "lavender"];
 
 pub fn theme(f: &mut Form) {
     let d = Config::default().theme;
@@ -125,7 +125,13 @@ pub fn theme(f: &mut Form) {
     f.group(Some(t("Colori", "Colors")));
     // Each with its own color for the current accent
     let primary = store::get_str(&rb("theme.primary")).unwrap_or_else(|| d.primary.clone());
-    let presets = theme::PRESETS.iter().map(|p| Opt { value: p.name.into(), label: p.label.into(), swatch: p.color(&primary).or(p.color("mauve")) }).collect();
+    let presets = theme::presets()
+        .map(|(name, label)| {
+            let colors = theme::palette(name).unwrap_or_default();
+            let color = |n: &str| colors.iter().find(|(k, _)| *k == n).map(|(_, c)| *c);
+            Opt { value: name.into(), label: label.into(), swatch: color(&primary).or(color("accent")) }
+        })
+        .collect();
     f.choice_at(t("Palette", "Palette"), None, &rb("theme.preset"), presets, &d.preset);
     let accents = ACCENTS.iter().map(|n| Opt { value: n.to_string(), label: n.to_string(), swatch: theme.color(n) }).collect();
     f.choice_at(t("Colore principale", "Accent"), Some(t("Il workspace attivo, oggi, le azioni, i cursori e le barre", "The focused workspace, today, actions, sliders and bars")), &rb("theme.primary"), accents, &d.primary);
@@ -147,15 +153,22 @@ pub fn theme(f: &mut Form) {
     f.group(Some(t("Pillole", "Pills")));
     f.number_at(t("Altezza", "Height"), None, &rb("theme.pill_height"), d.pill_height, Num::new(12.0, 100.0, 1.0, 0));
     f.number_at(t("Raggio degli angoli", "Corner radius"), None, &rb("theme.pill_radius"), d.pill_radius, Num::new(0.0, 50.0, 1.0, 0));
-    f.number_at(t("Bordo", "Border"), None, &rb("theme.pill_border"), d.pill_border, Num::new(0.0, 10.0, 0.5, 1));
+    f.number_at(t("Bordo", "Border"), Some(t("Non sul vetro", "Not on glass")), &rb("theme.pill_border"), d.pill_border, Num::new(0.0, 10.0, 0.5, 1));
+    f.choice_at(
+        t("Vetro", "Glass"),
+        Some(t("Con la palette macOS", "With the macOS palette")),
+        &rb("theme.pill_glass"),
+        opts(&[("clear", t("Trasparente, come il Dock", "Clear, as the Dock")), ("regular", t("Smerigliato, come i menu", "Frosted, as the menus"))]),
+        &d.pill_glass,
+    );
     f.number_at(t("Spazio interno", "Padding"), None, &rb("theme.pill_padding"), d.pill_padding, Num::new(0.0, 40.0, 1.0, 0));
     f.number_at(t("Spazio fra le pillole", "Gap between pills"), None, &rb("theme.item_gap"), d.item_gap, Num::new(0.0, 40.0, 1.0, 0));
 
     f.group(Some("Popup"));
     f.number_at(t("Raggio degli angoli", "Corner radius"), None, &rb("theme.popup_radius"), d.popup_radius, Num::new(0.0, 50.0, 1.0, 0));
     f.number_at(t("Bordo", "Border"), None, &rb("theme.popup_border"), d.popup_border, Num::new(0.0, 10.0, 0.5, 1));
-    f.number_at(t("Opacità", "Opacity"), None, &rb("theme.popup_opacity"), d.popup_opacity, Num::new(0.2, 1.0, 0.05, 2));
-    f.toggle_at(t("Sfocatura dello sfondo", "Background blur"), None, &rb("theme.popup_blur"), d.popup_blur);
+    f.number_at(t("Opacità", "Opacity"), Some(t("Senza vetro", "Without glass")), &rb("theme.popup_opacity"), d.popup_opacity, Num::new(0.2, 1.0, 0.05, 2));
+    f.toggle_at(t("Sfocatura dello sfondo", "Background blur"), Some(t("Senza vetro", "Without glass")), &rb("theme.popup_blur"), d.popup_blur);
     f.number_at(t("Raggio delle righe", "Row radius"), Some(t("L'evidenziazione delle righe al passaggio del mouse", "The highlight of rows under the mouse")), &rb("theme.row_radius"), d.row_radius, Num::new(0.0, 20.0, 1.0, 0));
     f.toggle_at(t("Animazioni", "Animations"), Some(t("Si fermano anche con Riduci movimento nelle Impostazioni di Sistema", "They also stop with Reduce Motion in System Settings")), &rb("theme.animations"), d.animations);
 

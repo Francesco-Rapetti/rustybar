@@ -206,7 +206,7 @@ impl Aerospace {
             .radius(5.0)
             .click(rx.action(&format!("win:{}", w.id)));
         if Some(w.id) == self.focused_win {
-            tile = tile.background(th.base.with_alpha(0.35));
+            tile = tile.background(th.base.faded(0.35));
         }
         tile
     }
@@ -261,7 +261,7 @@ impl Widget for Aerospace {
                     .radius(7.0)
                     .click(rx.action(&format!("ws:{ws}")));
                 if focused {
-                    group = group.hover(th.on_primary.with_alpha(0.12));
+                    group = group.hover(th.on_primary.faded(0.12));
                 }
                 group
             })

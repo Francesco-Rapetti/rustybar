@@ -139,6 +139,8 @@ pub struct Style {
     pub opacity: f64,
     /// Placed at this position in its parent instead of in the flow.
     pub at: Option<(f64, f64)>,
+    /// Liquid Glass behind it, with its radius (a pill on the glass theme).
+    pub glass: bool,
 }
 
 impl Default for Style {
@@ -160,6 +162,7 @@ impl Default for Style {
             radius: 0.0,
             opacity: 1.0,
             at: None,
+            glass: false,
         }
     }
 }
@@ -308,6 +311,11 @@ impl Node {
 
     pub fn opacity(mut self, o: f64) -> Node {
         self.style.opacity = o;
+        self
+    }
+
+    pub fn glass(mut self) -> Node {
+        self.style.glass = true;
         self
     }
 

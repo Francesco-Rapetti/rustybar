@@ -27,6 +27,15 @@ pub struct Hit {
     pub kind: HitKind,
 }
 
+/// Where Liquid Glass goes behind a glass node, in surface coordinates (top-left origin).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Glass {
+    pub path: String,
+    pub rect: CGRect,
+    pub radius: f64,
+    pub opacity: f64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum HitKind {
     Click,
@@ -75,6 +84,10 @@ pub struct Surface {
     pub scrolls: HashMap<String, ScrollState>,
     pub hovered: Option<String>,
     pub highlight: Rgba,
+    /// The glass nodes of the last render, for the window to put its glass views behind them.
+    pub glass: Vec<Glass>,
+    /// Draws the glass nodes with this fill instead (a popup, which is glass already).
+    pub glass_fill: Option<Rgba>,
     entries: HashMap<String, Entry>,
     generation: u64,
     /// Sliders being dragged keep their value until released.
@@ -120,6 +133,8 @@ impl Surface {
             scrolls: HashMap::new(),
             hovered: None,
             highlight,
+            glass: Vec::new(),
+            glass_fill: None,
             entries: HashMap::new(),
             generation: 0,
             dragging: None,
@@ -142,6 +157,7 @@ impl Surface {
     pub fn render(&mut self, node: &Node, laid: &Laid) {
         self.generation += 1;
         self.hits.clear();
+        self.glass.clear();
         let animate = self.animate;
         CATransaction::begin();
         CATransaction::setDisableActions(!animate);
@@ -235,6 +251,7 @@ impl Surface {
         let scale = self.scale;
         let hovered = self.hovered.as_deref() == Some(path.as_str());
         let highlight = self.highlight;
+        let glass_fill = self.glass_fill;
         let dragging = self.dragging.clone();
         let knob = self.slider_hovered.as_deref() == Some(path.as_str()) || dragging.as_ref().is_some_and(|(p, _)| *p == path);
         let entry = self.entries.get_mut(&path).unwrap();
@@ -250,10 +267,11 @@ impl Surface {
         if (layer.opacity() - opacity).abs() > f32::EPSILON {
             layer.setOpacity(opacity);
         }
-        if entry.background != s.background || created {
-            entry.background = s.background;
+        let background = if s.glass { glass_fill.or(s.background) } else { s.background };
+        if entry.background != background || created {
+            entry.background = background;
             if !hovered {
-                layer.setBackgroundColor(s.background.map(|c| c.cg()).as_deref());
+                layer.setBackgroundColor(background.map(|c| c.cg()).as_deref());
             }
         }
         layer.setCornerRadius(s.radius);
@@ -400,8 +418,11 @@ impl Surface {
             ind.removeFromSuperlayer();
         }
 
-        // Interactions, in surface coordinates
+        // Interactions and glass, in surface coordinates
         let abs = rect(ox + laid.x, oy + laid.y, laid.w, laid.h);
+        if s.glass && glass_fill.is_none() {
+            self.glass.push(Glass { path: path.clone(), rect: abs, radius: s.radius, opacity: s.opacity });
+        }
         let visible = match clip {
             Some(c) => intersect(abs, c),
             None => Some(abs),

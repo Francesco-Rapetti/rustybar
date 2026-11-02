@@ -11,15 +11,18 @@ use std::time::Instant;
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::MainThreadMarker;
+use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAnimatablePropertyContainer, NSAnimationContext, NSApplicationDidChangeScreenParametersNotification,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSApplicationDidChangeScreenParametersNotification,
     NSEvent, NSEventMask, NSMainMenuWindowLevel, NSPopUpMenuWindowLevel, NSStatusWindowLevel,
-    NSWorkspace, NSWorkspaceDidWakeNotification,
+    NSSystemColorsDidChangeNotification, NSWorkspace, NSWorkspaceDidWakeNotification,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSNumber, NSObjectProtocol, ns_string};
+use objc2_foundation::{
+    NSKeyValueObservingOptions, NSNotification, NSNotificationCenter, NSNumber, NSObjectNSKeyValueObserverRegistration,
+    NSObjectProtocol, NSString, ns_string,
+};
 use objc2_quartz_core::{CAMediaTiming, CASpringAnimation};
 
 use crate::cache::Cache;
@@ -28,7 +31,7 @@ use crate::display::{self, DisplayInfo};
 use crate::fit::{self, Form, Room};
 use crate::gfx::Weight;
 use crate::runtime::{self, Timer};
-use crate::surface::{Mouse, SurfaceId, Window};
+use crate::surface::{Backdrop, Mouse, SurfaceId, Window};
 use crate::theme::Theme;
 use crate::ui::{Action, Align, HitKind, Kind, Layout, Node, Surface};
 use crate::widgets::{self, Cx, Effect, Event, Rx, Widget};
@@ -87,6 +90,8 @@ pub struct App {
     pressed: Option<(SurfaceId, String)>,
     edge_requested: Option<String>,
     observers: Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
+    /// Watches the app's appearance, which follows macOS between light and dark.
+    appearance: Option<Retained<AppearanceObserver>>,
     monitor: Option<Retained<AnyObject>>,
     watcher: Option<notify::RecommendedWatcher>,
     closing: Vec<Window>,
@@ -95,6 +100,20 @@ pub struct App {
 }
 
 static GEN: AtomicU64 = AtomicU64::new(1);
+
+define_class!(
+    /// Told by key-value observing when the app's appearance changes: macOS went light or dark.
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    pub struct AppearanceObserver;
+
+    impl AppearanceObserver {
+        #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
+        fn observe_value(&self, _key: Option<&NSString>, _object: Option<&AnyObject>, _change: Option<&AnyObject>, _context: *mut std::ffi::c_void) {
+            with(|app| app.retheme());
+        }
+    }
+);
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
@@ -148,6 +167,7 @@ pub fn start(mtm: MainThreadMarker) {
         pressed: None,
         edge_requested: None,
         observers: Vec::new(),
+        appearance: None,
         monitor: None,
         watcher: None,
         closing: Vec::new(),
@@ -237,6 +257,27 @@ impl App {
         self.reconcile_displays();
         self.create_widgets();
         crate::log("reloaded");
+    }
+
+    /// The theme again, with the widgets running: macOS changed between light and dark, or its
+    /// accent, which the macOS palette follows.
+    fn retheme(&mut self) {
+        let theme = Theme::from_config(&self.config.theme);
+        if theme.palette == self.theme.palette {
+            return;
+        }
+        self.theme = theme;
+        for bar in &mut self.bars {
+            bar.surface.highlight = self.theme.highlight;
+        }
+        if let Some(popup) = &mut self.popup {
+            popup.surface.highlight = self.theme.highlight;
+            popup.surface.glass_fill = Some(self.theme.surface);
+        }
+        if let Some(lua) = &self.lua {
+            lua.retheme(&self.theme);
+        }
+        self.dirty = true;
     }
 
     // ---- widgets -------------------------------------------------------------------------------
@@ -539,6 +580,7 @@ impl App {
             let bar = &mut self.bars[b];
             bar.surface.animate = animate && self.first_frame_logged;
             bar.surface.render(&tree, &laid);
+            bar.window.set_glass(&bar.surface.glass, self.theme.clear_glass, bar.surface.animate);
             // Where each widget's pill is, for its popup
             bar.items.clear();
             for (group, gl) in tree.children.iter().zip(&laid.children) {
@@ -611,7 +653,7 @@ impl App {
                 None => {
                     let mut surface = Surface::new(d.scale, self.theme.highlight);
                     surface.animate = false;
-                    let window = Window::new(self.mtm, SurfaceId::Bar(d.id), frame, level, &surface.root, None);
+                    let window = Window::new(self.mtm, SurfaceId::Bar(d.id), frame, level, &surface.root, Backdrop::None, 0.0);
                     window.show();
                     self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new() });
                     changed = true;
@@ -655,6 +697,21 @@ impl App {
             });
         });
         let o = unsafe { ws_center.addObserverForName_object_queue_usingBlock(Some(NSWorkspaceDidWakeNotification), None, None, &wake) };
+        self.observers.push(o);
+
+        // The macOS palette follows light and dark mode, and the accent color
+        let observer: Retained<AppearanceObserver> = unsafe { msg_send![AppearanceObserver::alloc(self.mtm), init] };
+        unsafe {
+            NSApplication::sharedApplication(self.mtm).addObserver_forKeyPath_options_context(
+                &observer,
+                ns_string!("effectiveAppearance"),
+                NSKeyValueObservingOptions::New,
+                std::ptr::null_mut(),
+            )
+        };
+        self.appearance = Some(observer);
+        let colors = RcBlock::new(|_: NonNull<NSNotification>| with(|app| app.retheme()));
+        let o = unsafe { center.addObserverForName_object_queue_usingBlock(Some(NSSystemColorsDidChangeNotification), None, None, &colors) };
         self.observers.push(o);
 
         // A click anywhere else closes the popup
@@ -849,12 +906,21 @@ impl App {
             CGPoint::new(bar_frame.origin.x + item.origin.x, bar_frame.origin.y + bar_frame.size.height - item.origin.y - item.size.height),
             item.size,
         );
-        let blur = self.theme.popup_blur.then_some(self.theme.popup_radius);
-        let mut surface = Surface::new(d.scale, self.theme.highlight);
+        let t = &self.theme;
+        let backdrop = if t.glass {
+            Backdrop::Glass
+        } else if t.popup_blur {
+            Backdrop::Blur
+        } else {
+            Backdrop::None
+        };
+        let mut surface = Surface::new(d.scale, t.highlight);
         surface.animate = false;
+        // The pills of a `⋯` popup are on its glass already
+        surface.glass_fill = Some(t.surface);
         let frame = CGRect::new(anchor.origin, CGSize::new(10.0, 10.0));
         let level = NSPopUpMenuWindowLevel;
-        let window = Window::new(self.mtm, SurfaceId::Popup, frame, level, &surface.root, blur);
+        let window = Window::new(self.mtm, SurfaceId::Popup, frame, level, &surface.root, backdrop, t.popup_radius);
         window.panel.setAlphaValue(0.0);
         self.popup = Some(Popup { widget: widget.to_string(), display: d.id, window, surface, anchor, side });
         let name = widget.to_string();
@@ -921,11 +987,10 @@ impl App {
         let Some(content) = content else { return false };
         let t = &self.theme;
         let alpha = if t.popup_blur { t.popup_opacity } else { 1.0 };
-        let mut tree = Node::column(vec![content])
-            .key("popup")
-            .background(t.base.with_alpha(alpha))
-            .border(t.popup_border, t.surface)
-            .radius(t.popup_radius);
+        let mut tree = Node::column(vec![content]).key("popup").radius(t.popup_radius);
+        if !t.glass {
+            tree = tree.background(t.base.faded(alpha)).border(t.popup_border, t.surface);
+        }
         tree.normalize();
         let layout = Layout { scale: d.scale };
         let (mut w, mut h) = layout.intrinsic(&tree, None);

@@ -69,14 +69,20 @@ impl<'a> Rx<'a> {
     /// The rounded background of a component in the bar.
     pub fn pill(&self, children: Vec<Node>) -> Node {
         let t = self.theme;
-        Node::row(children)
+        let pill = Node::row(children)
             .key(self.name)
             .height(t.pill_height)
             .padding(0.0, t.pill_padding, 0.0, t.pill_padding)
             .gap(6.0)
-            .background(t.base)
-            .border(t.pill_border, t.surface)
-            .radius(t.pill_radius)
+            .radius(t.pill_radius);
+        if !t.glass {
+            pill.background(t.base).border(t.pill_border, t.surface)
+        } else if t.clear_glass {
+            // Clear glass shows the wallpaper as it is: a veil of the base keeps the text legible
+            pill.glass().background(t.base.faded(0.3))
+        } else {
+            pill.glass()
+        }
     }
 
     /// The usual popup: a column with the popup's padding and a minimum width.

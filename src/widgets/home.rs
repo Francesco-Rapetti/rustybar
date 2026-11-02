@@ -819,14 +819,14 @@ impl Home {
                         .size(30.0, 24.0)
                         .justify(Justify::Center)
                         .radius(6.0)
-                        .background(if selected { c.with_alpha(0.22) } else { th.surface.with_alpha(0.7) })
+                        .background(if selected { c.faded(0.22) } else { th.surface.faded(0.7) })
                         .click(rx.action(&format!("mode:{id}:{m}")))
                         .key(format!("mode-{m}"))
                 })
                 .collect();
             row.push(Node::spacer());
             let button = |symbol: &str, action: String| {
-                Node::row(vec![Node::symbol(symbol, 11.0, Weight::Bold, th.text)]).size(26.0, 24.0).justify(Justify::Center).radius(6.0).background(th.surface.with_alpha(0.7)).click(rx.action(&action)).key(action)
+                Node::row(vec![Node::symbol(symbol, 11.0, Weight::Bold, th.text)]).size(26.0, 24.0).justify(Justify::Center).radius(6.0).background(th.surface.faded(0.7)).click(rx.action(&action)).key(action)
             };
             row.push(button("minus", format!("temp:{id}:-")));
             let target = self.shown(id).map(degrees).unwrap_or_default();
@@ -914,7 +914,7 @@ impl Home {
             .gap(6.0)
             .padding(6.0, 12.0, 6.0, 10.0)
             .radius(14.0)
-            .background(th.surface.with_alpha(0.7))
+            .background(th.surface.faded(0.7))
             .key(id);
         if !unavailable {
             chip = chip.click(rx.action(&format!("tap:{id}")));

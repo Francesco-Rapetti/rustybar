@@ -84,8 +84,8 @@ fn main() {
         Some("check") => {
             match config::load() {
                 Ok(c) => {
-                    if theme::preset(&c.theme.preset).is_none() {
-                        let names: Vec<&str> = theme::PRESETS.iter().map(|p| p.name).collect();
+                    if !theme::known(&c.theme.preset) {
+                        let names: Vec<&str> = theme::presets().map(|(name, _)| name).collect();
                         eprintln!("unknown theme preset {:?}: one of {}", c.theme.preset, names.join(", "));
                         std::process::exit(1);
                     }

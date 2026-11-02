@@ -153,6 +153,15 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   di Catppuccin (colori mancanti ripetuti, grigi mancanti mescolati; un test controlla l'ordine dal
   testo allo sfondo e il contrasto). Provate tutte coi dati finti sulla barra di prova (barra e
   popup di `clock`, `audio`, `system`); un nome sbagliato va nel log e `rustybar check` lo rifiuta.
+  Predefinito `macos`: colori di sistema (chiaro/scuro e accento seguiti con KVO su
+  `effectiveAppearance` e `NSSystemColorsDidChangeNotification`), SF Pro, pill a capsula su
+  Liquid Glass (`NSGlassEffectView` sotto la `SurfaceView`, uno per pill; `pill_glass` `clear` con
+  un velo di `base` a 0,3, o `regular`), popup di vetro `regular`; sotto macOS 26 una sfocatura. Il
+  vetro è disegnato da SwiftUI, che con l'`animator` di AppKit arriva un frame dopo: posizione e
+  dissolvenze vanno con animazioni CA sul layer della vista, nella transazione dei layer, e solo la
+  dimensione con l'`animator`. Provato coi dati finti su sfondi colorati, chiaro (con
+  `-NSRequiresAquaSystemAppearance YES`) e scuro, e a metà animazione: ~24 MB, ~0,1% CPU,
+  0 processi.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

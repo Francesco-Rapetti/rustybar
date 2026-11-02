@@ -10,25 +10,27 @@ offset = 0           # moves the bar down, e.g. to try RustyBar under another ba
 popup_gap = 6        # between the pills and their popups
 
 [theme]
-# The palette: catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe, catppuccin-latte,
-# dracula, everforest-dark, everforest-light, gruvbox-dark, gruvbox-light, kanagawa-wave,
-# kanagawa-dragon, kanagawa-lotus, nord, one-dark, one-light, rose-pine, rose-pine-moon,
-# rose-pine-dawn, solarized-dark, solarized-light, tokyo-night, tokyo-night-storm,
-# tokyo-night-moon, tokyo-night-day. Every one has Catppuccin's color names (below).
-preset = "catppuccin-mocha"
-primary = "mauve"             # the accent: focused workspace, today, actions, sliders and bars
-font = "Helvetica Neue"
+# The palette. macos: the system colors, light or dark as the Mac is, with the accent of System
+# Settings, on Liquid Glass. Or catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe,
+# catppuccin-latte, dracula, everforest-dark, everforest-light, gruvbox-dark, gruvbox-light,
+# kanagawa-wave, kanagawa-dragon, kanagawa-lotus, nord, one-dark, one-light, rose-pine,
+# rose-pine-moon, rose-pine-dawn, solarized-dark, solarized-light, tokyo-night,
+# tokyo-night-storm, tokyo-night-moon, tokyo-night-day. Every one has Catppuccin's color names.
+preset = "macos"
+primary = "accent"            # the accent: focused workspace, today, actions, sliders and bars
+font = "System"               # SF Pro; or "Helvetica Neue", or any other family
 font_size = 13
 small_size = 11
 icon_size = 14
 pill_height = 28
-pill_radius = 10
-pill_border = 2
+pill_radius = 14
+pill_border = 2               # not on glass
+pill_glass = "clear"          # macos: clear, as the Dock, or regular, frosted as the menus
 pill_padding = 10
 item_gap = 8
-popup_radius = 10
-popup_opacity = 0.9
-popup_blur = true
+popup_radius = 16
+popup_opacity = 0.9           # without glass
+popup_blur = true             # without glass
 animations = true             # they also stop with Reduce Motion in System Settings
 
 # Override or add palette colors, by name or hex:

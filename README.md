@@ -132,11 +132,19 @@ type = "clock"
 timezone = "UTC"
 ```
 
-The palettes of `preset`, each from the theme's own repository:
+The default preset, `macos`, takes the system's colors: light or dark as the Mac is, with the accent
+color of System Settings as `accent` (the default `primary`), and it follows them when they change.
+Its pills are on Liquid Glass (macOS 26; a blur before): `pill_glass = "clear"` is the clear glass
+of the Dock, which bends the light at its edges, with a veil of the background color under the
+text so it stays legible on any wallpaper; `"regular"` is the frosted glass of the menus. Its popups
+are frosted glass. The font is the system's (SF Pro) and the pills are capsules.
+
+The other palettes of `preset`, each from the theme's own repository, have the pills on the
+palette's `base`, with a border:
 
 | Theme | Presets |
 | --- | --- |
-| [Catppuccin](https://catppuccin.com) | `catppuccin-mocha` (default), `catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte` |
+| [Catppuccin](https://catppuccin.com) | `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte` |
 | [Dracula](https://draculatheme.com) | `dracula` |
 | [Everforest](https://github.com/sainnhe/everforest) | `everforest-dark`, `everforest-light` |
 | [Gruvbox](https://github.com/morhetz/gruvbox) | `gruvbox-dark`, `gruvbox-light` |
@@ -152,8 +160,10 @@ Every preset has Catppuccin's color names (`rosewater`, `flamingo`, `pink`, `mau
 `subtext1`, `subtext0`, `overlay2`…`overlay0`, `surface2`…`surface0`, `base`, `mantle`, `crust`),
 so a color picked by name follows the preset. A theme with fewer colors repeats its nearest one
 (Dracula's `blue` is its purple, as in its terminal colors), and the grays it lacks between the
-text and the background are blends of the two around them. `[theme.colors]` overrides any of
-them, or adds new names.
+text and the background are blends of the two around them. In `macos` they are the system colors
+(`mauve` is purple, `teal` mint, `sky` cyan, `sapphire` teal, `lavender` indigo; the grays are the
+label and fill colors, translucent as macOS has them). `[theme.colors]` overrides any of them, or
+adds new names.
 
 The left and right sides never overlap, nor go under the notch. When they don't fit on a screen,
 first the widgets of `slim_first` (in `[displays]`) leave out what the bar can do without, in that order: by default

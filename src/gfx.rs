@@ -47,8 +47,10 @@ impl Rgba {
         }
     }
 
-    pub fn with_alpha(self, a: f64) -> Rgba {
-        Rgba(self.0, self.1, self.2, a)
+    /// At `a` of its opacity: the same as setting the alpha for an opaque color, and right for the
+    /// translucent ones of the macOS palette.
+    pub fn faded(self, a: f64) -> Rgba {
+        Rgba(self.0, self.1, self.2, self.3 * a)
     }
 
     /// Linear blend towards `other` by `t` (0 = self).

@@ -57,6 +57,8 @@ pub struct ThemeConfig {
     pub pill_height: f64,
     pub pill_radius: f64,
     pub pill_border: f64,
+    /// The glass of the pills on the `macos` preset: `clear`, as the Dock, or `regular`, frosted.
+    pub pill_glass: String,
     pub pill_padding: f64,
     pub item_gap: f64,
     pub popup_radius: f64,
@@ -71,23 +73,24 @@ pub struct ThemeConfig {
 impl Default for ThemeConfig {
     fn default() -> Self {
         ThemeConfig {
-            preset: "catppuccin-mocha".into(),
-            primary: "mauve".into(),
+            preset: "macos".into(),
+            primary: "accent".into(),
             colors: BTreeMap::new(),
-            font: "Helvetica Neue".into(),
+            font: "System".into(),
             font_size: 13.0,
             small_size: 11.0,
             icon_size: 14.0,
             pill_height: 28.0,
-            pill_radius: 10.0,
+            pill_radius: 14.0,
             pill_border: 2.0,
+            pill_glass: "clear".into(),
             pill_padding: 10.0,
             item_gap: 8.0,
-            popup_radius: 10.0,
+            popup_radius: 16.0,
             popup_border: 2.0,
             popup_opacity: 0.9,
             popup_blur: true,
-            row_radius: 6.0,
+            row_radius: 8.0,
             animations: true,
         }
     }
