@@ -1,7 +1,10 @@
-//! The sound: in the bar the output and the input in use, with the battery of Bluetooth ones;
-//! the Mac's own speakers and microphone, or the two halves of a headset, show as one. In the
-//! popup the volume of each, the devices to switch to, and the paired Bluetooth headphones and
-//! speakers to connect or disconnect.
+//! The sound: in the bar the output and the input in use, with the battery of Bluetooth ones and,
+//! unless `sliders = false`, a slider with the volume of each, the first thing to go when the bar
+//! has no room (`slim_first`, see `fit`); the Mac's own speakers and microphone, or the two halves
+//! of a headset, show as one, with both sliders. The popup is a dashboard: a tile for the volume of
+//! the output and one for the input, with the level and a slider; under them, two in a row, tiles
+//! for the devices to switch to (the one in use lit) and for the paired Bluetooth headphones and
+//! speakers, which a click connects or disconnects.
 //!
 //! CoreAudio tells when devices come and go and when their volume changes. Batteries come from
 //! IOKit and, for AirPods, from `system_profiler`, which also lists the paired devices: it runs
@@ -19,9 +22,17 @@ use serde::Deserialize;
 
 use super::{Cx, Event, Handle, Rx, Widget};
 use crate::config::Options;
-use crate::gfx::Weight;
+use crate::gfx::{Rgba, Weight};
 use crate::i18n::t;
-use crate::ui::{Justify, Node};
+use crate::ui::{Align, Justify, Node};
+
+const TILE: f64 = 150.0;
+const GAP: f64 = 8.0;
+const WIDE: f64 = TILE * 2.0 + GAP;
+/// The icon's column in a device's tile.
+const ICON: f64 = 30.0;
+/// A volume slider in the bar: room for the percentage on either side of the knob.
+const BAR_SLIDER: f64 = 96.0;
 
 #[derive(Clone, Copy, PartialEq, Debug, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -146,6 +157,8 @@ impl Badges {
 }
 
 pub struct Audio {
+    /// The volume sliders in the bar.
+    sliders: bool,
     devices: Option<Snapshot>,
     bluetooth: Bluetooth,
     mock: Option<Mock>,
@@ -161,8 +174,9 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn new(_options: &Options) -> Audio {
+    pub fn new(options: &Options) -> Audio {
         Audio {
+            sliders: options.bool("sliders").unwrap_or(true),
             devices: None,
             bluetooth: Bluetooth::default(),
             mock: crate::mock::load::<Mock>("audio"),
@@ -274,27 +288,68 @@ impl Audio {
         cx.after::<Audio>(0.2, move |w, cx| w.await_bluetooth(address, connect, tries - 1, cx));
     }
 
-    fn device_row(&self, rx: &Rx, d: &Device, output: bool, action: String, right: f64) -> Node {
+    /// The volume of the output or the input in use: the device's name and a slider with the
+    /// level, or a note when the volume is set on the device only. Lit unless muted.
+    fn volume_tile(&self, rx: &Rx, output: bool, device: String, volume: Volume, width: f64) -> Node {
         let th = rx.theme;
-        let badges = if output { Badges::Speaker } else { Badges::Microphone };
-        let battery = self.battery(d).map(|b| battery_node(rx, b, true)).unwrap_or_default();
-        let mut row = Node::row(vec![
-            icon_column(rx, &icon(output, badges, d.transport, d.kind, &d.name)),
-            Node::text(&d.name, th.font(), th.text).key("name"),
-            Node::spacer(),
-            Node::row(vec![battery]).min_width(right).justify(Justify::End).key("right"),
+        let side = if output { "out" } else { "in" };
+        let level = match volume {
+            Volume::Level(v) => Some(v),
+            _ => None,
+        };
+        let on = level != Some(0);
+        let icon = Node::symbol(volume_symbol(output, level), 18.0, Weight::Semibold, if on { th.primary } else { th.subtext });
+        let title = if output { t("Uscita", "Output") } else { t("Ingresso", "Input") };
+        let control = match level {
+            Some(v) => rx.slider(v as f64 / 100.0, rx.action(&format!("volume:{side}"))).height(22.0).key("slider"),
+            None => Node::text(t("Volume sul dispositivo", "Set on the device"), th.small_font(), th.subtext).key("fixed"),
+        };
+        Node::column(vec![
+            Node::row(vec![icon]).height(22.0).key("top"),
+            Node::text(title, th.font(), th.text).key("title"),
+            Node::text(device, th.small_font(), th.subtext).key("device"),
+            control.padding(4.0, 0.0, 0.0, 0.0),
         ])
-        .gap(8.0)
-        .padding(0.0, 8.0, 0.0, 8.0)
-        .height(26.0)
-        .radius(th.row_radius)
-        .key(format!("{}:{}", if output { "out" } else { "in" }, d.uid));
-        if d.default {
-            row = row.background(th.surface);
-        } else {
-            row = row.click(rx.action(&action));
+        .gap(2.0)
+        .padding(10.0, 10.0, 10.0, 10.0)
+        .width(width)
+        .radius(10.0)
+        .background(th.tile(th.primary, on))
+        .key(format!("{side}-volume"))
+    }
+
+    /// A volume in the bar: a slider with the percentage inside; `symbol` puts a speaker or a
+    /// microphone before it. None when the volume is set on the device only.
+    fn bar_volume(&self, rx: &Rx, output: bool, symbol: bool) -> Option<Node> {
+        let th = rx.theme;
+        let s = self.devices.as_ref()?;
+        let Volume::Level(v) = (if output { s.output_volume } else { s.input_volume }) else { return None };
+        let side = if output { "out" } else { "in" };
+        let mut children = Vec::new();
+        if symbol {
+            children.push(Node::symbol(if output { "speaker.fill" } else { "mic.fill" }, 11.0, Weight::Semibold, th.subtext).key("symbol"));
         }
-        row
+        children.push(rx.slider(v as f64 / 100.0, rx.action(&format!("volume:{side}"))).size(BAR_SLIDER, 18.0).key("slider"));
+        Some(Node::row(children).gap(6.0).padding(0.0, 0.0, 0.0, 3.0).key(format!("{side}-volume")))
+    }
+
+    /// A device to switch to, with its battery or what it is under the name; `builtin` is the
+    /// Mac's own device of the other direction, which the name is split against.
+    fn device_tile(&self, rx: &Rx, d: &Device, output: bool, builtin: Option<&Device>, i: usize) -> Node {
+        let th = rx.theme;
+        let side = if output { "out" } else { "in" };
+        let badges = if output { Badges::Speaker } else { Badges::Microphone };
+        let (name, what) = tile_names(d, builtin);
+        let detail = match self.battery(d) {
+            Some(b) => battery_node(rx, b, true),
+            None => Node::text(what, th.small_font(), th.subtext).key("detail"),
+        };
+        let symbol = icon(output, badges, d.transport, d.kind, &d.name);
+        let mut tile = device_tile(rx, &symbol, &name, detail, d.default, if d.default { th.primary } else { th.text }).key(format!("{side}:{}", d.uid));
+        if !d.default {
+            tile = tile.click(rx.action(&format!("default:{side}:{i}")));
+        }
+        tile
     }
 }
 
@@ -357,8 +412,55 @@ fn icon(output: bool, badges: Badges, transport: Transport, kind: Type, name: &s
     symbol.to_string()
 }
 
-fn icon_column(rx: &Rx, symbol: &str) -> Node {
-    Node::row(vec![Node::symbol(symbol, 14.0, Weight::Semibold, rx.theme.text)]).width(31.0).justify(Justify::Center).key("icon")
+/// The volume's symbol, as in Control Center: the waves follow the level.
+fn volume_symbol(output: bool, level: Option<u8>) -> &'static str {
+    match (output, level) {
+        (true, Some(0)) => "speaker.slash.fill",
+        (true, Some(1..=33)) => "speaker.wave.1.fill",
+        (true, Some(34..=66)) => "speaker.wave.2.fill",
+        (true, Some(_)) => "speaker.wave.3.fill",
+        (true, None) => "speaker.wave.2.fill",
+        (false, Some(0)) => "mic.slash.fill",
+        (false, _) => "mic.fill",
+    }
+}
+
+/// The name on a device's tile and the line under it. The Mac's speakers and microphone are
+/// `MacBook Pro` with `Speakers` or `Microphone` under it, as the whole name doesn't fit; the
+/// others their name with how they're connected.
+fn tile_names(d: &Device, builtin: Option<&Device>) -> (String, String) {
+    if d.transport == Transport::Builtin
+        && let Some(other) = builtin
+        && let Some(common) = common_name(&d.name, &other.name)
+    {
+        let rest = d.name.strip_prefix(common.as_str()).or_else(|| d.name.strip_suffix(common.as_str())).unwrap_or_default().trim();
+        if !rest.is_empty() {
+            return (common, rest.to_string());
+        }
+    }
+    let what = match d.transport {
+        Transport::Builtin => t("Integrato", "Built-in"),
+        Transport::Bluetooth => "Bluetooth",
+        Transport::Display => t("Monitor", "Display"),
+        Transport::Airplay => "AirPlay",
+        Transport::Virtual => t("Virtuale", "Virtual"),
+        Transport::External => t("Esterno", "External"),
+    };
+    (d.name.clone(), what.to_string())
+}
+
+/// A tile of the device grids: the icon, the name, cut to fit, and `detail` under it.
+fn device_tile(rx: &Rx, symbol: &str, name: &str, detail: Node, lit: bool, color: Rgba) -> Node {
+    let th = rx.theme;
+    Node::row(vec![
+        Node::row(vec![Node::symbol(symbol, 15.0, Weight::Semibold, color)]).width(ICON).justify(Justify::Center).key("icon"),
+        Node::column(vec![Node::text(name, th.font(), th.text).key("name"), detail]).gap(2.0).max_width(TILE - 16.0 - ICON - 8.0).key("names"),
+    ])
+    .gap(8.0)
+    .padding(8.0, 8.0, 8.0, 8.0)
+    .width(TILE)
+    .radius(10.0)
+    .background(th.tile(th.primary, lit))
 }
 
 fn battery_symbol(level: u8) -> &'static str {
@@ -433,6 +535,12 @@ impl Widget for Audio {
             if let Some(b) = self.battery(d) {
                 children.push(battery_node(rx, b, false));
             }
+            if self.sliders && !rx.slim {
+                // One device for both: a slider each, with a symbol to tell them apart
+                let both = badges == Badges::Both;
+                let sides: &[bool] = if both { &[true, false] } else { &[output] };
+                children.extend(sides.iter().filter_map(|&output| self.bar_volume(rx, output, both)));
+            }
             Node::row(children).gap(5.0).key(key)
         };
         let mut groups = Vec::new();
@@ -451,92 +559,68 @@ impl Widget for Audio {
     fn popup(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
         let s = self.devices.as_ref()?;
-        let bold = th.font();
-        let measure = |text: &str| crate::gfx::measure_text(text, &bold).width;
-        // The right column, wide enough for any of its texts, so that they line up
-        let actions = [
-            t("Connetti", "Connect"),
-            t("Disconnetti", "Disconnect"),
-            t("Connessione…", "Connecting…"),
-            t("Disconnessione…", "Disconnecting…"),
-            t("Non riuscito", "Failed"),
-            t("Non consentito", "Not Allowed"),
-        ];
-        let mut right: f64 = 0.0;
-        if !self.bluetooth.paired.is_empty() {
-            right = actions.iter().map(|a| measure(a)).fold(0.0, f64::max);
-        }
-        if s.outputs.iter().chain(&s.inputs).any(|d| self.battery(d).is_some()) {
-            right = right.max(crate::gfx::measure_text("100%", &th.font_with(Weight::Bold, 11.0)).width + 18.0);
+        let mut rows: Vec<Node> = Vec::new();
+        let title = |rows: &[Node], text: &str, key: &str| Node::row(vec![Node::text(text, th.font(), th.text)]).padding(if rows.is_empty() { 2.0 } else { 10.0 }, 10.0, 0.0, 10.0).key(key);
+        let grid = |tiles: Vec<Node>, key: &str| Node::row(tiles).columns(2).gap(GAP).key(key);
+        let sides = [(true, &s.outputs, s.output_volume), (false, &s.inputs, s.input_volume)];
+        // The Mac's own device of the other direction, for the short names of its own
+        let builtin = |output: bool| (if output { &s.inputs } else { &s.outputs }).iter().find(|d| d.transport == Transport::Builtin);
+
+        // The volumes side by side, or one as wide as both
+        let volumes: Vec<_> = sides.iter().filter(|(_, _, v)| *v != Volume::None).collect();
+        let width = if volumes.len() == 1 { WIDE } else { TILE };
+        if !volumes.is_empty() {
+            let tiles = volumes
+                .iter()
+                .map(|(output, devices, v)| {
+                    let name = devices.iter().find(|d| d.default).map(|d| tile_names(d, builtin(*output)).0).unwrap_or_default();
+                    self.volume_tile(rx, *output, name, *v, width)
+                })
+                .collect();
+            rows.push(Node::row(tiles).gap(GAP).align(Align::Stretch).key("volumes"));
         }
 
-        let mut rows = Vec::new();
-        for (output, devices, volume) in [(true, &s.outputs, s.output_volume), (false, &s.inputs, s.input_volume)] {
+        for (output, devices, _) in sides {
+            if devices.is_empty() {
+                continue;
+            }
             let side = if output { "out" } else { "in" };
-            let title = if output { t("Uscita", "Output") } else { t("Ingresso", "Input") };
-            if volume != Volume::None {
-                let percent = match volume {
-                    Volume::Level(v) => format!("{v}%"),
-                    _ => String::new(),
-                };
-                rows.push(
-                    Node::row(vec![Node::text(title, bold.clone(), th.text), Node::spacer(), Node::text(percent, bold.clone(), th.subtext).key("percent")])
-                        .padding(0.0, 8.0, 0.0, 8.0)
-                        .height(if output { 30.0 } else { 38.0 })
-                        .key(format!("{side}-title")),
-                );
-                rows.push(match volume {
-                    Volume::Level(v) => Node::row(vec![
-                        Node::new(crate::ui::Kind::Slider { value: v as f64 / 100.0, color: th.primary, track: th.surface }).grow().click(rx.action(&format!("volume:{side}"))).key("slider"),
-                    ])
-                    .padding(0.0, 8.0, 0.0, 8.0)
-                    .height(24.0)
-                    .key(format!("{side}-volume")),
-                    _ => Node::row(vec![Node::text(t("Volume regolabile solo dal dispositivo", "Volume set on the device only"), th.font_with(Weight::Medium, 11.0), th.subtext)])
-                        .padding(0.0, 8.0, 0.0, 8.0)
-                        .height(24.0)
-                        .key(format!("{side}-fixed")),
-                });
-            } else if !output && !devices.is_empty() {
-                rows.push(Node::default().height(8.0).key("in-gap"));
-            }
-            for (i, d) in devices.iter().enumerate() {
-                rows.push(self.device_row(rx, d, output, format!("default:{side}:{i}"), right));
-            }
+            let text = if output { t("Dispositivi di uscita", "Output Devices") } else { t("Dispositivi di ingresso", "Input Devices") };
+            rows.push(title(&rows, text, &format!("{side}-title")));
+            let tiles = devices.iter().enumerate().map(|(i, d)| self.device_tile(rx, d, output, builtin(output), i)).collect();
+            rows.push(grid(tiles, &format!("{side}-devices")));
         }
 
         if !self.bluetooth.paired.is_empty() {
-            rows.push(Node::row(vec![Node::text("Bluetooth", bold.clone(), th.text)]).padding(0.0, 8.0, 0.0, 8.0).height(38.0).key("bt-title"));
-            for (i, p) in self.bluetooth.paired.iter().enumerate() {
-                let (text, color) = match (self.busy.get(&p.address), self.failed.get(&p.address)) {
-                    (Some(true), _) => (actions[2], th.yellow),
-                    (Some(false), _) => (actions[3], th.yellow),
-                    (None, Some(Outcome::Denied)) => (actions[5], th.red),
-                    (None, Some(_)) => (actions[4], th.red),
-                    (None, None) if self.connected(&p.address) => (actions[1], th.primary),
-                    (None, None) => (actions[0], th.primary),
-                };
-                rows.push(
-                    Node::row(vec![
-                        icon_column(rx, &icon(true, Badges::Speaker, Transport::Bluetooth, p.kind, &p.name)),
-                        Node::text(&p.name, bold.clone(), th.text).key("name"),
-                        Node::spacer(),
-                        Node::row(vec![Node::text(text, bold.clone(), color).key("action")]).min_width(right).justify(Justify::End).key("right"),
-                    ])
-                    .gap(8.0)
-                    .padding(0.0, 8.0, 0.0, 8.0)
-                    .height(26.0)
-                    .radius(th.row_radius)
-                    .click(rx.action(&format!("bt:{i}")))
-                    .key(format!("bt:{}", p.address)),
-                );
-            }
+            rows.push(title(&rows, "Bluetooth", "bt-title"));
+            let tiles = self
+                .bluetooth
+                .paired
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let connected = self.connected(&p.address);
+                    let (text, color) = match (self.busy.get(&p.address), self.failed.get(&p.address)) {
+                        (Some(true), _) => (t("Connessione…", "Connecting…"), th.yellow),
+                        (Some(false), _) => (t("Disconnessione…", "Disconnecting…"), th.yellow),
+                        (None, Some(Outcome::Denied)) => (t("Non consentito", "Not Allowed"), th.red),
+                        (None, Some(_)) => (t("Non riuscito", "Failed"), th.red),
+                        (None, None) if connected => (t("Connesso", "Connected"), th.text),
+                        (None, None) => (t("Non connesso", "Not Connected"), th.subtext),
+                    };
+                    let symbol = icon(true, Badges::Speaker, Transport::Bluetooth, p.kind, &p.name);
+                    let state = Node::text(text, th.small_font(), color).key("state");
+                    device_tile(rx, &symbol, &p.name, state, connected, if connected { th.primary } else { th.subtext })
+                        .click(rx.action(&format!("bt:{i}")))
+                        .key(format!("bt:{}", p.address))
+                })
+                .collect();
+            rows.push(grid(tiles, "bt-devices"));
         }
         if rows.is_empty() {
             return None;
         }
-        rows.push(Node::default().height(4.0).key("bottom"));
-        Some(rx.popup(260.0, rows).padding(4.0, 4.0, 0.0, 4.0).gap(0.0))
+        Some(rx.popup(WIDE, rows).gap(GAP))
     }
 
     fn ready(&self) -> bool {
@@ -955,5 +1039,23 @@ mod tests {
         assert_eq!(icon(true, Badges::Speaker, Transport::Bluetooth, Type::Speaker, "Boom"), "hifispeaker");
         assert_eq!(battery_symbol(90), "battery.100");
         assert_eq!(battery_symbol(12), "battery.0");
+        assert_eq!(volume_symbol(true, Some(0)), "speaker.slash.fill");
+        assert_eq!(volume_symbol(true, Some(40)), "speaker.wave.2.fill");
+        assert_eq!(volume_symbol(false, Some(70)), "mic.fill");
+    }
+
+    #[test]
+    fn tile_names_split_the_macs_own() {
+        let device = |name: &str, transport| Device { name: name.into(), transport, ..Default::default() };
+        let speakers = device("Altoparlanti MacBook Pro", Transport::Builtin);
+        let microphone = device("Microfono MacBook Pro", Transport::Builtin);
+        assert_eq!(tile_names(&speakers, Some(&microphone)), ("MacBook Pro".into(), "Altoparlanti".into()));
+        let speakers = device("MacBook Pro Speakers", Transport::Builtin);
+        let microphone = device("MacBook Pro Microphone", Transport::Builtin);
+        assert_eq!(tile_names(&microphone, Some(&speakers)), ("MacBook Pro".into(), "Microphone".into()));
+        let airpods = device("AirPods Pro", Transport::Bluetooth);
+        assert_eq!(tile_names(&airpods, Some(&microphone)), ("AirPods Pro".into(), "Bluetooth".into()));
+        let jack = device("External Headphones", Transport::Builtin);
+        assert_eq!(tile_names(&jack, Some(&microphone)).0, "External Headphones");
     }
 }

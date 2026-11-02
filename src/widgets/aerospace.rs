@@ -2,7 +2,8 @@
 //! the focused workspace under a highlight that slides from one to the next, the focused window on
 //! a darker tile, the one in fullscreen with the fullscreen symbol, and the binding mode while it
 //! isn't main. A click on a number shows that workspace, on an icon focuses that window, on the
-//! mode goes back to main.
+//! mode goes back to main. Compact, when the bar has no room for the rest, only the focused
+//! workspace has its icons: the others are their number.
 //!
 //! RustyBar talks to AeroSpace's server socket, as its CLI does, so following it starts no
 //! process: one connection receives the events (`subscribe --all`), and each change asks for the
@@ -249,7 +250,7 @@ impl Widget for Aerospace {
                 let focused = *ws == self.focused_ws;
                 let color = if focused { th.on_primary } else { th.text };
                 let mut children = vec![Node::text(ws.as_str(), th.font(), color).key("n")];
-                let wins: Vec<&Win> = self.windows.iter().filter(|w| &w.workspace == ws).collect();
+                let wins: Vec<&Win> = self.windows.iter().filter(|w| &w.workspace == ws && (focused || !rx.compact)).collect();
                 children.extend(wins.iter().map(|w| self.window(rx, w, color)));
                 let right = if wins.is_empty() { 10.0 } else { 4.0 };
                 let mut group = Node::row(children)
@@ -452,7 +453,7 @@ fn active_displays() -> Vec<(f64, f64, f64, f64)> {
 
 /// AeroSpace's server socket, spoken as its CLI does: the protocol version (a u32), then requests
 /// and answers as JSON, each after its length (a u32, little endian).
-mod client {
+pub(crate) mod client {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
     use std::sync::{Arc, Mutex};

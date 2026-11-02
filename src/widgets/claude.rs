@@ -4,9 +4,10 @@
 //!   the app) with the 5-hour session and the week, `42% · 31%`, yellow from `warning`, red from
 //!   `critical`, gray while the numbers are stale (the last reading failed, e.g. without network).
 //!   The account of `~/.claude` is orange; `accounts` adds others, each with its Claude Code config
-//!   dir (`CLAUDE_CONFIG_DIR`) and color. With more than one, on large screens each has its own
-//!   pill, the others on the left, with the time the session resets (`42% · 31% · 17:07`) and a
-//!   popup of its own; elsewhere one pill, the account with the busiest session, whose popup has
+//!   dir (`CLAUDE_CONFIG_DIR`) and color. With more than one, each has its own pill, the others on
+//!   the left, with the time the session resets (`42% · 31% · 17:07`) and a popup of its own;
+//!   slim (when the bar has no room for them: after the volume sliders of `audio`, see
+//!   `slim_first`) or compact, one pill, the account with the busiest session, whose popup has
 //!   them all, each under its name in its color.
 //! - Popup: the name (or the email) and the plan (`Claude Max`), the email and the organization;
 //!   for the session and the week the percentage, a bar in the account's color (yellow and red as
@@ -208,7 +209,7 @@ pub struct Claude {
     refreshing: Vec<bool>,
     logging_in: Vec<bool>,
     confirm_logout: Option<usize>,
-    /// The account whose pill opened the popup, on large screens.
+    /// The account whose pill opened the popup, when each has its own.
     focus: Option<usize>,
     path: Option<String>,
     missing: bool,
@@ -429,9 +430,9 @@ impl Claude {
         rows.push(if self.confirm_logout == Some(i) { action(t("Fai clic di nuovo per uscire", "Click again to sign out"), th.red, "logout", true) } else { action(t("Esci", "Sign Out"), th.primary, "logout", true) });
     }
 
-    /// One pill per account on large screens.
+    /// One pill per account, when there's room.
     fn pills(&self, rx: &Rx) -> bool {
-        rx.display.large && self.accounts.len() > 1
+        !rx.slim && self.accounts.len() > 1
     }
 }
 

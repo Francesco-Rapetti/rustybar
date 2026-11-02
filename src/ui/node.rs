@@ -57,11 +57,14 @@ pub enum Kind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tint: Option<Rgba>,
     },
-    /// 0..1; dragging moves it, releasing sends `on_click` with the value.
+    /// 0..1; dragging moves it, releasing sends `on_click` with the value. A thick track with the
+    /// percentage inside, in `font` (none without one), and a knob while the mouse is over it.
     Slider {
         value: f64,
         color: Rgba,
         track: Rgba,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        font: Option<FontSpec>,
     },
     Progress {
         value: f64,

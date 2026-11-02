@@ -26,6 +26,7 @@ objc2-event-kit = "0.3.2"
 objc2-core-wlan = "0.3"
 objc2-io-bluetooth = "0.3"
 objc2-core-location = "0.3"
+toml_edit = "0.25"
 
 [profile.release]
 lto = true

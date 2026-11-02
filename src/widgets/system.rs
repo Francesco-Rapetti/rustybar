@@ -1,8 +1,8 @@
 //! CPU, GPU and memory usage, read every 2 seconds in-process and drawn only when a value changes.
 //! CPU and GPU turn yellow from 75% and red from 90%; the memory has the color of its pressure, as
 //! in Activity Monitor: macOS keeps the memory nearly full with caches and compressed pages, so the
-//! percentage alone says little. The GPU hides when macOS doesn't report it, CPU and GPU on the
-//! displays with a notch.
+//! percentage alone says little. The GPU hides when macOS doesn't report it, CPU and GPU in the
+//! compact form.
 //! The popup has, for each, a bar, the details and the apps that use it most, then a row that opens
 //! Activity Monitor. The lists are read only while it is open: the CPU of each process from `ps`,
 //! which is setuid and sees the system processes too, the GPU time from the IORegistry and the

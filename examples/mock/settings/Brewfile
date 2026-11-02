@@ -1,0 +1,9 @@
+# Made-up Brewfile for the settings window with RUSTYBAR_MOCK
+tap "felixkratz/formulae"
+tap "nikitabobko/tap"
+
+brew "felixkratz/formulae/borders"
+brew "jq"
+
+cask "nikitabobko/tap/aerospace"
+cask "font-sf-pro"

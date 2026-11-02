@@ -54,7 +54,7 @@ impl Layout {
                 }
             }
             Kind::Image { width, height, .. } => (*width, *height),
-            Kind::Slider { .. } => (120.0, 16.0),
+            Kind::Slider { .. } => (120.0, 20.0),
             Kind::Progress { .. } => (60.0, 6.0),
             Kind::Toggle { .. } => (30.0, 18.0),
             Kind::Skeleton => (40.0, 12.0),
@@ -291,7 +291,7 @@ mod tests {
     fn padded_slider_keeps_its_action() {
         let action = super::super::Action::Open("x".into());
         let (color, track) = (gfx::Rgba(1.0, 1.0, 1.0, 1.0), gfx::Rgba(0.0, 0.0, 0.0, 1.0));
-        let mut n = Node::new(Kind::Slider { value: 0.5, color, track }).click(action.clone()).padding(4.0, 0.0, 0.0, 0.0);
+        let mut n = Node::new(Kind::Slider { value: 0.5, color, track, font: None }).click(action.clone()).padding(4.0, 0.0, 0.0, 0.0);
         n.normalize();
         assert!(matches!(n.kind, Kind::Box) && n.on_click.is_none());
         assert_eq!(n.children[0].on_click, Some(action));

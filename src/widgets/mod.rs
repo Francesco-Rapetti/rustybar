@@ -6,9 +6,11 @@ use std::collections::HashMap;
 
 use crate::config::Options;
 use crate::display::DisplayInfo;
+use crate::fit::Form;
 use crate::runtime::{self, Timer};
 use crate::theme::Theme;
-use crate::ui::{Action, Align, Node};
+use crate::gfx::Weight;
+use crate::ui::{Action, Align, Kind, Node};
 
 pub mod aerospace;
 pub mod apple;
@@ -40,12 +42,21 @@ pub struct Rx<'a> {
     pub name: &'a str,
     pub theme: &'a Theme,
     pub display: &'a DisplayInfo,
-    /// Draw the short form: icons, short times (screens with a notch).
+    /// Draw the short form: icons, short times. When the full one doesn't leave room between the
+    /// left and right sides of the bar (see `fit`), or the config asks for it.
     pub compact: bool,
+    /// Leave out what the bar can do without, for the widgets of `slim_first`: the first thing to
+    /// go when there's no room, before any widget turns compact; so also when compact.
+    pub slim: bool,
     pub popup_open: bool,
 }
 
-impl Rx<'_> {
+impl<'a> Rx<'a> {
+    pub fn new(name: &'a str, theme: &'a Theme, display: &'a DisplayInfo, form: Form, popup_open: bool) -> Self {
+        let compact = form == Form::Compact;
+        Rx { name, theme, display, compact, slim: compact || form == Form::Slim, popup_open }
+    }
+
     /// An action sent back to this widget with `name`.
     pub fn action(&self, name: &str) -> Action {
         Action::Widget { widget: self.name.to_string(), name: name.to_string() }
@@ -79,6 +90,13 @@ impl Rx<'_> {
         children.push(Node::spacer());
         children.extend(right);
         Node::row(children).gap(8.0).pad(4.0, 8.0).height(26.0).radius(self.theme.row_radius).click(action)
+    }
+
+    /// A slider at `value` (0..1) with its percentage inside; `action` gets the value where it's
+    /// released.
+    pub fn slider(&self, value: f64, action: Action) -> Node {
+        let t = self.theme;
+        Node::new(Kind::Slider { value, color: t.primary, track: t.surface, font: Some(t.font_with(Weight::Bold, 11.0)) }).click(action)
     }
 
     pub fn section(&self, title: &str, right: Option<Node>) -> Node {

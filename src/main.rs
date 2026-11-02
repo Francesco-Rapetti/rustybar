@@ -4,6 +4,7 @@ mod app;
 mod cache;
 mod config;
 mod display;
+mod fit;
 mod gfx;
 mod i18n;
 mod iokit;
@@ -14,6 +15,7 @@ mod net;
 mod runtime;
 mod secret;
 mod service;
+mod settings;
 mod surface;
 mod theme;
 mod time;
@@ -58,8 +60,9 @@ define_class!(
 
 const USAGE: &str = "usage:
   rustybar                 start the bar
-  rustybar msg <command>   talk to the running bar: reload, query, trigger <event> [k=v…], popup <widget>, quit
+  rustybar msg <command>   talk to the running bar: reload, query, trigger <event> [k=v…], popup <widget>, settings [page], quit
   rustybar check           check the config and the Lua widgets
+  rustybar settings [page] the settings window of the dotfiles (as the Apple menu opens it)
   rustybar service install start RustyBar at login, and again if it crashes (a LaunchAgent)
   rustybar service uninstall
   rustybar secret set home-assistant   save the Home Assistant token, read from stdin, in the keychain
@@ -81,6 +84,11 @@ fn main() {
         Some("check") => {
             match config::load() {
                 Ok(c) => {
+                    if theme::preset(&c.theme.preset).is_none() {
+                        let names: Vec<&str> = theme::PRESETS.iter().map(|p| p.name).collect();
+                        eprintln!("unknown theme preset {:?}: one of {}", c.theme.preset, names.join(", "));
+                        std::process::exit(1);
+                    }
                     let theme = theme::Theme::from_config(&c.theme);
                     match lua::Host::load(&c, &theme) {
                         Ok((_, widgets)) => println!("ok: {} Lua widget(s)", widgets.len()),
@@ -110,6 +118,10 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            return;
+        }
+        Some("settings") => {
+            settings::run(args.get(1).filter(|a| !a.starts_with('-')).cloned());
             return;
         }
         Some("secret") => {

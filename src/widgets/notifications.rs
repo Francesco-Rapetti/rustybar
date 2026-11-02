@@ -4,7 +4,9 @@
 //! opens the app, the crash report, or updates the package (or all of them).
 //!
 //! The badges come from the Dock through Accessibility, every 2 seconds, since nothing tells when
-//! they change; every badged app, listed or not, gets a dot on its windows in `aerospace`.
+//! they change; every badged app, listed or not, gets a dot on its windows in `aerospace`. Without
+//! the permission a yellow `!` shows instead, and the popup has a row that asks for it again (macOS
+//! asks by itself only once).
 //! Homebrew is asked every hour and on wake. Options: `apps` (bundle ids or Dock names),
 //! `brewfile` (the packages to follow) or `brew = true` (all of them).
 
@@ -146,6 +148,11 @@ impl Notifications {
         self.crashes.len() as u64 + self.app_badges().iter().map(|b| count(&b.label)).sum::<u64>()
     }
 
+    /// The listed apps can't be read: no Accessibility permission.
+    fn needs_access(&self) -> bool {
+        self.mock.is_none() && !self.apps.is_empty() && self.badges.is_none()
+    }
+
     fn updates(&self) -> usize {
         self.outdated.packages.len() + self.outdated.restart.is_some() as usize
     }
@@ -251,8 +258,8 @@ impl Widget for Notifications {
     fn bar(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
         let crust = th.color("crust").unwrap_or(th.base);
-        let badge = |n: String, color, key: &str| {
-            Node::row(vec![Node::text(n, th.font_with(Weight::Bold, 11.0), crust)])
+        let badge = |child: Node, color, key: &str| {
+            Node::row(vec![child])
                 .height(18.0)
                 .min_width(18.0)
                 .padding(0.0, 6.0, 0.0, 6.0)
@@ -261,12 +268,16 @@ impl Widget for Notifications {
                 .background(color)
                 .key(key)
         };
+        let count = |n: String| Node::text(n, th.font_with(Weight::Bold, 11.0), crust);
         let mut badges = Vec::new();
+        if self.needs_access() {
+            badges.push(badge(Node::symbol("exclamationmark", 10.0, Weight::Bold, crust), th.yellow, "access"));
+        }
         if self.unread() > 0 {
-            badges.push(badge(self.unread().to_string(), th.green, "unread"));
+            badges.push(badge(count(self.unread().to_string()), th.green, "unread"));
         }
         if self.updates() > 0 {
-            badges.push(badge(self.updates().to_string(), if self.job.is_some() { th.yellow } else { th.red }, "updates"));
+            badges.push(badge(count(self.updates().to_string()), if self.job.is_some() { th.yellow } else { th.red }, "updates"));
         }
         if badges.is_empty() {
             return None;
@@ -291,23 +302,30 @@ impl Widget for Notifications {
         for (i, b) in self.app_badges().into_iter().enumerate() {
             apps.push((b.bundle.clone(), b.name.clone(), b.label.clone(), format!("app:{i}")));
         }
+        let access = self.needs_access();
+        let for_badges = t("per i badge del Dock", "for Dock badges");
         let packages = &self.outdated.packages;
         let updating = t("aggiornamento…", "updating…");
-        let values = apps.iter().map(|a| measure(&a.2)).chain(packages.iter().map(|p| measure(&versions(p)))).chain((!packages.is_empty()).then(|| measure(updating)));
+        let values = apps.iter().map(|a| measure(&a.2)).chain(packages.iter().map(|p| measure(&versions(p)))).chain((!packages.is_empty()).then(|| measure(updating))).chain(access.then(|| measure(for_badges)));
         let value_width = values.fold(0.0, f64::max);
         let value = |text: String, color| Node::row(vec![Node::text(text, bold.clone(), color)]).min_width(value_width).key("value");
-        for (bundle, name, v, action) in &apps {
-            rows.push(
-                Node::row(vec![Node::app_icon(bundle, 16.0).key("icon"), Node::text(name, bold.clone(), th.text).key("name"), Node::spacer(), value(v.clone(), th.subtext)])
-                    .gap(8.0)
-                    .padding(0.0, 8.0, 0.0, 8.0)
-                    .height(24.0)
-                    .radius(th.row_radius)
-                    .click(rx.action(action))
-                    .key(action.clone()),
-            );
+        let app_row = |icon: Node, name: &str, v: String, action: &str| {
+            Node::row(vec![icon.key("icon"), Node::text(name, bold.clone(), th.text).key("name"), Node::spacer(), value(v, th.subtext)])
+                .gap(8.0)
+                .padding(0.0, 8.0, 0.0, 8.0)
+                .height(24.0)
+                .radius(th.row_radius)
+                .click(rx.action(action))
+                .key(action)
+        };
+        if access {
+            let icon = Node::row(vec![Node::symbol("accessibility", 14.0, Weight::Semibold, th.yellow)]).width(16.0).justify(Justify::Center);
+            rows.push(app_row(icon, t("Concedi l'Accessibilità", "Allow Accessibility"), for_badges.into(), "accessibility"));
         }
-        if !apps.is_empty() && self.updates() > 0 {
+        for (bundle, name, v, action) in &apps {
+            rows.push(app_row(Node::app_icon(bundle, 16.0), name, v.clone(), action));
+        }
+        if (access || !apps.is_empty()) && self.updates() > 0 {
             rows.push(Node::default().height(8.0).key("gap"));
         }
 
@@ -368,6 +386,11 @@ impl Widget for Notifications {
                 }
                 self.crashes.clear();
                 cx.redraw();
+            }
+            "accessibility" if self.mock.is_none() => {
+                cx.close_popup();
+                prompt_accessibility();
+                runtime::open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
             }
             "restart" => self.start_job(Job::Restart, cx),
             "upgrade-all" => {
@@ -431,10 +454,16 @@ fn ax_trusted() -> bool {
 fn ask_accessibility() {
     let Some(d) = defaults() else { return };
     if d.boolForKey(ns_string!("accessibility.asked")) {
-        crate::log("notifications: the Dock badges need Accessibility (System Settings → Privacy & Security → Accessibility)");
+        crate::log("notifications: the Dock badges need Accessibility (System Settings → Privacy & Security → Accessibility, or the popup of notifications)");
         return;
     }
     d.setBool_forKey(true, ns_string!("accessibility.asked"));
+    prompt_accessibility();
+}
+
+/// macOS's dialog, which also puts RustyBar in the list of the setting, where it only has to be
+/// switched on.
+fn prompt_accessibility() {
     let options = objc2_foundation::NSDictionary::from_slices(&[ns_string!("AXTrustedCheckOptionPrompt")], &[&*objc2_foundation::NSNumber::new_bool(true) as &AnyObject]);
     unsafe { AXIsProcessTrustedWithOptions(cf(&*options)) };
 }

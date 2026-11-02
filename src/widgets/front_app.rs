@@ -1,5 +1,6 @@
-//! The name of the app in front, from NSWorkspace's activation notification; with made-up data
-//! (see `mock`), the `name` of `front_app.json`.
+//! The name of the app in front, from NSWorkspace's activation notification, cut at 260 points,
+//! or 120 when the bar has no room (compact); with made-up data (see `mock`), the `name` of
+//! `front_app.json`.
 
 use std::ptr::NonNull;
 
@@ -78,7 +79,8 @@ impl Widget for FrontApp {
             return None;
         }
         let th = rx.theme;
-        Some(rx.pill(vec![Node::text(&self.name, th.font(), th.text).max_width(260.0)]))
+        let max = if rx.compact { 120.0 } else { 260.0 };
+        Some(rx.pill(vec![Node::text(&self.name, th.font(), th.text).max_width(max)]))
     }
 
     crate::any_widget!();

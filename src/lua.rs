@@ -81,8 +81,15 @@ impl Host {
             host.guard(|| host.0.lua.load(&code).set_name(format!("@widgets/{name}")).exec())
                 .map_err(|e| format!("widgets/{name}: {}", short_error(&e)))?;
         }
-        let names = host.0.defs.borrow().keys().cloned().collect();
+        let names = host.names();
         Ok((host, names))
+    }
+
+    /// The names of the widgets the files define.
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.0.defs.borrow().keys().cloned().collect();
+        names.sort();
+        names
     }
 
     fn install(&self) -> mlua::Result<()> {
@@ -386,6 +393,8 @@ impl Convert<'_> {
                 value: self.num(t, "value").unwrap_or(0.0),
                 color: self.color(t, "color").unwrap_or(theme.primary),
                 track: theme.surface,
+                // The percentage inside, unless `percent = false`
+                font: t.get::<Option<bool>>("percent")?.unwrap_or(true).then(|| FontSpec::new(&theme.font, Weight::Bold, 11.0)),
             })
             .grow(),
             "progress" => Node::new(Kind::Progress {

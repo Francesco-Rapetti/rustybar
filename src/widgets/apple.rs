@@ -1,6 +1,7 @@
 //! The Apple menu, which the bar covers: the apple opens its commands, with the same texts and
 //! shortcuts. They run in-process (Apple events to loginwindow, the sleep of IOKit, the lock of
-//! login.framework), so a click starts no process.
+//! login.framework), so a click starts no process. Last, under them, the settings window of the
+//! dotfiles (see `settings`).
 //! Options: `icon` (an SF Symbol, "apple.logo" by default). With made-up data (see `mock`) the
 //! name is the `user` of `apple.json` and the commands do nothing.
 
@@ -72,6 +73,8 @@ impl Widget for Apple {
                     rx.divider().key("d3"),
                     row("lock", t("Blocca schermo", "Lock Screen").into(), Some("⌃⌘Q")),
                     row("log_out", log_out, Some("⇧⌘Q")),
+                    rx.divider().key("d4"),
+                    row("settings", t("Impostazioni dotfiles…", "Dotfiles Settings…").into(), None),
                 ],
             )
             .gap(0.0)
@@ -82,6 +85,11 @@ impl Widget for Apple {
     fn action(&mut self, name: &str, _value: Option<f64>, cx: &mut Cx) {
         // As in a menu: the popup closes, then the command runs
         cx.close_popup();
+        if name == "settings" {
+            // With made-up data too: the window then edits made-up configs
+            crate::settings::launch(None);
+            return;
+        }
         if self.mock {
             return;
         }

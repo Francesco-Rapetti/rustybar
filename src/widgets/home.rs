@@ -8,11 +8,11 @@
 //!   its left has a printer and the progress, yellow while paused.
 //! - Popup: the groups of `groups`, each a title and its tiles, two in a row; a tile is the icon,
 //!   the name (Home Assistant's, or the tile's own) and the state, in the color of the state.
-//!   - Light: a bulb, yellow when on; `Accesa` (or `70%` when dimmable) or `Spenta`. A click
-//!     toggles it; dimmable ones have a slider for the brightness, set when released (0: off).
+//!   - Light: a bulb, yellow when on; `Accesa` or `Spenta`. A click toggles it; dimmable ones
+//!     have a slider with the brightness, set when released (0: off).
 //!   - Switch: a plug, or the tile's `icon`; fan and input_boolean alike. A click toggles it.
-//!   - Cover: an open or closed blind; `Aperta`, `60%`, `Chiusa`, `Si apre…`, `Si chiude…`. A
-//!     click toggles it, a slider sets the position.
+//!   - Cover: an open or closed blind; `Aperta`, `Chiusa`, `Si apre…`, `Si chiude…`. A click
+//!     toggles it, a slider with the position sets it.
 //!   - Climate, two tiles wide: the icon of its mode (a flame peach for heat, a snowflake sky for
 //!     cool, a drop teal for dry, a fan teal, a thermometer otherwise), the mode and the room's
 //!     temperature (`26,5°`); off, `Spento`. A click turns it on or off. While on, the modes as
@@ -53,7 +53,6 @@ use crate::config::Options;
 use crate::gfx::{Rgba, Weight};
 use crate::i18n::t;
 use crate::net::{self, Socket};
-use crate::theme::Theme;
 use crate::ui::{Align, Justify, Kind, Node};
 
 const TILE: f64 = 150.0;
@@ -728,16 +727,13 @@ impl Home {
         let mut slider = None;
         let (color, text, text_color, lit) = match domain(id) {
             "cover" => {
-                let position = self.shown(id);
-                slider = Some(position.unwrap_or(0.0) / 100.0);
+                // The position is in the slider
+                slider = Some(self.shown(id).unwrap_or(0.0) / 100.0);
                 match state {
                     "opening" => (th.text, t("Si apre…", "Opening…").to_string(), th.text, true),
                     "closing" => (th.text, t("Si chiude…", "Closing…").to_string(), th.text, true),
                     "closed" => (th.subtext, t("Chiusa", "Closed").to_string(), th.subtext, false),
-                    _ => match position {
-                        Some(p) if p < 100.0 => (th.text, format!("{p:.0}%"), th.text, true),
-                        _ => (th.text, t("Aperta", "Open").to_string(), th.text, true),
-                    },
+                    _ => (th.text, t("Aperta", "Open").to_string(), th.text, true),
                 }
             }
             "vacuum" => match state {
@@ -749,14 +745,11 @@ impl Home {
                 _ => (th.subtext, t("Fermo", "Idle").to_string(), th.subtext, false),
             },
             _ => {
+                // The brightness is in the slider
                 if domain(id) == "light" && dimmable {
                     slider = Some(self.shown(id).unwrap_or(0.0) / 100.0);
                 }
-                match (on, dimmable && domain(id) == "light") {
-                    (true, true) => (th.yellow, format!("{:.0}%", self.shown(id).unwrap_or(0.0)), th.text, true),
-                    (true, false) => (th.yellow, on_text.to_string(), th.text, true),
-                    (false, _) => (th.subtext, off_text.to_string(), th.subtext, false),
-                }
+                if on { (th.yellow, on_text.to_string(), th.text, true) } else { (th.subtext, off_text.to_string(), th.subtext, false) }
             }
         };
         let unavailable = state == "unavailable" || !self.is_online();
@@ -771,9 +764,9 @@ impl Home {
             Node::text(text, th.small_font(), text_color).key("state"),
         ];
         if let Some(v) = slider.filter(|_| !unavailable) {
-            children.push(Node::new(Kind::Slider { value: v, color: th.primary, track: th.surface }).height(16.0).click(rx.action(&format!("slider:{id}"))).padding(4.0, 0.0, 0.0, 0.0).key("slider"));
+            children.push(rx.slider(v, rx.action(&format!("slider:{id}"))).height(22.0).padding(4.0, 0.0, 0.0, 0.0).key("slider"));
         }
-        let mut tile = Node::column(children).gap(2.0).padding(10.0, 10.0, 10.0, 10.0).width(TILE).radius(10.0).background(tile_background(th, color, lit)).key(id);
+        let mut tile = Node::column(children).gap(2.0).padding(10.0, 10.0, 10.0, 10.0).width(TILE).radius(10.0).background(th.tile(color, lit)).key(id);
         if !unavailable {
             tile = tile.click(rx.action(&format!("tap:{id}")));
         }
@@ -841,7 +834,7 @@ impl Home {
             row.push(button("plus", format!("temp:{id}:+")));
             rows.push(Node::row(row).gap(4.0).padding(6.0, 0.0, 0.0, 0.0).key("controls"));
         }
-        let mut tile = Node::column(rows).gap(4.0).padding(10.0, 10.0, 10.0, 10.0).width(WIDE).radius(10.0).background(tile_background(th, color, on)).key(id);
+        let mut tile = Node::column(rows).gap(4.0).padding(10.0, 10.0, 10.0, 10.0).width(WIDE).radius(10.0).background(th.tile(color, on)).key(id);
         if !unavailable {
             tile = tile.click(rx.action(&format!("tap:{id}")));
         }
@@ -894,7 +887,7 @@ impl Home {
         if !rows.is_empty() {
             children.push(Node::column(rows).gap(6.0).padding(6.0, 0.0, 0.0, 0.0).key("progress"));
         }
-        let mut tile = Node::column(children).gap(4.0).padding(10.0, 10.0, 10.0, 10.0).width(WIDE).radius(10.0).background(tile_background(th, color, on && !unavailable)).key(id);
+        let mut tile = Node::column(children).gap(4.0).padding(10.0, 10.0, 10.0, 10.0).width(WIDE).radius(10.0).background(th.tile(color, on && !unavailable)).key(id);
         if !unavailable {
             tile = tile.click(rx.action(&format!("tap:{id}")));
         }
@@ -935,11 +928,6 @@ fn custom_name(def: &TileDef) -> Option<String> {
         TileDef::Full { name, .. } => name.clone(),
         TileDef::Id(_) => None,
     }
-}
-
-/// A lit tile takes a little of its color.
-fn tile_background(th: &Theme, color: Rgba, lit: bool) -> Rgba {
-    if lit { th.surface.with_alpha(0.55).mix(color.with_alpha(0.55), 0.22) } else { th.surface.with_alpha(0.55) }
 }
 
 impl Widget for Home {

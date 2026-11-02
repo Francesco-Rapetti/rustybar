@@ -256,7 +256,7 @@ impl Widget for Events {
         if let Some(time) = time {
             children.push(Node::text(time, th.font(), color).key("time"));
         }
-        // On screens with a notch, only the time
+        // Compact, only the time
         if !rx.compact || children.len() == 1 {
             children.push(Node::text(title, th.font(), title_color).key("title"));
         }

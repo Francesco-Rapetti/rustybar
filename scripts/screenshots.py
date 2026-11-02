@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# The README screenshots: each widget with its popup open under it, and the right end of the bar,
-# taken window by window (so nothing behind them shows) and put on a plain gradient. Run it with a
+# The README screenshots: each widget with its popup open under it, the right end of the bar and
+# the settings window, taken window by window (so nothing behind them shows) and put on a plain gradient. Run it with a
 # RustyBar started on made-up data, in English, with every widget in [layout], e.g.
 #   open -n target/RustyBar.app --env RUSTYBAR_CONFIG_DIR=<dir> --env RUSTYBAR_MOCK=$PWD/examples/mock \
 #     --args -AppleLanguages '(en)' -AppleLocale en_US
 # and the mouse on the main display, where the popups open. Needs Pillow and swiftc.
-# Usage: scripts/screenshots.py [OUT_DIR] [WIDGET…]; by default docs/screenshots, every widget.
+# Usage: scripts/screenshots.py [OUT_DIR] [WIDGET…|settings]; by default docs/screenshots, all.
 import os, subprocess, sys, tempfile, time
 from PIL import Image, ImageDraw
 
@@ -31,10 +31,12 @@ LISTER = os.path.join(TMP, "windows")
 with open(LISTER + ".swift", "w") as f:
     f.write(SWIFT)
 subprocess.run(["swiftc", "-O", "-o", LISTER, LISTER + ".swift"], check=True)
-PID = subprocess.run(["pgrep", "-f", "RustyBar.app/Contents/MacOS"], capture_output=True, text=True).stdout.split()[0]
+# This repository's build only: not the bar in /Applications, with real data
+EXE = os.path.join(ROOT, "target/RustyBar.app/Contents/MacOS/rustybar")
+PID = subprocess.run(["pgrep", "-f", f"^{EXE}( -|$)"], capture_output=True, text=True).stdout.split()[0]
 
-def windows():
-    out = subprocess.run([LISTER, PID], capture_output=True, text=True).stdout
+def windows(pid=None):
+    out = subprocess.run([LISTER, pid or PID], capture_output=True, text=True).stdout
     return [tuple(int(x) for x in l.split()) for l in out.splitlines()]
 
 def grab(wid):
@@ -82,7 +84,7 @@ def save(name, left, top, right, bottom, pills, popup=None):
     canvas.convert("RGB").save(os.path.join(OUT, f"{name}.png"), optimize=True)
 
 os.makedirs(OUT, exist_ok=True)
-for name in sys.argv[2:] or list(pos):
+for name in [n for n in sys.argv[2:] if n != "settings"] or ([] if sys.argv[2:] else list(pos)):
     x, y, w, h = pos[name]
     subprocess.run([RB, "msg", "popup", name], capture_output=True)
     time.sleep(1.6)
@@ -101,8 +103,21 @@ for name in sys.argv[2:] or list(pos):
     print(name, "with its popup" if popup else "")
 
 shown = [pos[n] for n in HEADER if n in pos]
-if shown:
+if shown and not sys.argv[2:]:
     left = min(p[0] for p in shown) - MARGIN
     top = min(p[1] for p in shown) - MARGIN // 2
     save("bar", left, top, bx + bw, top + 28 + MARGIN, (left + MARGIN - 6, bx + bw))
     print("bar")
+
+# The settings window, which runs in a process of its own, on the Home Assistant page
+if not sys.argv[2:] or "settings" in sys.argv[2:]:
+    subprocess.run([RB, "msg", "settings", "widget:home"], capture_output=True)
+    time.sleep(2.5)
+    spid = subprocess.run(["pgrep", "-f", f"^{EXE} settings"], capture_output=True, text=True).stdout.split()[0]
+    wid = max(windows(spid), key=lambda w: w[3] * w[4])[0]
+    img = grab(wid)
+    canvas = background(img.width + 2 * MARGIN, img.height + 2 * MARGIN)
+    canvas.alpha_composite(img, (MARGIN, MARGIN))
+    canvas.convert("RGB").save(os.path.join(OUT, "settings.png"), optimize=True)
+    subprocess.run(["kill", spid])
+    print("settings")

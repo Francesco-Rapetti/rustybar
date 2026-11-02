@@ -15,7 +15,7 @@ pub struct Cache {
 }
 
 fn path() -> PathBuf {
-    crate::config::home().join("Library/Caches/rustybar/bar.json")
+    crate::config::home().join(format!("Library/Caches/rustybar/bar{}.json", crate::config::instance()))
 }
 
 impl Cache {

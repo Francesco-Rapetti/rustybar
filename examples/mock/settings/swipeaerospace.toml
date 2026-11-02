@@ -1,0 +1,11 @@
+# Made-up SwipeAeroSpace config for the settings window with RUSTYBAR_MOCK
+threshold = 0.5
+wrap = false
+natural = true
+skip-empty = true
+fingers = "Three"
+multiSwipe = false
+maxSteps = 5
+swipeUpOverview = true
+swipeUpFingers = "Three"
+show-empty-workspaces = false

@@ -235,3 +235,19 @@ pub fn open_app(bundle_id: &str) {
         ws.openURL(&url);
     }
 }
+
+/// Runs `f` on the main thread after `secs`, from the main thread, without the app: for the
+/// settings window, which runs in a process of its own.
+pub fn later(secs: f64, f: impl FnOnce() + 'static) {
+    let f = MainOnly(f);
+    let when = DispatchTime::try_from(Duration::from_secs_f64(secs.max(0.0))).unwrap_or(DispatchTime::NOW);
+    let _ = DispatchQueue::main().after(when, move || {
+        let f = f;
+        (f.0)();
+    });
+}
+
+/// Runs `f` on the main thread, from any thread, without the app (see `later`).
+pub fn on_main(f: impl FnOnce() + Send + 'static) {
+    DispatchQueue::main().exec_async(f);
+}

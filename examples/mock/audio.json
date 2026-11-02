@@ -9,7 +9,7 @@
     {"uid": "AA-BB-CC-DD-EE-01:input", "name": "AirPods Pro", "transport": "bluetooth", "type": "headset", "battery": 15}
   ],
   "output_volume": {"level": 40},
-  "input_volume": "fixed",
+  "input_volume": {"level": 70},
   "bluetooth": [
     {"name": "AirPods Pro", "address": "AA-BB-CC-DD-EE-01", "type": "headphones"},
     {"name": "Boom Speaker", "address": "AA-BB-CC-DD-EE-02", "type": "speaker"}

@@ -12,6 +12,16 @@ use crate::widgets::Event;
 
 /// In the per-user temporary folder, which launchd agents and shells share.
 pub fn socket_path() -> PathBuf {
+    temp_dir().join(format!("rustybar{}.sock", crate::config::instance()))
+}
+
+/// The settings window's own, beside the bar's: a second `rustybar settings` hands its page to the
+/// one already open (see `settings::run`).
+pub fn settings_socket_path() -> PathBuf {
+    temp_dir().join(format!("rustybar{}-settings.sock", crate::config::instance()))
+}
+
+fn temp_dir() -> PathBuf {
     let mut buf = vec![0u8; 1024];
     let n = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr().cast(), buf.len()) };
     let dir = if n > 0 && (n as usize) <= buf.len() {
@@ -19,7 +29,7 @@ pub fn socket_path() -> PathBuf {
     } else {
         std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp/".into())
     };
-    PathBuf::from(dir).join("rustybar.sock")
+    PathBuf::from(dir)
 }
 
 pub fn serve() {
@@ -71,11 +81,15 @@ fn handle(mut stream: UnixStream) {
                 app.dispatch(crate::ui::Action::Popup { widget: words[1].clone() }, None, None);
                 "ok".into()
             }
+            Some("settings") => {
+                crate::settings::launch(words.get(1).map(String::as_str));
+                "ok".into()
+            }
             Some("quit") => {
                 runtime::after(0.1, |app| app.quit());
                 "ok".into()
             }
-            _ => "usage: rustybar msg ping | reload | redraw | query | trigger <event> [key=value…] | popup <widget> | quit".into(),
+            _ => "usage: rustybar msg ping | reload | redraw | query | trigger <event> [key=value…] | popup <widget> | settings [page] | quit".into(),
         };
         let _ = tx.send(reply);
     });

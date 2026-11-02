@@ -25,11 +25,12 @@ use objc2_quartz_core::{CAMediaTiming, CASpringAnimation};
 use crate::cache::Cache;
 use crate::config::{self, Config, Options};
 use crate::display::{self, DisplayInfo};
+use crate::fit::{self, Form, Room};
 use crate::gfx::Weight;
 use crate::runtime::{self, Timer};
 use crate::surface::{Mouse, SurfaceId, Window};
 use crate::theme::Theme;
-use crate::ui::{Action, HitKind, Kind, Layout, Node, Surface};
+use crate::ui::{Action, Align, HitKind, Kind, Layout, Node, Surface};
 use crate::widgets::{self, Cx, Effect, Event, Rx, Widget};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +55,10 @@ pub struct Bar {
     pub surface: Surface,
     /// The frame of each widget's pill, in bar coordinates.
     pub items: HashMap<String, CGRect>,
+    /// How far the sides gave way at the last render, for the next (see `fit`).
+    pub fit: Vec<usize>,
+    /// The form each widget took at the last render.
+    pub forms: HashMap<String, Form>,
 }
 
 pub struct Popup {
@@ -227,6 +232,7 @@ impl App {
         crate::gfx::trim_cache(0);
         for bar in &mut self.bars {
             bar.surface.highlight = self.theme.highlight;
+            bar.fit.clear();
         }
         self.reconcile_displays();
         self.create_widgets();
@@ -342,25 +348,32 @@ impl App {
         });
     }
 
-    fn compact(&self, name: &str, d: &DisplayInfo) -> bool {
-        (d.notch.is_some() && self.config.displays.compact_on_notch)
-            || self.config.displays.always_compact.iter().any(|n| n == name)
+    /// The form the config gives a widget on `d`, whether or not there's room.
+    fn config_form(&self, name: &str, d: &DisplayInfo) -> Form {
+        let displays = &self.config.displays;
+        if d.notch.is_some() && displays.hide_on_notch.iter().any(|n| n == name) {
+            Form::Hidden
+        } else if (d.notch.is_some() && displays.compact_on_notch) || displays.always_compact.iter().any(|n| n == name) {
+            Form::Compact
+        } else {
+            Form::Full
+        }
     }
 
     /// The node of a widget in the bar of `d`: its own, its last known one (dimmed) until it's
     /// ready, a skeleton the very first time, or its error.
-    fn item(&mut self, i: usize, d: &DisplayInfo) -> Option<Node> {
-        let compact = self.compact(&self.slots[i].name, d);
+    fn item(&mut self, i: usize, d: &DisplayInfo, form: Form) -> Option<Node> {
         let popup_open = self.popup.as_ref().is_some_and(|p| p.widget == self.slots[i].name);
         let slot = &self.slots[i];
-        if d.notch.is_some() && self.config.displays.hide_on_notch.contains(&slot.name) {
-            return None;
-        }
-        let rx = Rx { name: &slot.name, theme: &self.theme, display: d, compact, popup_open };
+        let rx = Rx::new(&slot.name, &self.theme, d, form, popup_open);
         if let Some(err) = &slot.failed {
             return Some(error_pill(&rx, err));
         }
-        let variant = if compact { "compact" } else { "full" };
+        let variant = match form {
+            Form::Slim => "slim",
+            Form::Compact => "compact",
+            _ => "full",
+        };
         if !slot.widget.ready() {
             return Some(match self.cache.get(&slot.name, variant) {
                 Some(node) => node.clone().opacity(0.55),
@@ -384,33 +397,116 @@ impl App {
         }
     }
 
-    fn bar_tree(&mut self, d: &DisplayInfo) -> Node {
+    /// The bar of `self.bars[b]`: the left side at the left edge, the right one at the right edge,
+    /// the center one in the middle, with the widgets of the left and right sides in the form that
+    /// keeps them apart (see `fit`). Those that aren't in the bar are in the popup of a `⋯` pill, at
+    /// the inner end of their side.
+    fn bar_tree(&mut self, b: usize) -> Node {
+        let d = self.bars[b].display.clone();
         let height = self.config.bar.height;
         let width = d.frame.size.width;
         let margin = self.config.bar.margin;
+        let gap = self.theme.item_gap;
         let layout = Layout { scale: d.scale };
-        let mut groups: Vec<(Side, Node)> = Vec::new();
-        for side in [Side::Left, Side::Center, Side::Right] {
-            let mut children: Vec<Node> = Vec::new();
-            if side == Side::Left
-                && let Some(err) = self.error.clone() {
-                    children.push(config_error_pill(&self.theme, &err));
-                }
-            for i in 0..self.slots.len() {
-                if self.slots[i].side == side
-                    && let Some(n) = self.item(i, d) {
-                        children.push(n);
-                    }
+        let mut forms: HashMap<String, Form> = HashMap::new();
+
+        let mut center = Vec::new();
+        for i in 0..self.slots.len() {
+            let form = self.config_form(&self.slots[i].name, &d);
+            if self.slots[i].side == Side::Center && form != Form::Hidden {
+                forms.insert(self.slots[i].name.clone(), form);
+                center.extend(self.item(i, &d, form));
             }
-            let key = match side {
-                Side::Left => "left",
-                Side::Center => "center",
-                Side::Right => "right",
-            };
-            groups.push((side, Node::row(children).gap(self.theme.item_gap).key(key)));
         }
+        let center = Node::row(center).gap(gap).key("center");
+        let (center_w, _) = layout.intrinsic(&center, None);
+
+        // The room of the sides: up to the notch, or to the center group, with a gap; or all the
+        // bar between the margins when there's nothing in the middle
+        let mut middle = d.notch;
+        if center_w > 0.0 {
+            let x = ((width - center_w) / 2.0).round();
+            middle = Some(middle.map_or((x, x + center_w), |(l, r)| (l.min(x), r.max(x + center_w))));
+        }
+        let room = match middle {
+            Some((l, r)) => Room::Split { left: l - margin - gap, right: width - margin - r - gap },
+            None => Room::Shared(width - 2.0 * margin - gap),
+        };
+
+        let mut slots = Vec::new();
+        let mut items = Vec::new();
+        for left in [true, false] {
+            let side = if left { Side::Left } else { Side::Right };
+            let of_side: Vec<usize> = (0..self.slots.len()).filter(|&i| self.slots[i].side == side).collect();
+            for (k, &i) in of_side.iter().enumerate() {
+                let rank = if left { k } else { of_side.len() - 1 - k };
+                let slim = self.config.displays.slim_first.iter().position(|n| *n == self.slots[i].name).filter(|_| self.slots[i].failed.is_none());
+                items.push(fit::Item { left, rank, form: self.config_form(&self.slots[i].name, &d), slim });
+                slots.push(i);
+            }
+        }
+        let error = self.error.clone().map(|e| config_error_pill(&self.theme, &e));
+        let error_w = error.as_ref().map(|n| layout.intrinsic(n, None).0);
+        let more = [Side::Left, Side::Right].map(|side| self.more_pill(side, &d));
+        let more_w = layout.intrinsic(&more[0], None).0;
+
+        // Each widget is drawn in a form only when the fit needs to know how wide it is then
+        let mut drawn = vec![[None, None, None]; slots.len()];
+        let mut draw = |app: &mut App, k: usize, form: Form| -> Option<(f64, Node)> {
+            drawn[k][form as usize]
+                .get_or_insert_with(|| app.item(slots[k], &d, form).map(|n| (layout.intrinsic(&n, None).0, n)))
+                .clone()
+        };
+        let prev = std::mem::take(&mut self.bars[b].fit);
+        let (levels, chosen) = fit::fit(&items, room, &prev, |forms| {
+            let mut sides = [(0.0, 0usize), (0.0, 0usize)];
+            if let Some(w) = error_w {
+                sides[0] = (w, 1);
+            }
+            let mut hidden = [false, false];
+            for (k, form) in forms.iter().enumerate() {
+                let s = !items[k].left as usize;
+                if *form == Form::Hidden {
+                    hidden[s] = true;
+                } else if let Some((w, _)) = draw(self, k, *form) {
+                    sides[s].0 += w;
+                    sides[s].1 += 1;
+                }
+            }
+            for s in 0..2 {
+                if hidden[s] {
+                    sides[s].0 += more_w;
+                    sides[s].1 += 1;
+                }
+            }
+            let side = |(w, n): (f64, usize)| w + gap * n.saturating_sub(1) as f64;
+            (side(sides[0]), side(sides[1]))
+        });
+
+        let mut groups = [Vec::new(), Vec::new()];
+        groups[0].extend(error);
+        for (k, form) in chosen.iter().enumerate() {
+            forms.insert(self.slots[slots[k]].name.clone(), *form);
+            if *form != Form::Hidden
+                && let Some((_, node)) = draw(self, k, *form)
+            {
+                groups[!items[k].left as usize].push(node);
+            }
+        }
+        let [more_left, more_right] = more;
+        if (0..items.len()).any(|k| items[k].left && chosen[k] == Form::Hidden) {
+            groups[0].push(more_left);
+        }
+        if (0..items.len()).any(|k| !items[k].left && chosen[k] == Form::Hidden) {
+            groups[1].insert(0, more_right);
+        }
+        self.bars[b].fit = levels;
+        self.bars[b].forms = forms;
+
+        let [left, right] = groups;
         let mut root = Node::default().size(width, height).key("bar");
-        for (side, group) in groups {
+        for (side, group) in [(Side::Left, Node::row(left).key("left")), (Side::Center, center), (Side::Right, Node::row(right).key("right"))] {
+            let group = group.gap(gap);
             let (w, h) = layout.intrinsic(&group, None);
             let x = match side {
                 Side::Left => margin,
@@ -422,6 +518,13 @@ impl App {
         root
     }
 
+    fn more_pill(&self, side: Side, d: &DisplayInfo) -> Node {
+        let name = more_name(side);
+        let popup_open = self.popup.as_ref().is_some_and(|p| p.widget == name);
+        let rx = Rx::new(name, &self.theme, d, Form::Full, popup_open);
+        rx.pill(vec![Node::symbol("ellipsis", self.theme.icon_size, Weight::Semibold, self.theme.text)]).click(rx.toggle_popup())
+    }
+
     pub fn render(&mut self) {
         self.dirty = false;
         if let Some(lua) = &self.lua {
@@ -430,7 +533,7 @@ impl App {
         let animate = self.animations();
         for b in 0..self.bars.len() {
             let d = self.bars[b].display.clone();
-            let mut tree = self.bar_tree(&d);
+            let mut tree = self.bar_tree(b);
             tree.normalize();
             let laid = Layout { scale: d.scale }.run(&tree, Some(d.frame.size.width));
             let bar = &mut self.bars[b];
@@ -446,8 +549,19 @@ impl App {
                     }
                 }
             }
+            // The popups of the widgets in a `⋯` popup open from the `⋯` pill
+            for slot in &self.slots {
+                if bar.forms.get(&slot.name) == Some(&Form::Hidden)
+                    && let Some(r) = bar.items.get(more_name(slot.side)).copied()
+                {
+                    bar.items.insert(slot.name.clone(), r);
+                }
+            }
         }
-        self.render_popup(animate);
+        // A `⋯` popup goes when its widgets are back in the bar
+        if !self.render_popup(animate) && self.popup.as_ref().is_some_and(|p| more_side(&p.widget).is_some()) {
+            self.close_popup();
+        }
         crate::gfx::trim_cache(256);
         if !self.first_frame_logged && !self.bars.is_empty() {
             self.first_frame_logged = true;
@@ -499,7 +613,7 @@ impl App {
                     surface.animate = false;
                     let window = Window::new(self.mtm, SurfaceId::Bar(d.id), frame, level, &surface.root, None);
                     window.show();
-                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new() });
+                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new() });
                     changed = true;
                 }
             }
@@ -638,12 +752,17 @@ impl App {
                         Some((path, hover)) => surface.set_hover(Some(path), hover),
                         None => surface.set_hover(None, None),
                     }
+                    let slider = surface.hit(p, &[HitKind::Slider]).map(|h| h.path.clone());
+                    surface.set_slider_hover(slider);
                 }
             }
-            Mouse::Exited => surface.set_hover(None, None),
+            Mouse::Exited => {
+                surface.set_hover(None, None);
+                surface.set_slider_hover(None);
+            }
             Mouse::Down => {
                 if let Some(h) = surface.hit(p, &[HitKind::Slider]).cloned() {
-                    let v = ((p.x - h.rect.origin.x) / h.rect.size.width).clamp(0.0, 1.0);
+                    let v = crate::ui::slider_value(h.rect, p.x);
                     surface.drag_slider(&h.path, v);
                 } else if let Some(h) = surface.hit(p, &[HitKind::Click]).cloned() {
                     surface.press(&h.path);
@@ -655,7 +774,7 @@ impl App {
             Mouse::Dragged => {
                 if let Some((path, _)) = surface.dragging.clone()
                     && let Some(h) = surface.hits.iter().find(|h| h.path == path).cloned() {
-                        let v = ((p.x - h.rect.origin.x) / h.rect.size.width).clamp(0.0, 1.0);
+                        let v = crate::ui::slider_value(h.rect, p.x);
                         surface.drag_slider(&path, v);
                     }
             }
@@ -714,8 +833,13 @@ impl App {
 
     pub fn open_popup(&mut self, widget: &str, display: u32) {
         self.close_popup();
-        let Some(slot) = self.slots.iter().find(|s| s.name == widget) else { return };
-        let side = slot.side;
+        let side = match more_side(widget) {
+            Some(side) => side,
+            None => match self.slots.iter().find(|s| s.name == widget) {
+                Some(slot) => slot.side,
+                None => return,
+            },
+        };
         let Some(bar) = self.bars.iter().find(|b| b.display.id == display).or(self.bars.first()) else { return };
         let Some(item) = bar.items.get(widget).copied() else { return };
         let d = bar.display.clone();
@@ -766,20 +890,32 @@ impl App {
         self.dirty = true;
     }
 
-    /// Draws the popup and fits its window to it. False if the widget has no popup.
+    /// Draws the popup and fits its window to it. False if the widget has no popup, or a `⋯` pill
+    /// no widgets.
     fn render_popup(&mut self, animate: bool) -> bool {
         let Some(popup) = &self.popup else { return false };
-        let name = popup.widget.clone();
-        let Some(slot) = self.slots.iter().find(|s| s.name == name) else { return false };
+        let (name, anchor, side) = (popup.widget.clone(), popup.anchor, popup.side);
         let Some(bar) = self.bars.iter().find(|b| b.display.id == popup.display) else { return false };
         let d = bar.display.clone();
-        let compact = self.compact(&name, &d);
-        let rx = Rx { name: &slot.name, theme: &self.theme, display: &d, compact, popup_open: true };
-        let content = match &slot.failed {
-            Some(err) => Some(rx.popup(260.0, vec![rx.section("Error", None), rx.detail(err)])),
-            None => {
-                let widget = &slot.widget;
-                catch_unwind(AssertUnwindSafe(|| widget.popup(&rx))).ok().flatten()
+        let content = if more_side(&name).is_some() {
+            // The widgets of this side that aren't in the bar, in their full form: there's room
+            let hidden: Vec<usize> = (0..self.slots.len())
+                .filter(|&i| self.slots[i].side == side && bar.forms.get(&self.slots[i].name) == Some(&Form::Hidden))
+                .collect();
+            let items: Vec<Node> = hidden.into_iter().filter_map(|i| self.item(i, &d, Form::Full)).collect();
+            let align = if side == Side::Left { Align::Start } else { Align::End };
+            (!items.is_empty()).then(|| Node::column(items).padding(8.0, 8.0, 8.0, 8.0).gap(self.theme.item_gap).align(align))
+        } else {
+            let Some(slot) = self.slots.iter().find(|s| s.name == name) else { return false };
+            // As the widget is in the bar
+            let form = bar.forms.get(&name).copied().unwrap_or_else(|| self.config_form(&name, &d));
+            let rx = Rx::new(&slot.name, &self.theme, &d, form, true);
+            match &slot.failed {
+                Some(err) => Some(rx.popup(260.0, vec![rx.section("Error", None), rx.detail(err)])),
+                None => {
+                    let widget = &slot.widget;
+                    catch_unwind(AssertUnwindSafe(|| widget.popup(&rx))).ok().flatten()
+                }
             }
         };
         let Some(content) = content else { return false };
@@ -794,14 +930,14 @@ impl App {
         let layout = Layout { scale: d.scale };
         let (mut w, mut h) = layout.intrinsic(&tree, None);
         // Never taller than the screen below the bar
-        let max_h = (popup.anchor.origin.y - d.frame.origin.y - 8.0).max(100.0);
+        let max_h = (anchor.origin.y - d.frame.origin.y - 8.0).max(100.0);
         h = h.min(max_h);
         w = w.ceil();
         let laid = layout.place(&tree, 0.0, 0.0, w, h);
         let gap = self.config.bar.popup_gap;
         let margin = self.config.bar.margin;
-        let a = popup.anchor;
-        let x = match popup.side {
+        let a = anchor;
+        let x = match side {
             Side::Left => a.origin.x,
             Side::Right => a.origin.x + a.size.width - w,
             Side::Center => a.origin.x + (a.size.width - w) / 2.0,
@@ -877,9 +1013,33 @@ impl App {
                 let y = main_h - (f.origin.y + f.size.height) + r.origin.y;
                 out.push_str(&format!("  {:<14} {:<16} {:.0},{:.0} {:.0}x{:.0}\n", b.display.name, k, x, y, r.size.width, r.size.height));
             }
+            // The widgets that gave way, so that the sides don't overlap
+            for (form, label) in [(Form::Slim, "slim"), (Form::Compact, "compact"), (Form::Hidden, "in ⋯")] {
+                let names: Vec<&str> = self.slots.iter().filter(|s| b.forms.get(&s.name) == Some(&form)).map(|s| s.name.as_str()).collect();
+                if !names.is_empty() {
+                    out.push_str(&format!("  {:<14} {:<16} {}\n", b.display.name, label, names.join(", ")));
+                }
+            }
         }
         out.push_str(&format!("displays: {}\n", self.bars.iter().map(|b| format!("{} ({}x{}{})", b.display.name, b.display.frame.size.width, b.display.frame.size.height, if b.display.notch.is_some() { ", notch" } else { "" })).collect::<Vec<_>>().join(", ")));
         out
+    }
+}
+
+/// The `⋯` pills: in place of the widgets of their side the bar has no room for, which are in their
+/// popups. Not names a widget of `[layout]` would have.
+const MORE_LEFT: &str = "⋯left";
+const MORE_RIGHT: &str = "⋯right";
+
+fn more_name(side: Side) -> &'static str {
+    if side == Side::Left { MORE_LEFT } else { MORE_RIGHT }
+}
+
+fn more_side(name: &str) -> Option<Side> {
+    match name {
+        MORE_LEFT => Some(Side::Left),
+        MORE_RIGHT => Some(Side::Right),
+        _ => None,
     }
 }
 

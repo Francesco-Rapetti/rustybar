@@ -15,7 +15,7 @@ use objc2_quartz_core::{
 
 use super::layout::Laid;
 use super::node::{Action, Kind, Node};
-use crate::gfx::{self, Rgba};
+use crate::gfx::{self, FontSpec, Rgba};
 
 /// An interactive region of a surface, in its coordinates (top-left origin).
 #[derive(Clone, Debug)]
@@ -38,11 +38,22 @@ struct Entry {
     layer: Retained<CALayer>,
     /// What the contents show, to skip rasterizing when it didn't change.
     sig: Option<String>,
-    /// Slider fill and knob, progress fill, toggle knob, shimmer, scroll content, selection.
+    /// Slider track, fill, labels and knob, progress fill, toggle knob, shimmer, scroll content,
+    /// selection.
     parts: HashMap<&'static str, Retained<CALayer>>,
     background: Option<Rgba>,
     frame: CGRect,
     generation: u64,
+    /// A slider's colors and font, to draw it again while it's dragged.
+    slider: Option<SliderLook>,
+}
+
+#[derive(Clone)]
+struct SliderLook {
+    color: Rgba,
+    track: Rgba,
+    font: Option<FontSpec>,
+    value: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -68,6 +79,8 @@ pub struct Surface {
     generation: u64,
     /// Sliders being dragged keep their value until released.
     pub dragging: Option<(String, f64)>,
+    /// The slider under the mouse, which shows its knob.
+    pub slider_hovered: Option<String>,
 }
 
 fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
@@ -110,6 +123,7 @@ impl Surface {
             entries: HashMap::new(),
             generation: 0,
             dragging: None,
+            slider_hovered: None,
         }
     }
 
@@ -168,6 +182,9 @@ impl Surface {
         if self.hovered.as_ref().is_some_and(|h| !self.entries.contains_key(h)) {
             self.hovered = None;
         }
+        if self.slider_hovered.as_ref().is_some_and(|h| !self.entries.contains_key(h)) {
+            self.slider_hovered = None;
+        }
     }
 
     /// The path of `node` under `parent_path`: its key, or its kind and its order among the
@@ -212,13 +229,14 @@ impl Surface {
             parent.addSublayer(&layer);
             self.entries.insert(
                 path.clone(),
-                Entry { layer, sig: None, parts: HashMap::new(), background: None, frame, generation: self.generation },
+                Entry { layer, sig: None, parts: HashMap::new(), background: None, frame, generation: self.generation, slider: None },
             );
         }
         let scale = self.scale;
         let hovered = self.hovered.as_deref() == Some(path.as_str());
         let highlight = self.highlight;
         let dragging = self.dragging.clone();
+        let knob = self.slider_hovered.as_deref() == Some(path.as_str()) || dragging.as_ref().is_some_and(|(p, _)| *p == path);
         let entry = self.entries.get_mut(&path).unwrap();
         entry.generation = self.generation;
         let layer = entry.layer.clone();
@@ -302,12 +320,13 @@ impl Surface {
                 let w = (laid.w * value.clamp(0.0, 1.0)).max(if *value > 0.0 { h } else { 0.0 });
                 fill.setFrame(rect(0.0, 0.0, w, h));
             }
-            Kind::Slider { value, color, track } => {
+            Kind::Slider { value, color, track, font } => {
                 let v = match &dragging {
                     Some((p, v)) if *p == path => *v,
                     _ => value.clamp(0.0, 1.0),
                 };
-                layout_slider(entry, &layer, laid.w, laid.h, v, *color, *track, scale);
+                entry.slider = Some(SliderLook { color: *color, track: *track, font: font.clone(), value: v });
+                layout_slider(entry, &layer, laid.w, laid.h, v, knob, scale);
             }
             Kind::Toggle { on, color, track } => {
                 let h = laid.h;
@@ -507,19 +526,35 @@ impl Surface {
         e.layer.addAnimation_forKey(&anim, Some(ns_string!("press")));
     }
 
-    /// Moves a slider while it's dragged, without a full render.
+    /// Moves a slider while it's dragged, and its percentage with it, without a full render.
     pub fn drag_slider(&mut self, path: &str, value: f64) {
         self.dragging = Some((path.to_string(), value));
-        let Some(e) = self.entries.get(path) else { return };
+        let scale = self.scale;
+        let Some(e) = self.entries.get_mut(path) else { return };
         let (w, h) = (e.frame.size.width, e.frame.size.height);
-        transaction(false, 0.0, || {
-            if let (Some(fill), Some(knob)) = (e.parts.get("fill"), e.parts.get("knob")) {
-                let k = h.min(16.0);
-                let x = (w - k) * value;
-                fill.setFrame(rect(0.0, (h - 6.0) / 2.0, x + k / 2.0, 6.0));
-                knob.setFrame(rect(x, (h - k) / 2.0, k, k));
+        let layer = e.layer.clone();
+        transaction(false, 0.0, || layout_slider(e, &layer, w, h, value, true, scale));
+    }
+
+    /// Shows the knob of the slider under the mouse, and moves its percentage out of the way;
+    /// hides the previous one's, unless it's being dragged.
+    pub fn set_slider_hover(&mut self, path: Option<String>) {
+        if self.slider_hovered == path {
+            return;
+        }
+        let dragged = self.dragging.as_ref().map(|(p, _)| p.clone());
+        let hidden = self.slider_hovered.take().filter(|p| dragged.as_ref() != Some(p));
+        let changes: Vec<(String, bool)> = hidden.map(|p| (p, false)).into_iter().chain(path.clone().map(|p| (p, true))).collect();
+        let scale = self.scale;
+        transaction(self.animate, 0.18, || {
+            for (p, shown) in changes {
+                let Some(e) = self.entries.get_mut(&p) else { continue };
+                let Some(value) = e.slider.as_ref().map(|s| s.value) else { continue };
+                let (w, h, layer) = (e.frame.size.width, e.frame.size.height, e.layer.clone());
+                layout_slider(e, &layer, w, h, value, shown, scale);
             }
         });
+        self.slider_hovered = path;
     }
 
     /// Scrolls a scroll node by `dy` points. Past the ends it moves with resistance and `settle`
@@ -585,27 +620,79 @@ fn part(entry: &mut Entry, name: &'static str, layer: &CALayer, scale: f64) -> R
         .clone()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn layout_slider(entry: &mut Entry, layer: &CALayer, w: f64, h: f64, v: f64, color: Rgba, track: Rgba, scale: f64) {
-    let bar = part(entry, "track", layer, scale);
-    bar.setBackgroundColor(Some(&track.cg()));
-    bar.setCornerRadius(3.0);
-    bar.setFrame(rect(0.0, (h - 6.0) / 2.0, w, 6.0));
-    let fill = part(entry, "fill", layer, scale);
-    fill.setBackgroundColor(Some(&color.cg()));
-    fill.setCornerRadius(3.0);
-    let k = h.min(16.0);
-    let x = (w - k) * v;
-    fill.setFrame(rect(0.0, (h - 6.0) / 2.0, x + k / 2.0, 6.0));
-    let knob = part(entry, "knob", layer, scale);
-    knob.setBackgroundColor(Some(&color.cg()));
-    knob.setCornerRadius(k / 2.0);
-    knob.setBorderWidth(2.0);
-    knob.setBorderColor(Some(&Rgba(1.0, 1.0, 1.0, 0.9).cg()));
-    knob.setShadowOpacity(0.3);
-    knob.setShadowRadius(2.0);
-    knob.setShadowOffset(CGSize::new(0.0, 1.0));
-    knob.setFrame(rect(x, (h - k) / 2.0, k, k));
+/// A thick track and a fill as round as it, gone at 0, and the percentage: in the fill before its
+/// end when it fits there, else on the track after it, else in the middle. The percentage is drawn
+/// twice, in a color that reads on the track and, clipped to the fill, in one that reads on the
+/// fill, so it reads wherever it falls. The knob, a white disc in the fill's round end, shows only
+/// with `knob`, and the percentage then keeps clear of it.
+fn layout_slider(entry: &mut Entry, layer: &CALayer, w: f64, h: f64, v: f64, knob: bool, scale: f64) {
+    let Some(look) = entry.slider.clone() else { return };
+    if let Some(s) = entry.slider.as_mut() {
+        s.value = v;
+    }
+    let track = part(entry, "track", layer, scale);
+    track.setFrame(rect(0.0, 0.0, w, h));
+    track.setCornerRadius(h / 2.0);
+    track.setBackgroundColor(Some(&look.track.cg()));
+    let under = part(entry, "under", &track, scale);
+    let fill = part(entry, "fill", &track, scale);
+    // The knob's center is `slider_value`'s: from h/2 to w - h/2
+    let travel = (w - h).max(0.0);
+    let edge = if v > 0.0 { h + v * travel } else { 0.0 };
+    fill.setFrame(rect(0.0, 0.0, edge, h));
+    fill.setCornerRadius(h / 2.0);
+    fill.setMasksToBounds(true);
+    fill.setBackgroundColor(Some(&look.color.cg()));
+    // The fill starts where the track does: the label's frame is the same in both
+    let over = part(entry, "over", &fill, scale);
+    if let Some(font) = &look.font {
+        let text = format!("{:.0}%", v * 100.0);
+        let m = gfx::measure_text(&text, font);
+        let (tw, th) = (m.width, m.height().ceil());
+        // Clear of the round ends, and of the knob when it shows
+        let (inset, inside, outside) = (8.0, if knob { h + 2.0 } else { 8.0 }, 6.0);
+        let x = if edge - inside - tw >= inset {
+            edge - inside - tw
+        } else if (edge + outside).max(inset) + tw <= w - inset {
+            (edge + outside).max(inset)
+        } else {
+            (w - tw) / 2.0
+        };
+        let sig = format!("l|{text}|{font:?}|{:?}|{:?}|{scale}", look.color, look.track);
+        if entry.sig.as_deref() != Some(&sig) {
+            for (label, background) in [(&under, look.track), (&over, look.color)] {
+                if let Some(b) = gfx::text(&text, font, ink(background), scale) {
+                    unsafe { label.setContents(Some(b.as_contents())) };
+                    label.setContentsGravity(unsafe { kCAGravityLeft });
+                }
+            }
+            entry.sig = Some(sig);
+        }
+        let frame = rect(x, (h - th) / 2.0, tw, th);
+        under.setFrame(frame);
+        over.setFrame(frame);
+    }
+    let disc = part(entry, "knob", layer, scale);
+    let k = (h - 4.0).max(0.0);
+    disc.setBackgroundColor(Some(&Rgba(1.0, 1.0, 1.0, 1.0).cg()));
+    disc.setCornerRadius(k / 2.0);
+    disc.setShadowOpacity(0.3);
+    disc.setShadowRadius(2.0);
+    disc.setShadowOffset(CGSize::new(0.0, 1.0));
+    disc.setFrame(rect(v * travel + 2.0, 2.0, k, k));
+    disc.setOpacity(if knob { 1.0 } else { 0.0 });
+}
+
+/// The value (0..1) of a slider in `rect` with the knob's center at `x`.
+pub fn slider_value(rect: CGRect, x: f64) -> f64 {
+    let (w, h) = (rect.size.width, rect.size.height);
+    ((x - rect.origin.x - h / 2.0) / (w - h).max(1.0)).clamp(0.0, 1.0)
+}
+
+/// Text that reads on `background`: dark on light colors, light on dark ones.
+fn ink(background: Rgba) -> Rgba {
+    let luminance = 0.2126 * background.0 + 0.7152 * background.1 + 0.0722 * background.2;
+    if luminance > 0.6 { Rgba(0.0, 0.0, 0.0, 0.75) } else { Rgba(1.0, 1.0, 1.0, 0.92) }
 }
 
 fn kind_tag(kind: &Kind) -> &'static str {
@@ -633,4 +720,22 @@ fn intersect(a: CGRect, b: CGRect) -> Option<CGRect> {
     let x1 = (a.origin.x + a.size.width).min(b.origin.x + b.size.width);
     let y1 = (a.origin.y + a.size.height).min(b.origin.y + b.size.height);
     (x1 > x0 && y1 > y0).then(|| rect(x0, y0, x1 - x0, y1 - y0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slider_value_follows_the_knob() {
+        // 100 wide and 20 high: the knob's center goes from 10 to 90
+        let r = rect(50.0, 0.0, 100.0, 20.0);
+        assert_eq!(slider_value(r, 60.0), 0.0);
+        assert_eq!(slider_value(r, 100.0), 0.5);
+        assert_eq!(slider_value(r, 140.0), 1.0);
+        assert_eq!(slider_value(r, 10.0), 0.0);
+        assert_eq!(slider_value(r, 200.0), 1.0);
+        assert_eq!(ink(Rgba(0.8, 0.65, 0.97, 1.0)), Rgba(0.0, 0.0, 0.0, 0.75));
+        assert_eq!(ink(Rgba(0.2, 0.2, 0.27, 1.0)), Rgba(1.0, 1.0, 1.0, 0.92));
+    }
 }

@@ -114,24 +114,30 @@ impl Default for LayoutConfig {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct DisplayConfig {
-    /// On screens with a notch the widgets draw their compact form (icons, short times), so that
-    /// the right side doesn't end up under the notch. Off: always the full form.
+    /// On screens with a notch every widget draws its compact form (icons, short times), even
+    /// where the full one would fit. Off: only those the bar has no room for (see `fit`).
     pub compact_on_notch: bool,
-    /// Widgets hidden on screens with a notch.
+    /// Widgets that leave the bar on screens with a notch, for the popup of the `⋯` pill of their
+    /// side, whether or not there's room.
     pub hide_on_notch: Vec<String>,
-    /// Widgets that draw their compact form on every screen.
+    /// Widgets that draw their compact form on every screen, even where the full one would fit.
     pub always_compact: Vec<String>,
-    /// From this width in points a screen is "large": widgets can show more there (one pill per
-    /// Claude account…).
+    /// Widgets that leave out what the bar can do without when there's no room, in this order,
+    /// before any widget turns compact: `audio` its volume sliders, `claude` the pills of the
+    /// single accounts (see `fit`).
+    pub slim_first: Vec<String>,
+    /// From this width in points a screen is "large": Lua widgets can show more there
+    /// (`ctx.large`).
     pub large_width: f64,
 }
 
 impl Default for DisplayConfig {
     fn default() -> Self {
         DisplayConfig {
-            compact_on_notch: true,
+            compact_on_notch: false,
             hide_on_notch: vec![],
             always_compact: vec![],
+            slim_first: vec!["audio".into(), "claude".into()],
             large_width: 3840.0,
         }
     }
@@ -145,6 +151,16 @@ pub fn config_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|_| home().join(".config"));
     base.join("rustybar")
+}
+
+/// What tells a bar started with a config dir of its own (`RUSTYBAR_CONFIG_DIR`, for a test) apart
+/// from the usual one, so that each has its own socket and cache: empty for the usual one.
+pub fn instance() -> String {
+    match std::env::var("RUSTYBAR_CONFIG_DIR") {
+        // FNV-1a of the path: the same in every build, unlike std's hashers
+        Ok(dir) => format!("-{:08x}", dir.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193))),
+        Err(_) => String::new(),
+    }
 }
 
 pub fn home() -> PathBuf {
@@ -178,7 +194,7 @@ pub fn load() -> Result<Config, String> {
 }
 
 /// Puts `more` over `base`: tables merge key by key, anything else (arrays too) is replaced.
-fn merge(base: &mut toml::Table, more: toml::Table) {
+pub fn merge(base: &mut toml::Table, more: toml::Table) {
     for (key, value) in more {
         match (base.get_mut(&key), value) {
             (Some(toml::Value::Table(b)), toml::Value::Table(m)) => merge(b, m),
