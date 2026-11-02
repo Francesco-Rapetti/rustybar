@@ -68,7 +68,8 @@ only when a value changes.
 
 A few things still run a process: `brew outdated` every hour and on wake (only with `brewfile` or
 `brew = true`), `system_profiler` for AirPods batteries and paired devices when the audio popup
-opens and every 2 minutes while a Bluetooth device is in use, `curl` for the public IP when the
+opens and every 2 minutes while a Bluetooth device is in use, `system_profiler` for the battery
+health at most once a day, when the battery popup opens, `curl` for the public IP when the
 network popup opens, and Claude Code (`claude auth status` and `claude -p`, for each account) every
 5 minutes, on wake and when the Claude popup opens: it's the only way to the plan's numbers. It
 asks for them without sending a message, so it doesn't use the plan. The keychain is read and

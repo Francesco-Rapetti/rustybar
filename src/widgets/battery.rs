@@ -63,17 +63,24 @@ struct Status {
     desktop: bool,
     low_power: bool,
     watts: Option<i64>,
-    /// "Good" or another condition, and the cycles.
-    health: Option<String>,
     cycles: Option<i64>,
 }
 
-/// Made-up data (see `mock`): the state, and the maximum capacity (`"92%"`).
+/// Battery Health as System Settings shows it: "Good" or another condition, and the maximum
+/// capacity (`"92%"`).
+#[derive(Default)]
+struct Health {
+    condition: Option<String>,
+    max_capacity: Option<String>,
+}
+
+/// Made-up data (see `mock`): the state, the condition and the maximum capacity.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct Mock {
     #[serde(flatten)]
     status: Status,
+    health: Option<String>,
     max_capacity: Option<String>,
 }
 
@@ -83,7 +90,7 @@ pub struct Battery {
     status: Option<Status>,
     loaded: bool,
     /// From system_profiler, the only one that says it: at most once a day, when the popup opens.
-    max_capacity: Option<(String, Instant)>,
+    health: Option<(Health, Instant)>,
     reading: bool,
     queued: bool,
     /// The row whose action macOS refused, until the next update.
@@ -198,7 +205,7 @@ impl Widget for Battery {
         if let Some(m) = crate::mock::load::<Mock>("battery") {
             self.mock = true;
             self.status = Some(m.status);
-            self.max_capacity = m.max_capacity.map(|c| (c, Instant::now()));
+            self.health = Some((Health { condition: m.health, max_capacity: m.max_capacity }, Instant::now()));
             self.loaded = true;
             return;
         }
@@ -297,16 +304,22 @@ impl Widget for Battery {
             }
         }
 
-        if let Some(health) = &s.health {
-            let (text, color) = if health == "Good" { (t("Normale", "Normal"), th.subtext) } else { (t("Assistenza consigliata", "Service Recommended"), th.yellow) };
-            rows.push(rx.section(t("Stato batteria", "Battery Health"), Some(Node::text(text, bold.clone(), color))).padding(14.0, 8.0, 4.0, 8.0).key("health"));
-            let mut parts = Vec::new();
-            if let Some((cap, _)) = &self.max_capacity {
-                parts.push(t(&format!("Capacità massima {cap}"), &format!("Maximum capacity {cap}")).to_string());
-            }
-            if let Some(c) = s.cycles {
-                parts.push(t(&format!("{c} cicli"), &format!("{c} cycles")).to_string());
-            }
+        // The cycles at once, the condition and the maximum capacity once system_profiler says them
+        let health = self.health.as_ref().map(|(h, _)| h);
+        let condition = health.and_then(|h| h.condition.as_deref());
+        let mut parts = Vec::new();
+        if let Some(cap) = health.and_then(|h| h.max_capacity.as_deref()) {
+            parts.push(t(&format!("Capacità massima {cap}"), &format!("Maximum capacity {cap}")).to_string());
+        }
+        if let Some(c) = s.cycles {
+            parts.push(t(&format!("{c} cicli"), &format!("{c} cycles")).to_string());
+        }
+        if condition.is_some() || !parts.is_empty() {
+            let right = condition.map(|c| {
+                let (text, color) = if c == "Good" { (t("Normale", "Normal"), th.subtext) } else { (t("Assistenza consigliata", "Service Recommended"), th.yellow) };
+                Node::text(text, bold.clone(), color)
+            });
+            rows.push(rx.section(t("Stato batteria", "Battery Health"), right).padding(14.0, 8.0, 4.0, 8.0).key("health"));
             if !parts.is_empty() {
                 rows.push(rx.detail(&parts.join(" · ")).key("health-details"));
             }
@@ -358,11 +371,11 @@ impl Widget for Battery {
         match event {
             Event::Wake => self.update(cx),
             Event::PopupOpened => {
-                let stale = self.max_capacity.as_ref().is_none_or(|(_, at)| at.elapsed().as_secs() > 24 * 3600);
-                if stale && self.status.as_ref().is_some_and(|s| s.health.is_some()) {
-                    cx.background::<Battery, _>(max_capacity, |w, cap, cx| {
-                        if let Some(c) = cap {
-                            w.max_capacity = Some((c, Instant::now()));
+                let stale = self.health.as_ref().is_none_or(|(_, at)| at.elapsed().as_secs() > 24 * 3600);
+                if stale && self.status.is_some() {
+                    cx.background::<Battery, _>(read_health, |w, health, cx| {
+                        if let Some(h) = health {
+                            w.health = Some((h, Instant::now()));
                             cx.redraw();
                         }
                     });
@@ -516,7 +529,6 @@ fn read_status() -> Option<Status> {
         desktop: false,
         low_power: NSProcessInfo::processInfo().isLowPowerModeEnabled(),
         watts: None,
-        health: string(&b, ns_string!("BatteryHealth")).filter(|h| !h.is_empty()),
         cycles: cycle_count(),
     };
     if ac {
@@ -578,9 +590,13 @@ fn charge_to_full() -> bool {
     }
 }
 
-/// The maximum capacity System Settings shows, e.g. "96%", which only system_profiler says.
-fn max_capacity() -> Option<String> {
+/// The condition and the maximum capacity System Settings shows, e.g. "Good" and "96%", which only
+/// system_profiler says. IOKit's `BatteryHealth` isn't the same: it can say "Check Battery" for a
+/// battery system_profiler calls Good, with few cycles and no failure.
+fn read_health() -> Option<Health> {
     let out = runtime::run("/usr/sbin/system_profiler", &["SPPowerDataType", "-json"], None, std::time::Duration::from_secs(20));
     let v: serde_json::Value = serde_json::from_str(&out.stdout).ok()?;
-    v["SPPowerDataType"].as_array()?.iter().find_map(|e| e["sppower_battery_health_info"]["sppower_battery_health_maximum_capacity"].as_str().map(String::from))
+    let info = v["SPPowerDataType"].as_array()?.iter().map(|e| &e["sppower_battery_health_info"]).find(|i| i.is_object())?;
+    let field = |key: &str| info[key].as_str().filter(|s| !s.is_empty()).map(String::from);
+    Some(Health { condition: field("sppower_battery_health"), max_capacity: field("sppower_battery_health_maximum_capacity") })
 }
