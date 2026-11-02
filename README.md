@@ -27,7 +27,7 @@ processes a minute.
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
 | `claude` | How much of the Claude plan each account has used: the 5-hour session and the week | For each account the plan, both limits with a bar and when they reset, log in and log out |
-| `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | The engine and its resources, the running containers with their state, CPU, memory, image, ports and uptime, Docker Desktop |
+| `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | A dashboard: the engine and what the containers use; every container, by Compose project, with its state, CPU, memory, image, ports (links to localhost) and uptime, and buttons to start, stop, restart and remove it (a project's at once too); disk usage of images, containers, volumes and build cache, each cleaned up with a click, unused networks and a system prune; Docker Desktop |
 
 Each widget with its popup, on made-up data (see below):
 
@@ -42,7 +42,7 @@ Each widget with its popup, on made-up data (see below):
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/network.png" width="308" alt="Addresses, VPN, Ethernet and the Wi-Fi networks to join"><br><code>network</code></td>
-<td align="center" valign="top"><img src="docs/screenshots/docker.png" width="388" alt="The Docker engine and its running containers with CPU, memory, image, ports and uptime"><br><code>docker</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/docker.png" width="392" alt="A dashboard of Docker containers by Compose project, with start, stop, restart and remove buttons, and the disk usage to clean up"><br><code>docker</code></td>
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/audio.png" width="429" alt="Output and input volume with sliders, tiles for the devices and for Bluetooth headphones and speakers"><br><code>audio</code></td>
@@ -241,6 +241,24 @@ With more than one account, each has its own pill and popup; when the bar has no
 
 The `docker` widget finds the Engine API socket of Docker Desktop, OrbStack, colima, Rancher
 Desktop or `DOCKER_HOST=unix://…` by itself, and has no options.
+
+Its popup does what the `docker` CLI would, through the same API:
+
+| In the popup | As |
+| --- | --- |
+| ▶ ■ ↻ on a container | `docker start` (`unpause` when paused), `stop`, `restart` |
+| The bin, clicked twice | `docker rm -f`: running containers too; their anonymous volumes stay |
+| ▶ ■ ↻ by a Compose project | The same on each of its containers, at once, without Compose's `depends_on` order |
+| A port | Opens `http://localhost:<port>` |
+| Images, clicked twice | `docker image prune -a`: every image no container uses |
+| Containers, clicked twice | `docker container prune` |
+| Volumes, clicked twice | `docker volume prune`: anonymous volumes only, named ones keep their data |
+| Build Cache, clicked twice | `docker builder prune -a` |
+| Unused Networks, clicked twice | `docker network prune` |
+| Clean Up All, clicked twice | `docker system prune -a`: stopped containers, unused networks and images, build cache; not volumes |
+
+The disk usage is read (`/system/df`) when the popup opens and after each action, and the CPU and
+memory of the containers every few seconds while it's open.
 
 ## Lua widgets
 

@@ -162,6 +162,13 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   dimensione con l'`animator`. Provato coi dati finti su sfondi colorati, chiaro (con
   `-NSRequiresAquaSystemAppearance YES`) e scuro, e a metà animazione: ~24 MB, ~0,1% CPU,
   0 processi.
+- `docker` a plancia: tutti i container (anche fermi, `?all=1`) per progetto Compose, con ▶ ■ ↻ e
+  cestino (secondo clic) per container e ▶ ■ ↻ per progetto, le porte come link a localhost; lo
+  spazio su disco (`/system/df`, all'apertura e dopo ogni azione) con la pulizia a due clic di
+  immagini (`-a`), container, volumi anonimi e cache di build, più reti e `system prune -a`.
+  Azioni con `net::unix_request` (POST/DELETE) in `cx.background`, poi rilettura subito. Provato
+  coi dati finti (stati, conferme, note): ~16 MB, ~0% CPU, 0 processi. Da provare con l'utente sul
+  Docker vero: le azioni e le pulizie (cambiano lo stato reale).
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

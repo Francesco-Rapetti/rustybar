@@ -109,10 +109,18 @@ impl Response {
 /// `GET target` over the Unix socket at `path`. Blocking: for worker threads. `timeout` bounds
 /// each read, None for a stream that waits for events.
 pub fn unix_get(path: &Path, target: &str, timeout: Option<Duration>) -> io::Result<Response> {
+    unix_request(path, "GET", target, timeout)
+}
+
+/// `method target` without a body (`POST`, `DELETE`…) over the Unix socket at `path`, as
+/// `unix_get`.
+pub fn unix_request(path: &Path, method: &str, target: &str, timeout: Option<Duration>) -> io::Result<Response> {
     let mut stream = UnixStream::connect(path)?;
     stream.set_read_timeout(timeout)?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    write!(stream, "GET {target} HTTP/1.1\r\nHost: localhost\r\nUser-Agent: rustybar\r\nConnection: close\r\n\r\n")?;
+    // A POST without a length could be waiting for its body
+    let length = if method == "GET" { "" } else { "Content-Length: 0\r\n" };
+    write!(stream, "{method} {target} HTTP/1.1\r\nHost: localhost\r\nUser-Agent: rustybar\r\n{length}Connection: close\r\n\r\n")?;
     let closer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
