@@ -197,9 +197,10 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Della M3: la riconnessione di `home` al risveglio, login e logout di `claude`. Di `fit.rs`: un
   clic dentro il popup della `⋯`.
 - Notch vero (MacBook, 1800×1169): AppKit teneva la barra sotto la riga del notch anche col menu
-  nascosto; il pannello ora rifiuta `constrainFrameRect` e la barra sta nella riga, a livello 23
-  (prima `setFloatingPanel` rimetteva ogni pannello al livello 3). Lati e forme compatte provati
-  lì sulla barra vera.
+  nascosto; il pannello ora rifiuta `constrainFrameRect` e la barra sta nella riga, a livello 20, quello del
+  Dock (prima `setFloatingPanel` rimetteva ogni pannello al livello 3; a 23 copriva i banner delle
+  notifiche, che col menu nascosto scendono nella riga e stanno a 21). Lati e forme compatte provati
+  lì sulla barra vera; i banner sopra la barra provati con `display notification`.
 
 ## M3
 

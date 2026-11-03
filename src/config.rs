@@ -28,8 +28,8 @@ pub struct BarConfig {
     pub height: f64,
     /// From the screen edges to the first and last pill.
     pub margin: f64,
-    /// Above the menu bar (true) or below it, so that the menu bar shows over the bar when it
-    /// slides in.
+    /// Above the menu bar (true), and so above Notification Center's banners too, or below both,
+    /// so that the menu bar shows over the bar when it slides in.
     pub topmost: bool,
     /// Moves the bar down: for trying RustyBar under another bar.
     pub offset: f64,

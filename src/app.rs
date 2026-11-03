@@ -15,7 +15,7 @@ use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSApplicationDidChangeScreenParametersNotification,
-    NSEvent, NSEventMask, NSMainMenuWindowLevel, NSPopUpMenuWindowLevel, NSStatusWindowLevel,
+    NSEvent, NSEventMask, NSPopUpMenuWindowLevel, NSStatusWindowLevel,
     NSSystemColorsDidChangeNotification, NSWorkspace, NSWorkspaceDidWakeNotification,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -618,7 +618,10 @@ impl App {
     // ---- displays ------------------------------------------------------------------------------
 
     fn bar_level(&self) -> isize {
-        if self.config.bar.topmost { NSStatusWindowLevel } else { NSMainMenuWindowLevel - 1 }
+        // Notification Center's banners are at 21, just above the Dock's level (20; its constant
+        // is deprecated): there the bar stays above every window and under the banners
+        const DOCK_LEVEL: isize = 20;
+        if self.config.bar.topmost { NSStatusWindowLevel } else { DOCK_LEVEL }
     }
 
     fn bar_frame(&self, d: &DisplayInfo) -> CGRect {

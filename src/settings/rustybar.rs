@@ -99,7 +99,7 @@ pub fn bar(f: &mut Form) {
     f.number_at(t("Margine", "Margin"), Some(t("Dai bordi dello schermo alla prima e all'ultima pillola", "From the screen edges to the first and last pill")), &rb("bar.margin"), d.bar.margin, Num::new(0.0, 1000.0, 1.0, 0));
     f.number_at(t("Distanza dei popup", "Popup gap"), Some(t("Fra le pillole e i loro popup", "Between the pills and their popups")), &rb("bar.popup_gap"), d.bar.popup_gap, Num::new(0.0, 60.0, 1.0, 0));
     f.number_at(t("Spostamento in basso", "Offset"), Some(t("Abbassa la barra, per esempio per provarla sotto un'altra", "Moves the bar down, e.g. to try it under another bar")), &rb("bar.offset"), d.bar.offset, Num::new(0.0, 1000.0, 1.0, 0));
-    f.toggle_at(t("Sopra la barra dei menu", "Above the menu bar"), Some(t("Quando la barra dei menu di macOS scende, resta sotto la barra", "When the macOS menu bar slides in, it stays under the bar")), &rb("bar.topmost"), d.bar.topmost);
+    f.toggle_at(t("Sopra la barra dei menu", "Above the menu bar"), Some(t("Quando la barra dei menu di macOS scende, resta sotto la barra, come i banner delle notifiche", "When the macOS menu bar slides in, it stays under the bar, and so do notification banners")), &rb("bar.topmost"), d.bar.topmost);
 
     f.group(Some(t("Schermi", "Displays")));
     f.toggle_at(t("Tutto compatto col notch", "All compact with a notch"), Some(t("Sugli schermi col notch ogni widget usa la forma compatta, anche se c'è spazio", "On screens with a notch every widget draws its compact form, even with room")), &rb("displays.compact_on_notch"), d.displays.compact_on_notch);
