@@ -237,6 +237,30 @@ pub trait Widget: Any {
     fn as_any(&mut self) -> &mut dyn Any;
 }
 
+/// The kinds `create` knows, in the order of the settings window's sidebar.
+pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "home", "system", "docker", "claude", "audio", "network", "battery", "events", "clock", "notifications"];
+
+/// The name among `known` that `name` is most likely a typo of: at most two letters off.
+pub fn closest<'a>(name: &str, known: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    // Levenshtein, one row at a time
+    let distance = |a: &str, b: &str| {
+        let b: Vec<char> = b.chars().collect();
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.chars().enumerate() {
+            let mut prev = row[0];
+            row[0] = i + 1;
+            for (j, cb) in b.iter().enumerate() {
+                let next = (row[j + 1] + 1).min(row[j] + 1).min(prev + usize::from(ca != *cb));
+                prev = row[j + 1];
+                row[j + 1] = next;
+            }
+        }
+        row[b.len()]
+    };
+    let name = name.to_lowercase();
+    known.into_iter().map(|k| (distance(&name, &k.to_lowercase()), k)).filter(|(d, _)| *d <= 2).min_by_key(|(d, _)| *d).map(|(_, k)| k)
+}
+
 /// Creates the widget of kind `kind` (the name in `[layout]`, or its `type`).
 pub fn create(kind: &str, options: &Options) -> Option<Box<dyn Widget>> {
     Some(match kind {
@@ -265,4 +289,30 @@ macro_rules! any_widget {
             self
         }
     };
+}
+
+/// The names of `[layout]` that the bar skips: neither a kind (themselves, or by their `type`) nor
+/// one of `lua`. Each with the name it's most likely a typo of.
+pub fn unknown(config: &crate::config::Config, lua: &[String]) -> Vec<(String, Option<String>)> {
+    let kind = |name: &str| config.widgets.get(name).and_then(|w| w.get("type")).and_then(|t| t.as_str()).unwrap_or(name).to_string();
+    let valid = |name: &str| lua.iter().any(|n| n == name) || KINDS.contains(&kind(name).as_str());
+    let known: Vec<&str> = KINDS.iter().copied().chain(config.widgets.keys().map(String::as_str).filter(|n| valid(n))).chain(lua.iter().map(String::as_str)).collect();
+    let l = &config.layout;
+    l.left.iter().chain(&l.center).chain(&l.right).filter(|n| !valid(n)).map(|n| (n.clone(), closest(n, known.iter().copied()).map(String::from))).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typos() {
+        assert_eq!(closest("notification", KINDS.iter().copied()), Some("notifications"));
+        assert_eq!(closest("Clock", KINDS.iter().copied()), Some("clock"));
+        assert_eq!(closest("weather", KINDS.iter().copied()), None);
+        let mut config = crate::config::Config::default();
+        config.layout.right = vec!["clock".into(), "notification".into(), "clock_utc".into(), "weather".into()];
+        config.widgets.insert("clock_utc".into(), toml::toml! { type = "clock" });
+        assert_eq!(unknown(&config, &["weather".into()]), vec![("notification".into(), Some("notifications".into()))]);
+    }
 }

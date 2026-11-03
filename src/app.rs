@@ -221,7 +221,10 @@ impl App {
                         timers: Vec::new(),
                         failed: None,
                     }),
-                    None => crate::log(&format!("unknown widget {name} (type {kind})")),
+                    None => {
+                        let hint = widgets::closest(name, widgets::KINDS.iter().copied().chain(lua_widgets.iter().map(String::as_str)));
+                        crate::log(&format!("unknown widget {name} (type {kind}){}", hint.map(|h| format!(": did you mean {h}?")).unwrap_or_default()));
+                    }
                 }
             }
         }

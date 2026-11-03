@@ -1,12 +1,27 @@
 {
   "wifi_device": "en0", "wifi_power": true, "primary": "en0", "ssid": "Home", "band": "5",
-  "address": "192.168.1.24", "router": "192.168.1.1", "vpn": "Office", "vpn_address": "10.8.0.2",
+  "address": "192.168.1.24", "prefix": 24, "router": "192.168.1.1",
+  "ipv6": "2001:db8:4a1:e0::24", "ipv6_prefix": 64, "dns": ["192.168.1.1", "1.1.1.1"],
+  "vpn": "Office", "vpn_address": "10.8.0.2", "vpn_interface": "utun4",
   "wired": [{"name": "USB 10/100/1000 LAN", "enabled": true, "connected": false}],
-  "public_ip": "203.0.113.42",
+  "link": {"rssi": -54, "noise": -92, "rate": 1201, "channel": 36, "band": "5", "width": 80, "phy": "ax", "security": 11},
+  "interface": {"mac": "02:00:5e:00:53:24", "mtu": 1500, "speed": 0},
+  "public": {"ip": "203.0.113.42", "provider": "Example Broadband", "city": "Springfield", "country": "US", "latency": 18},
+  "ping": 3,
+  "received": 4213000000, "sent": 612000000,
+  "traffic": [
+    [120000, 31000], [95000, 22000], [140000, 40000], [310000, 52000], [860000, 88000],
+    [2400000, 140000], [4100000, 210000], [4800000, 260000], [4500000, 230000], [3200000, 180000],
+    [1500000, 120000], [620000, 74000], [240000, 41000], [130000, 30000], [88000, 380000],
+    [96000, 520000], [110000, 460000], [150000, 90000], [420000, 60000], [1100000, 72000],
+    [1900000, 95000], [2600000, 110000], [2100000, 98000], [900000, 70000], [300000, 45000],
+    [160000, 36000], [120000, 28000], [180000, 33000], [560000, 50000], [1300000, 64000]
+  ],
   "networks": [
-    {"name": "Home", "level": 3, "security": "personal", "known": true},
-    {"name": "Office Guest", "level": 2, "security": "open", "known": true},
-    {"name": "Corner Cafe", "level": 2, "security": "personal", "known": false},
-    {"name": "Library", "level": 1, "security": "enterprise", "known": false}
+    {"name": "Home", "level": 3, "security": "personal", "known": true, "band": "5", "label": "WPA3"},
+    {"name": "Office Guest", "level": 2, "security": "open", "known": true, "band": "2.4"},
+    {"name": "Corner Cafe", "level": 2, "security": "personal", "known": false, "band": "5", "label": "WPA2"},
+    {"name": "Library", "level": 1, "security": "enterprise", "known": false, "band": "5", "label": "WPA2"},
+    {"name": "Studio 4B", "level": 1, "security": "personal", "known": false, "band": "2.4", "label": "WPA2/3"}
   ]
 }

@@ -14,7 +14,7 @@ use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_se
 use objc2_app_kit::{
     NSBezierPath, NSBox, NSBoxType, NSButton, NSColor, NSColorSpace, NSColorWell, NSColorWellStyle, NSControl,
     NSControlSize, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontWeightSemibold, NSImage,
-    NSImageSymbolConfiguration, NSLayoutAttribute, NSLayoutConstraintOrientation, NSLineBreakMode, NSMenu, NSMenuItem,
+    NSImageSymbolConfiguration, NSImageView, NSLayoutAttribute, NSLayoutConstraintOrientation, NSLineBreakMode, NSMenu, NSMenuItem,
     NSPopUpButton, NSStackView, NSStackViewGravity, NSStepper, NSTextAlignment, NSTextField,
     NSTokenField, NSUserInterfaceLayoutOrientation, NSView,
 };
@@ -187,6 +187,23 @@ pub fn symbol(name: &str, size: f64) -> Option<Retained<NSImage>> {
     image.imageWithSymbolConfiguration(&config)
 }
 
+/// The colored square with a white symbol of a page, as in System Settings.
+pub fn icon_tile(mtm: MainThreadMarker, symbol_name: &str, color: Rgba) -> Retained<NSView> {
+    let tile = Rounded::new(mtm, Some(ns_color(color)), 5.0);
+    tile.setTranslatesAutoresizingMaskIntoConstraints(false);
+    tile.widthAnchor().constraintEqualToConstant(20.0).setActive(true);
+    tile.heightAnchor().constraintEqualToConstant(20.0).setActive(true);
+    if let Some(image) = symbol(symbol_name, 11.0) {
+        let view = NSImageView::imageViewWithImage(&image, mtm);
+        view.setContentTintColor(Some(&NSColor::whiteColor()));
+        view.setTranslatesAutoresizingMaskIntoConstraints(false);
+        tile.addSubview(&view);
+        view.centerXAnchor().constraintEqualToAnchor(&tile.centerXAnchor()).setActive(true);
+        view.centerYAnchor().constraintEqualToAnchor(&tile.centerYAnchor()).setActive(true);
+    }
+    Retained::into_super(tile)
+}
+
 pub fn ns_color(c: Rgba) -> Retained<NSColor> {
     NSColor::colorWithSRGBRed_green_blue_alpha(c.0, c.1, c.2, c.3)
 }
@@ -242,6 +259,9 @@ impl Num {
         Num { min, max, step, decimals }
     }
 }
+
+/// A command of a pull-down: its title, SF Symbol and what it does.
+pub type Command<'a> = (String, &'a str, Box<dyn Fn()>);
 
 /// An entry of a popup button.
 pub struct Opt {
@@ -403,6 +423,26 @@ impl Form {
         self.push_row(&row);
     }
 
+    /// A row of a list: an icon, a title with a line under it (red for an error), and controls at
+    /// the right end.
+    pub fn item(&mut self, icon: &NSView, title: &str, detail: &str, error: bool, trailing: &[&NSView]) {
+        let row = stack(self.mtm, false, 10.0);
+        row.setEdgeInsets(NSEdgeInsets { top: 7.0, left: 0.0, bottom: 7.0, right: 0.0 });
+        row.addView_inGravity(icon, NSStackViewGravity::Leading);
+        let text = stack(self.mtm, true, 1.0);
+        text.addArrangedSubview(&label(self.mtm, title, 13.0, false, false));
+        let d = label(self.mtm, detail, 11.0, false, true);
+        if error {
+            d.setTextColor(Some(&NSColor::systemRedColor()));
+        }
+        text.addArrangedSubview(&d);
+        row.addView_inGravity(&text, NSStackViewGravity::Leading);
+        for v in trailing {
+            row.addView_inGravity(v, NSStackViewGravity::Trailing);
+        }
+        self.push_row(&row);
+    }
+
     /// A row of plain text.
     pub fn note(&mut self, text: &str) {
         let p = paragraph(self.mtm, text, 12.0, true, INNER);
@@ -441,10 +481,15 @@ impl Form {
         self.push_row(&row);
     }
 
-    /// The `⋯` of a row of a list, with its commands (move up, move down, delete…).
+    /// The `⋯` of a row of a list, with its commands (move up, move down, delete…); an empty title
+    /// is a separator.
     pub fn menu_button(&mut self, items: Vec<(String, Box<dyn Fn()>)>) -> Retained<NSButton> {
         let menu = NSMenu::new(self.mtm);
         for (title, f) in items {
+            if title.is_empty() {
+                menu.addItem(&NSMenuItem::separatorItem(self.mtm));
+                continue;
+            }
             let t = self.target(f);
             let item = unsafe {
                 NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(self.mtm), &NSString::from_str(&title), Some(sel!(fire:)), ns_string!(""))
@@ -561,6 +606,25 @@ impl Form {
                 f(v.clone());
             }
         });
+        p
+    }
+
+    /// A pull-down button titled `title`: a menu of commands, each with an SF Symbol. Disabled
+    /// without any.
+    pub fn pull_down(&mut self, title: &str, items: Vec<Command>) -> Retained<NSPopUpButton> {
+        let p = NSPopUpButton::initWithFrame_pullsDown(NSPopUpButton::alloc(self.mtm), NSRect::ZERO, true);
+        let menu = p.menu().expect("a popup has a menu");
+        // A pull-down shows its first item as its title
+        unsafe { menu.addItemWithTitle_action_keyEquivalent(&NSString::from_str(title), None, ns_string!("")) };
+        p.setEnabled(!items.is_empty());
+        for (label, symbol_name, f) in items {
+            let t = self.target(f);
+            let item = unsafe { NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(self.mtm), &NSString::from_str(&label), Some(sel!(fire:)), ns_string!("")) };
+            let obj: &AnyObject = &t;
+            unsafe { item.setTarget(Some(obj)) };
+            item.setImage(symbol(symbol_name, 13.0).as_deref());
+            menu.addItem(&item);
+        }
         p
     }
 

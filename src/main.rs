@@ -91,7 +91,16 @@ fn main() {
                     }
                     let theme = theme::Theme::from_config(&c.theme);
                     match lua::Host::load(&c, &theme) {
-                        Ok((_, widgets)) => println!("ok: {} Lua widget(s)", widgets.len()),
+                        Ok((_, lua)) => {
+                            let unknown = widgets::unknown(&c, &lua);
+                            for (name, hint) in &unknown {
+                                eprintln!("unknown widget {name:?} in [layout]{}", hint.as_ref().map(|h| format!(": did you mean {h:?}?")).unwrap_or_default());
+                            }
+                            if !unknown.is_empty() {
+                                std::process::exit(1);
+                            }
+                            println!("ok: {} Lua widget(s)", lua.len());
+                        }
                         Err(e) => {
                             eprintln!("{e}");
                             std::process::exit(1);

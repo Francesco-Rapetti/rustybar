@@ -13,8 +13,8 @@ use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_cl
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSAutoresizingMaskOptions, NSBackingStoreType,
     NSColor, NSEvent, NSEventPhase, NSGlassEffectContainerView, NSGlassEffectView, NSGlassEffectViewStyle, NSPanel,
-    NSTrackingArea, NSTrackingAreaOptions, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior,
+    NSScreen, NSTrackingArea, NSTrackingAreaOptions, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowCollectionBehavior,
     NSWindowLevel, NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect};
@@ -124,14 +124,27 @@ impl SurfaceView {
     }
 }
 
+define_class!(
+    #[unsafe(super(NSPanel, NSWindow))]
+    #[thread_kind = MainThreadOnly]
+    pub struct Panel;
+
+    impl Panel {
+        // AppKit keeps windows below the menu bar's row of a screen with a notch even when the
+        // menu bar hides, and the bar goes in that row: the app places its windows itself
+        #[unsafe(method(constrainFrameRect:toScreen:))]
+        fn constrain_frame_rect(&self, frame: CGRect, _screen: Option<&NSScreen>) -> CGRect {
+            frame
+        }
+    }
+);
+
 fn panel(mtm: MainThreadMarker, frame: CGRect, level: NSWindowLevel) -> Retained<NSPanel> {
-    let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
-        NSPanel::alloc(mtm),
-        frame,
-        NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
-        NSBackingStoreType::Buffered,
-        false,
-    );
+    let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
+    let panel: Retained<Panel> = unsafe {
+        msg_send![Panel::alloc(mtm), initWithContentRect: frame, styleMask: style, backing: NSBackingStoreType::Buffered, defer: false]
+    };
+    let panel = Retained::into_super(panel);
     unsafe { panel.setReleasedWhenClosed(false) };
     panel.setOpaque(false);
     panel.setHasShadow(false);
@@ -144,7 +157,7 @@ fn panel(mtm: MainThreadMarker, frame: CGRect, level: NSWindowLevel) -> Retained
     );
     panel.setAcceptsMouseMovedEvents(true);
     panel.setHidesOnDeactivate(false);
-    panel.setFloatingPanel(true);
+    // Not `setFloatingPanel`, which would put it back at the floating level
     panel.setBecomesKeyOnlyIfNeeded(true);
     panel
 }

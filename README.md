@@ -22,7 +22,7 @@ processes a minute.
 | `battery` | The charge, with an icon for its state | State, Charge Limit (macOS 26.4+) and Charge to Full Now, battery health, Battery settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
 | `audio` | The output and the input in use, with the battery of Bluetooth devices and a slider with the volume of each (`sliders = false` hides them), the first thing to go when the bar has no room; the Mac's own speakers and microphone, or both halves of a headset, show as one | A dashboard: the output and input volume, each with its level and a slider; tiles for the devices to switch to and for the paired Bluetooth headphones and speakers to connect or disconnect |
-| `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | Addresses (local and public), router and VPN, wired services, Wi-Fi on and off, the nearby networks to join (the password is asked once and kept in the keychain) |
+| `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph, on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click, and the VPN |
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | Today's events; a click joins the Google Meet call or shows the event in Calendar |
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
@@ -41,7 +41,7 @@ Each widget with its popup, on made-up data (see below):
 <td align="center" valign="top"><img src="docs/screenshots/clock.png" width="290" alt="A calendar that scrolls through the months"><br><code>clock</code></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/screenshots/network.png" width="308" alt="Addresses, VPN, Ethernet and the Wi-Fi networks to join"><br><code>network</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/network.png" width="392" alt="The Wi-Fi networks to join and Ethernet, then the connection with its signal, download and upload graphs, the link, the addresses and the VPN"><br><code>network</code></td>
 <td align="center" valign="top"><img src="docs/screenshots/docker.png" width="392" alt="A dashboard of Docker containers by Compose project, with start, stop, restart and remove buttons, and the disk usage to clean up"><br><code>docker</code></td>
 </tr>
 <tr>
@@ -63,19 +63,20 @@ from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, the s
 listeners, the network from the System Configuration store, the calendars from EventKit, Home
 Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
 from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
-memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility). The bar is redrawn
-only when a value changes.
+memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility), and only while the
+network popup is open its traffic and Wi-Fi link every second and a ping to the router every 5. The
+bar is redrawn only when a value changes.
 
 A few things still run a process: `brew outdated` every hour and on wake (only with `brewfile` or
 `brew = true`), `system_profiler` for AirPods batteries and paired devices when the audio popup
 opens and every 2 minutes while a Bluetooth device is in use, `system_profiler` for the battery
-health at most once a day, when the battery popup opens, `curl` for the public IP when the
-network popup opens, and Claude Code (`claude auth status` and `claude -p`, for each account) every
-5 minutes, on wake and when the Claude popup opens: it's the only way to the plan's numbers. It
-asks for them without sending a message, so it doesn't use the plan. The keychain is read and
-written through `security`, once for each secret. While the settings window is open it runs as a
-second RustyBar process, which ends when it closes, and a change to the borders starts `borders`
-with its new options if it's running.
+health at most once a day, when the battery popup opens, `curl` for the public IP and its provider
+(from ipinfo.io) when the network popup opens, and Claude Code (`claude auth status` and
+`claude -p`, for each account) every 5 minutes, on wake and when the Claude popup opens: it's the
+only way to the plan's numbers. It asks for them without sending a message, so it doesn't use the
+plan. The keychain is read and written through `security`, once for each secret. While the
+settings window is open it runs as a second RustyBar process, which ends when it closes, and a
+change to the borders starts `borders` with its new options if it's running.
 
 Until a widget has its first data, the bar shows its last known state, dimmed, or a shimmering
 placeholder the very first time. A widget that fails shows an error pill; the rest of the bar
@@ -108,7 +109,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
 | Accessibility | `notifications` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works |
 | Automation | `apple`, `clock` | Restart, Shut Down and Log Out; showing a day in Calendar |
-| Local Network | `home` | Reaching a Home Assistant server on your network (at start) |
+| Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup opens), without which the rest works |
 
 To keep the macOS menu bar out of the way, turn on *Automatically hide and show the menu bar* in
 System Settings → Control Center.
@@ -310,7 +311,9 @@ rb.widget {
 Lua runs inside RustyBar, sandboxed: no `os.execute`, `io.popen` or `os.exit`, and a call that
 takes more than 250 ms is stopped. Anything slow goes through `rb.exec`.
 
-`rustybar check` loads the config and the Lua widgets and reports the first error.
+`rustybar check` loads the config and the Lua widgets and reports the first error, and every
+name in `[layout]` that is no widget, with the one most likely meant (`notification`:
+`notifications`). The bar skips such a name, and its log says the same.
 
 ## Settings window
 
@@ -319,7 +322,10 @@ instead of their files:
 
 - **RustyBar**: the bar and the displays, the theme (palette, accent, font, sizes, the palette's
   colors), the layout, and each widget, built-in or Lua, with its position and options; another
-  widget of the same kind, such as a second clock;
+  widget of the same kind, such as a second clock. The layout shows the bar in small and the
+  widgets of each side, to reorder, move to another side or remove, and adds only widgets that
+  exist and aren't in the bar yet: no name is typed. A name the bar doesn't know is in red, with
+  a button for the widget it's most likely a typo of;
 - **AeroSpace**: startup, layout and behavior, gaps (with a value per monitor), the bindings of
   each mode, workspaces on monitors and the rules for new windows;
 - **borders** of [JankyBorders](https://github.com/FelixKratz/JankyBorders) (the `borders`

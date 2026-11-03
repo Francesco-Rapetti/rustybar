@@ -5,7 +5,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use objc2_app_kit::NSFontManager;
+use objc2::rc::Retained;
+use objc2_app_kit::{NSColor, NSControlSize, NSFontManager, NSStackViewGravity, NSView};
+use objc2_foundation::{NSEdgeInsets, NSString};
 use toml_edit::{InlineTable, Table};
 
 use super::form::{self, Form, Num, Opt, hex, opts};
@@ -14,9 +16,7 @@ use crate::config::Config;
 use crate::gfx::Rgba;
 use crate::i18n::t;
 use crate::theme::{self, Theme};
-
-/// The widgets of RustyBar, in the order of the sidebar.
-const KINDS: &[&str] = &["apple", "aerospace", "front_app", "home", "system", "docker", "claude", "audio", "network", "battery", "events", "clock", "notifications"];
+use crate::widgets::{self, KINDS};
 
 const SIDES: [&str; 3] = ["left", "center", "right"];
 
@@ -35,7 +35,7 @@ fn info(kind: &str) -> (&'static str, &'static str, &'static str) {
         "notifications" => (t("Notifiche", "Notifications"), "bell.badge.fill", t("I badge del Dock delle app scelte, i crash di RustyBar e gli aggiornamenti di Homebrew.", "The Dock badges of the apps you choose, RustyBar's crashes and Homebrew updates.")),
         "home" => ("Home Assistant", "house.fill", t("I dispositivi di casa, in diretta, e una plancia per comandarli.", "The devices of the house, live, and a dashboard to control them.")),
         "claude" => ("Claude", "sparkle", t("Quanto dei limiti del piano ha usato ogni account Claude.", "How much of the plan's limits each Claude account has used.")),
-        "docker" => ("Docker", "shippingbox.fill", t("I container in esecuzione, dall'Engine API.", "The running containers, from the Engine API.")),
+        "docker" => ("Docker", "shippingbox.fill", t("I container, con i pulsanti per gestirli, e lo spazio su disco da pulire.", "The containers, with buttons to manage them, and the disk space to clean up.")),
         _ => ("", "puzzlepiece.extension.fill", t("Un widget scritto in Lua, in widgets/ accanto alla config.", "A widget written in Lua, in widgets/ next to the config.")),
     }
 }
@@ -65,7 +65,7 @@ fn kind_of(name: &str) -> String {
 /// its title, symbol and whether it's in the bar.
 pub fn widget_entries(lua: &[String]) -> Vec<(String, String, &'static str, bool)> {
     let used: Vec<String> = sides().concat();
-    let mut names = used.clone();
+    let mut names: Vec<String> = used.iter().filter(|n| describe(n, lua).is_some()).cloned().collect();
     for name in store::keys(&rb("widgets")).into_iter().chain(KINDS.iter().map(|k| k.to_string())).chain(lua.iter().cloned()) {
         if !names.contains(&name) {
             names.push(name);
@@ -211,35 +211,124 @@ pub fn theme(f: &mut Form) {
     ));
 }
 
-// ---- the layout --------------------------------------------------------------------------------
+// ---- the layout ----------------------------------------------------------------------------------
+
+/// The gray of the widgets' icons, as in the sidebar, and the red of a name the bar doesn't know.
+const GRAY: Rgba = Rgba(0.43, 0.455, 0.506, 1.0);
+const RED: Rgba = Rgba(0.92, 0.3, 0.27, 1.0);
+
+/// How a widget of the layout shows: its title, the line under it and its symbol.
+struct Shown {
+    title: String,
+    detail: String,
+    symbol: &'static str,
+}
+
+/// A name of `[layout]` as the settings show it, or None when the bar doesn't know it: neither a
+/// kind (itself, or by its `type`) nor a Lua widget.
+fn describe(name: &str, lua: &[String]) -> Option<Shown> {
+    if lua.iter().any(|n| n == name) {
+        return Some(Shown { title: name.to_string(), detail: format!("{name} · Lua"), symbol: info("").1 });
+    }
+    let kind = kind_of(name);
+    if !KINDS.contains(&kind.as_str()) {
+        return None;
+    }
+    // As in the sidebar; under it, always the name of the TOML
+    let (title, symbol, _) = info(&kind);
+    let title = if name == kind { title.to_string() } else { format!("{title} ({name})") };
+    Some(Shown { title, detail: name.to_string(), symbol })
+}
+
+/// Every widget the bar can show: the kinds, the other widgets of a kind in `[widgets]` and the
+/// Lua ones.
+fn known(lua: &[String]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for n in KINDS.iter().map(|k| k.to_string()).chain(store::keys(&rb("widgets"))).chain(lua.iter().cloned()) {
+        if !names.contains(&n) && describe(&n, lua).is_some() {
+            names.push(n);
+        }
+    }
+    names
+}
+
+fn write_side(side: &str, list: &[String]) {
+    store::set(&rb(&format!("layout.{side}")), store::strings(list));
+    super::refresh_later();
+}
+
+/// The bar in small: the icons of its widgets on their sides, a red question mark for a name it
+/// doesn't know.
+fn preview(f: &Form, lists: &[Vec<String>; 3], lua: &[String]) -> Retained<NSView> {
+    let mtm = f.mtm;
+    let bar = form::Rounded::new(mtm, Some(NSColor::labelColor().colorWithAlphaComponent(0.08)), 10.0);
+    form::set_width(&bar, form::GROUP_W);
+    bar.heightAnchor().constraintEqualToConstant(38.0).setActive(true);
+    let row = form::stack(mtm, false, 6.0);
+    row.setEdgeInsets(NSEdgeInsets { top: 0.0, left: 10.0, bottom: 0.0, right: 10.0 });
+    for (list, gravity) in lists.iter().zip([NSStackViewGravity::Leading, NSStackViewGravity::Center, NSStackViewGravity::Trailing]) {
+        for name in list {
+            let tile = match describe(name, lua) {
+                Some(w) => {
+                    let tile = form::icon_tile(mtm, w.symbol, GRAY);
+                    tile.setToolTip(Some(&NSString::from_str(&w.title)));
+                    tile
+                }
+                None => {
+                    let tile = form::icon_tile(mtm, "questionmark", RED);
+                    tile.setToolTip(Some(&NSString::from_str(name)));
+                    tile
+                }
+            };
+            row.addView_inGravity(&tile, gravity);
+        }
+    }
+    form::pin(&row, &bar, (0.0, 0.0, 0.0, 0.0));
+    Retained::into_super(bar)
+}
 
 pub fn layout(f: &mut Form, lua: &[String]) {
     f.header(t("Disposizione", "Layout"), t("Quali widget ci sono nella barra, e in che ordine.", "Which widgets are in the bar, and in what order."), &files());
     let lists = sides();
-    f.group(None);
-    let titles = [t("A sinistra", "Left"), t("Al centro", "Center"), t("A destra", "Right")];
-    for (i, key) in SIDES.iter().enumerate() {
-        let s = rb(&format!("layout.{key}"));
-        let help = (i == 1).then(|| t("Sugli schermi col notch il centro resta libero", "On screens with a notch the center stays free"));
-        f.tokens(titles[i], help, &lists[i], t("nessuno", "none"), move |v| {
-            store::set(&s, store::strings(&v));
-            super::refresh_sidebar_later();
-        });
-    }
-    f.footer(t(
-        "Trascina i widget per riordinarli o spostarli da un lato all'altro; scrivi un nome, seguito da una virgola, per aggiungerlo.",
-        "Drag the widgets to reorder them or move them to another side; type a name, followed by a comma, to add it.",
-    ));
-
+    let view = preview(f, &lists, lua);
+    f.add_view(&view);
+    let known = known(lua);
     let used = lists.concat();
-    let mut free: Vec<String> = Vec::new();
-    for n in KINDS.iter().map(|k| k.to_string()).chain(lua.iter().cloned()).chain(store::keys(&rb("widgets"))) {
-        if !used.contains(&n) && !free.contains(&n) {
-            free.push(n);
+    let free: Vec<&String> = known.iter().filter(|n| !used.contains(n)).collect();
+    let titles = [t("A sinistra", "Left"), t("Al centro", "Center"), t("A destra", "Right")];
+    for (i, &side) in SIDES.iter().enumerate() {
+        f.group(Some(titles[i]));
+        if lists[i].is_empty() {
+            f.note(t("Nessun widget da questo lato.", "No widgets on this side."));
+        }
+        for j in 0..lists[i].len() {
+            layout_row(f, lua, &known, side, &lists[i], j);
+        }
+        // Only widgets the bar knows, and not twice
+        let items: Vec<form::Command> = free
+            .iter()
+            .map(|name| {
+                let w = describe(name, lua).expect("known");
+                let (list, name) = (lists[i].clone(), (*name).clone());
+                let add: Box<dyn Fn()> = Box::new(move || {
+                    let mut list = list.clone();
+                    list.push(name.clone());
+                    write_side(side, &list);
+                });
+                (w.title, w.symbol, add)
+            })
+            .collect();
+        let title = if items.is_empty() { t("Tutti i widget sono nella barra", "Every widget is in the bar") } else { t("Aggiungi un widget", "Add a Widget") };
+        let add = f.pull_down(title, items);
+        f.line(&[&add], None);
+        if i == 1 {
+            f.footer(t("Sugli schermi col notch il centro resta libero.", "On screens with a notch the center stays free."));
         }
     }
-    f.group(Some(t("Fuori dalla barra", "Not in the bar")));
-    f.note(&if free.is_empty() { t("Tutti i widget sono nella barra.", "Every widget is in the bar.").to_string() } else { free.join(", ") });
+    f.footer(t(
+        "Le frecce cambiano l'ordine; ⋯ sposta un widget su un altro lato, lo toglie dalla barra o apre le sue opzioni.",
+        "The arrows change the order; ⋯ moves a widget to another side, removes it from the bar or opens its options.",
+    ));
 
     f.group(Some(t("Un altro widget dello stesso tipo", "Another widget of the same kind")));
     let name_field = f.field("", t("nome, es. clock_utc", "name, e.g. clock_utc"), 170.0, |_| {});
@@ -265,6 +354,66 @@ pub fn layout(f: &mut Form, lua: &[String]) {
         "Per esempio un secondo orologio con un altro fuso orario: ha una pagina sua, con le sue opzioni.",
         "For example a second clock with another time zone: it gets a page of its own, with its own options.",
     ));
+}
+
+/// A widget of a side: its icon, title and name, ↑ ↓ and ⋯; a name the bar doesn't know in red,
+/// with the fix for a typo.
+fn layout_row(f: &mut Form, lua: &[String], known: &[String], side: &'static str, list: &[String], i: usize) {
+    let name = list[i].clone();
+    let shown = describe(&name, lua);
+    let fix = shown.is_none().then(|| widgets::closest(&name, known.iter().map(String::as_str)).map(String::from)).flatten();
+    let swap = |a: usize, b: usize| {
+        let list = list.to_vec();
+        move || {
+            let mut list = list.clone();
+            list.swap(a, b);
+            write_side(side, &list);
+        }
+    };
+    let up = f.icon_button("chevron.up", t("Sposta prima", "Move earlier"), swap(i, i.saturating_sub(1)));
+    up.setEnabled(i > 0);
+    let down = f.icon_button("chevron.down", t("Sposta dopo", "Move later"), swap(i, (i + 1).min(list.len() - 1)));
+    down.setEnabled(i + 1 < list.len());
+
+    let mut menu: Vec<(String, Box<dyn Fn()>)> = Vec::new();
+    if shown.is_some() {
+        let n = name.clone();
+        menu.push((t("Opzioni del widget…", "Widget Options…").to_string(), Box::new(move || super::select(&format!("widget:{n}")))));
+        menu.push((String::new(), Box::new(|| {})));
+    }
+    let moves = [("left", t("Sposta a sinistra", "Move to the Left")), ("center", t("Sposta al centro", "Move to the Center")), ("right", t("Sposta a destra", "Move to the Right"))];
+    for (to, title) in moves.into_iter().filter(|(to, _)| *to != side) {
+        let n = name.clone();
+        menu.push((title.to_string(), Box::new(move || {
+            move_to(&n, to);
+            super::refresh_later();
+        })));
+    }
+    let mut rest = list.to_vec();
+    rest.remove(i);
+    menu.push((t("Togli dalla barra", "Remove from the Bar").to_string(), Box::new(move || write_side(side, &rest))));
+    let more = f.menu_button(menu);
+
+    let (icon, title, detail) = match &shown {
+        Some(w) => (form::icon_tile(f.mtm, w.symbol, GRAY), w.title.clone(), w.detail.clone()),
+        None => {
+            let detail = match &fix {
+                Some(fix) => t(&format!("Widget sconosciuto: forse {fix}?"), &format!("Unknown widget: {fix}?")).to_string(),
+                None => t("Widget sconosciuto: la barra lo salta", "Unknown widget: the bar skips it").to_string(),
+            };
+            (form::icon_tile(f.mtm, "questionmark", RED), name.clone(), detail)
+        }
+    };
+    match fix {
+        Some(fix) => {
+            let mut fixed = list.to_vec();
+            fixed[i] = fix.clone();
+            let button = f.button(&format!("{} {fix}", t("Usa", "Use")), move || write_side(side, &fixed));
+            button.setControlSize(NSControlSize::Small);
+            f.item(&icon, &title, &detail, true, &[&button, &up, &down, &more]);
+        }
+        None => f.item(&icon, &title, &detail, shown.is_none(), &[&up, &down, &more]),
+    }
 }
 
 // ---- a widget ----------------------------------------------------------------------------------

@@ -25,7 +25,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSClickGestureRecognizer, NSColor, NSImageView,
+    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSClickGestureRecognizer, NSColor,
     NSMenu, NSMenuItem, NSRunningApplication, NSScrollView, NSStackView, NSTextField, NSView, NSVisualEffectBlendingMode,
     NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowCollectionBehavior,
     NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWorkspace, NSWorkspaceOpenConfiguration,
@@ -532,7 +532,7 @@ fn build_sidebar(s: &mut Settings) {
             row.heightAnchor().constraintEqualToConstant(28.0).setActive(true);
             let content = stack(mtm, false, 8.0);
             content.setEdgeInsets(NSEdgeInsets { top: 0.0, left: 6.0, bottom: 0.0, right: 6.0 });
-            content.addArrangedSubview(&icon_tile(mtm, e.symbol, e.color));
+            content.addArrangedSubview(&form::icon_tile(mtm, e.symbol, e.color));
             let text = label(mtm, &e.title, 13.0, false, false);
             text.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
             let color = if selected {
@@ -555,23 +555,6 @@ fn build_sidebar(s: &mut Settings) {
         }
     }
     s.sidebar_keep = keep;
-}
-
-/// The colored square with a white symbol of a page, as in System Settings.
-fn icon_tile(mtm: MainThreadMarker, symbol: &str, color: Rgba) -> Retained<NSView> {
-    let tile = Rounded::new(mtm, Some(form::ns_color(color)), 5.0);
-    tile.setTranslatesAutoresizingMaskIntoConstraints(false);
-    tile.widthAnchor().constraintEqualToConstant(20.0).setActive(true);
-    tile.heightAnchor().constraintEqualToConstant(20.0).setActive(true);
-    if let Some(image) = form::symbol(symbol, 11.0) {
-        let view = NSImageView::imageViewWithImage(&image, mtm);
-        view.setContentTintColor(Some(&NSColor::whiteColor()));
-        view.setTranslatesAutoresizingMaskIntoConstraints(false);
-        tile.addSubview(&view);
-        view.centerXAnchor().constraintEqualToAnchor(&tile.centerXAnchor()).setActive(true);
-        view.centerYAnchor().constraintEqualToAnchor(&tile.centerYAnchor()).setActive(true);
-    }
-    objc2::rc::Retained::into_super(tile)
 }
 
 /// Says what happened to the last change, under the page; red for an error.
