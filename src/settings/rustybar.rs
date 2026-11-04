@@ -132,7 +132,23 @@ pub fn theme(f: &mut Form) {
             Opt { value: name.into(), label: label.into(), swatch: color(&primary).or(color("accent")) }
         })
         .collect();
-    f.choice_at(t("Palette", "Palette"), None, &rb("theme.preset"), presets, &d.preset);
+    let preset = store::get_str(&rb("theme.preset")).unwrap_or_else(|| d.preset.clone());
+    let (spot, default) = (rb("theme.preset"), toml::Value::String(d.preset.clone()));
+    f.choice(t("Palette", "Palette"), None, presets, &preset, move |v| {
+        store::put(&spot, Value::from(v), Some(&default));
+        // The swatches of the accents and the default of the glass are the new palette's
+        super::refresh_later();
+    });
+    f.toggle_at(
+        "Liquid Glass",
+        Some(t(
+            "Dietro le pillole e i popup, scuro o chiaro come la palette. Di serie solo con macOS",
+            "Behind the pills and the popups, dark or light as the palette. By default only with macOS",
+        )),
+        &rb("theme.glass"),
+        // macOS, as an unknown palette is
+        theme::preset(&preset).is_none(),
+    );
     let accents = ACCENTS.iter().map(|n| Opt { value: n.to_string(), label: n.to_string(), swatch: theme.color(n) }).collect();
     f.choice_at(t("Colore principale", "Accent"), Some(t("Il workspace attivo, oggi, le azioni, i cursori e le barre", "The focused workspace, today, actions, sliders and bars")), &rb("theme.primary"), accents, &d.primary);
 
@@ -156,7 +172,7 @@ pub fn theme(f: &mut Form) {
     f.number_at(t("Bordo", "Border"), Some(t("Non sul vetro", "Not on glass")), &rb("theme.pill_border"), d.pill_border, Num::new(0.0, 10.0, 0.5, 1));
     f.choice_at(
         t("Vetro", "Glass"),
-        Some(t("Con la palette macOS", "With the macOS palette")),
+        Some(t("Con Liquid Glass", "With Liquid Glass")),
         &rb("theme.pill_glass"),
         opts(&[("clear", t("Trasparente, come il Dock", "Clear, as the Dock")), ("regular", t("Smerigliato, come i menu", "Frosted, as the menus"))]),
         &d.pill_glass,

@@ -169,6 +169,22 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   dimensione con l'`animator`. Provato coi dati finti su sfondi colorati, chiaro (con
   `-NSRequiresAquaSystemAppearance YES`) e scuro, e a metà animazione: ~24 MB, ~0,1% CPU,
   0 processi.
+  Vetro per ogni tema: `glass` (non impostata: solo con `macos`; nelle impostazioni un
+  interruttore sotto la palette, che ricarica la pagina). Su una palette il vetro prende chiaro o
+  scuro dalla palette (`NSAppearance` del pannello, `Theme::glass_dark`), con un velo di `base` a
+  0,3 sulle pill e a 0,5 sui popup. Il vetro già disegnato non segue un cambio di stile o di
+  aspetto: `Window` lo rifà da capo. Provato coi dati finti sulla barra di prova, davanti a una
+  finestra colorata finta (bianco, nero, righe), con Mac scuro: tutte le palette, `clear` e
+  `regular`, popup di `audio` e `system`, cambio di tema al volo, interruttore via AX:
+  ~18 MB, ~0,1% CPU, 0 processi. Sulla barra vera, Mocha col vetro dal 4/11/2026.
+  Costo del vetro (anche di `macos`): la misura animata con l'`animator` fa rifare a ogni frame
+  il layout della finestra e il vetro a SwiftUI, ~35 ms per animazione (le viste del vetro sono
+  `CASDFLayer` privati di SwiftUI: niente animazione CA della misura). Coi dati veri le pill
+  cambiano di 1–2 pt ogni 2–4 s (`system`, cifre proporzionali; `clock` ogni minuto): fino a
+  `SNAP` (4 pt) la misura del vetro cambia subito, sopra resta animata; `setCornerRadius` solo se
+  cambia. Prova con una pill Lua che cambia ogni secondo, 12 pill: 2 pt da ~4,75% a 0,5% CPU
+  (senza vetro 0,13%); 16 pt ancora ~3,5–4,75%. Barra vera: da ~0,7% a ~0,2% CPU, ~21 MB,
+  0 processi.
 - `docker` a plancia: tutti i container (anche fermi, `?all=1`) per progetto Compose, con ▶ ■ ↻ e
   cestino (secondo clic) per container e ▶ ■ ↻ per progetto, le porte come link a localhost; lo
   spazio su disco (`/system/df`, all'apertura e dopo ogni azione) con la pulizia a due clic di

@@ -143,7 +143,9 @@ text so it stays legible on any wallpaper; `"regular"` is the frosted glass of t
 are frosted glass. The font is the system's (SF Pro) and the pills are capsules.
 
 The other palettes of `preset`, each from the theme's own repository, have the pills on the
-palette's `base`, with a border:
+palette's `base`, with a border. With `glass = true` they're on Liquid Glass too, as `macos` is,
+with a veil of the palette's `base` over the glass of the pills and the popups; the glass is dark
+or light as the palette is, whatever the Mac is (`glass = false` takes it away from `macos`):
 
 | Theme | Presets |
 | --- | --- |

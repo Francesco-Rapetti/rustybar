@@ -11,13 +11,14 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAnimatablePropertyContainer, NSAnimationContext, NSAutoresizingMaskOptions, NSBackingStoreType,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua,
+    NSAppearanceNameDarkAqua, NSAutoresizingMaskOptions, NSBackingStoreType,
     NSColor, NSEvent, NSEventPhase, NSGlassEffectContainerView, NSGlassEffectView, NSGlassEffectViewStyle, NSPanel,
     NSScreen, NSTrackingArea, NSTrackingAreaOptions, NSView, NSVisualEffectBlendingMode,
     NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowCollectionBehavior,
     NSWindowLevel, NSWindowOrderingMode, NSWindowStyleMask,
 };
-use objc2_core_foundation::{CGPoint, CGRect};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSNumber, NSString, NSValue, ns_string};
 use objc2_quartz_core::{CABasicAnimation, CALayer, CAMediaTiming, CATransaction};
 
@@ -184,7 +185,7 @@ pub enum Backdrop {
     None,
     /// A dark blur of what's behind it.
     Blur,
-    /// Liquid Glass, light or dark as macOS is.
+    /// Liquid Glass, light or dark as macOS is, or as the palette (see `Window::set_dark`).
     Glass,
 }
 
@@ -228,10 +229,7 @@ fn glass(mtm: MainThreadMarker, frame: CGRect, radius: f64, clear: bool) -> Reta
 fn set_style(view: &NSView, clear: bool) {
     if view.class().name() == c"NSGlassEffectView" {
         let style = if clear { NSGlassEffectViewStyle::Clear } else { NSGlassEffectViewStyle::Regular };
-        let current: NSGlassEffectViewStyle = unsafe { msg_send![view, style] };
-        if current != style {
-            let _: () = unsafe { msg_send![view, setStyle: style] };
-        }
+        let _: () = unsafe { msg_send![view, setStyle: style] };
     }
 }
 
@@ -245,13 +243,43 @@ fn animate_from(layer: &CALayer, key: &NSString, from: &AnyObject, duration: f64
     layer.addAnimation_forKey(&anim, Some(key));
 }
 
-/// The corner radius of a view made by `glass` or `blur`.
+/// The corner radius of a view made by `glass` or `blur`. Only when it changes: a new one has
+/// SwiftUI draw the glass again.
 fn set_radius(view: &NSView, radius: f64) {
     if view.class().name() == c"NSGlassEffectView" {
-        let _: () = unsafe { msg_send![view, setCornerRadius: radius] };
-    } else if let Some(layer) = view.layer() {
+        let current: f64 = unsafe { msg_send![view, cornerRadius] };
+        if current != radius {
+            let _: () = unsafe { msg_send![view, setCornerRadius: radius] };
+        }
+    } else if let Some(layer) = view.layer()
+        && layer.cornerRadius() != radius
+    {
         layer.setCornerRadius(radius);
     }
+}
+
+/// Size changes of a glass view up to this many points go at once, not animated. The digits of a
+/// percentage or of the time change a pill's width by a point or two every few seconds, and an
+/// animated size has AppKit lay the window out and SwiftUI draw the glass at every frame, some
+/// 35 ms of CPU each time; a glass that leads its pill by so little for a third of a second doesn't
+/// show.
+const SNAP: f64 = 4.0;
+
+/// Gives `views` their new size through AppKit, which SwiftUI's glass follows, in `duration`
+/// seconds; zero also stops an animation of theirs that's still running.
+fn resize(views: Vec<(Retained<NSView>, CGSize)>, duration: f64) {
+    if views.is_empty() {
+        return;
+    }
+    let group = RcBlock::new(move |ctx: NonNull<NSAnimationContext>| {
+        let ctx = unsafe { ctx.as_ref() };
+        ctx.setDuration(duration);
+        ctx.setTimingFunction(Some(&ease()));
+        for (v, size) in &views {
+            v.animator().setFrameSize(*size);
+        }
+    });
+    NSAnimationContext::runAnimationGroup(&group);
 }
 
 pub struct Window {
@@ -263,6 +291,10 @@ pub struct Window {
     glass: Option<Retained<NSView>>,
     /// A bar's glass views, by the path of their node.
     pills: HashMap<String, Retained<NSView>>,
+    /// The appearance of the window's glass, if not the system's (see `set_dark`).
+    dark: Option<bool>,
+    /// The style of the pills' glass: clear or regular.
+    clear: bool,
 }
 
 impl Window {
@@ -298,12 +330,37 @@ impl Window {
         };
         fill(&content);
         panel.setContentView(Some(&content));
-        Window { panel, view, backdrop, glass: None, pills: HashMap::new() }
+        Window { panel, view, backdrop, glass: None, pills: HashMap::new(), dark: None, clear: true }
+    }
+
+    /// Dark or light glass and blurs, whatever macOS is: those of a palette's theme. None, as
+    /// macOS is.
+    pub fn set_dark(&mut self, dark: Option<bool>) {
+        if self.dark == dark {
+            return;
+        }
+        self.dark = dark;
+        let name = dark.map(|d| unsafe { if d { NSAppearanceNameDarkAqua } else { NSAppearanceNameAqua } });
+        let appearance = name.and_then(NSAppearance::appearanceNamed);
+        self.panel.setAppearance(appearance.as_deref());
+        self.drop_glass();
+    }
+
+    /// Takes the pills' glass views away, for `set_glass` to make them again: glass that's
+    /// already drawn keeps its style and appearance when they change.
+    fn drop_glass(&mut self) {
+        for (_, v) in self.pills.drain() {
+            v.removeFromSuperview();
+        }
     }
 
     /// Puts a glass view behind each of `pills` (surface coordinates), moving, resizing and fading
     /// them as the layers do, so that each pill and its glass go together.
     pub fn set_glass(&mut self, pills: &[Glass], clear: bool, animate: bool) {
+        if clear != self.clear {
+            self.clear = clear;
+            self.drop_glass();
+        }
         if pills.is_empty() && self.pills.is_empty() {
             return;
         }
@@ -314,7 +371,7 @@ impl Window {
         // The glass is drawn by SwiftUI, which takes a frame animated through AppKit a frame late,
         // behind the pill it's under: the move and the fades go on the view's layer, in the
         // transaction of the surface's layers, and only a new size through AppKit.
-        let mut sizes = Vec::new();
+        let (mut sizes, mut snaps) = (Vec::new(), Vec::new());
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for g in pills {
@@ -330,7 +387,6 @@ impl Window {
                 continue;
             };
             set_radius(v, g.radius);
-            set_style(v, clear);
             let from = v.frame();
             if from.origin != to.origin {
                 let shown = v.layer().map(|l| unsafe { l.presentationLayer() }.unwrap_or(l).position());
@@ -340,7 +396,8 @@ impl Window {
                 }
             }
             if from.size != to.size {
-                sizes.push((v.clone(), to.size));
+                let small = (from.size.width - to.size.width).abs() <= SNAP && (from.size.height - to.size.height).abs() <= SNAP;
+                if small { &mut snaps } else { &mut sizes }.push((v.clone(), to.size));
             }
             if (v.alphaValue() - g.opacity).abs() > f64::EPSILON {
                 let shown = v.layer().map(|l| unsafe { l.presentationLayer() }.unwrap_or(l).opacity());
@@ -366,18 +423,8 @@ impl Window {
             CATransaction::commit();
         }
         CATransaction::commit();
-        if sizes.is_empty() {
-            return;
-        }
-        let group = RcBlock::new(move |ctx: NonNull<NSAnimationContext>| {
-            let ctx = unsafe { ctx.as_ref() };
-            ctx.setDuration(if animate { 0.32 } else { 0.0 });
-            ctx.setTimingFunction(Some(&ease()));
-            for (v, size) in &sizes {
-                v.animator().setFrameSize(*size);
-            }
-        });
-        NSAnimationContext::runAnimationGroup(&group);
+        resize(sizes, if animate { 0.32 } else { 0.0 });
+        resize(snaps, 0.0);
     }
 
     /// The view the glass views go in: a glass container, which draws them together, under the
