@@ -93,18 +93,25 @@ pub struct Peek {
     surface: Surface,
     /// Grown, or growing; false while it goes back.
     open: bool,
-    /// The pill in the bar is hidden under it.
+    /// The pill in the bar is hidden under it (from the next render of the bar, for a new one);
+    /// false once it's handed back to the pill, just before it goes.
     hides_pill: bool,
     /// Its window, at the size it has grown (Cocoa coordinates).
     frame: CGRect,
     /// Counts its openings and closings: what was set up for an older one doesn't apply.
     serial: u64,
+    /// The mouse is out of it, and it goes back in a moment unless the mouse comes back.
+    leaving: bool,
+    /// Its glass has the grown size, from before it grows: the glass takes a new size a few
+    /// frames after the layers, so the card grows inside it instead of ahead of it. Going back,
+    /// it shrinks behind the card.
+    grown_glass: bool,
 }
 
 /// How long the mouse rests on a pill before it grows, so that one crossed on the way somewhere
 /// else stays as it is; and how long it may be out of the grown one before it goes back.
 const PEEK_DELAY: f64 = 0.1;
-const PEEK_LEAVE: f64 = 0.15;
+const PEEK_LEAVE: f64 = 0.2;
 /// The time the layers take to move and resize (see `Surface::render`).
 const PEEK_ANIMATION: f64 = 0.32;
 
@@ -120,9 +127,11 @@ pub struct App {
     pub peek: Option<Peek>,
     /// The pill under the mouse in a bar: its display and its widget.
     hovered_pill: Option<(u32, String)>,
-    /// Counts the mouse's comings and goings on the pills and the peek: a pending grow or shrink
-    /// of an older one doesn't happen.
+    /// Counts the mouse's comings and goings on the pills: a pending grow for an older one
+    /// doesn't happen.
     peek_ticket: u64,
+    /// The same for its goings out of the peek and back in: a pending shrink doesn't happen.
+    leave_ticket: u64,
     /// The next render of the bars isn't animated: a pill hides under a peek, or shows again
     /// under one going away, at once.
     instant: bool,
@@ -206,6 +215,7 @@ pub fn start(mtm: MainThreadMarker) {
         peek: None,
         hovered_pill: None,
         peek_ticket: 0,
+        leave_ticket: 0,
         instant: false,
         cache: Cache::load(),
         lua: None,
@@ -976,7 +986,12 @@ impl App {
             (SurfaceId::Bar(d), Mouse::Moved) => self.bar_hover(d, Some(p)),
             (SurfaceId::Bar(d), Mouse::Exited) => self.bar_hover(d, None),
             // Back in it in time: it stays
-            (SurfaceId::Peek, Mouse::Moved) => self.peek_ticket += 1,
+            (SurfaceId::Peek, Mouse::Moved) => {
+                self.leave_ticket += 1;
+                if let Some(peek) = &mut self.peek {
+                    peek.leaving = false;
+                }
+            }
             (SurfaceId::Peek, Mouse::Exited) => self.left_peek(),
             _ => {}
         }
@@ -1245,15 +1260,16 @@ impl App {
     // ---- peek ----------------------------------------------------------------------------------
 
     /// The mouse moved on the bar of `display` to `p`, or left it (none). A pill whose widget has
-    /// a peek grows once the mouse has rested on it a moment; a grown one the mouse isn't on goes
-    /// back.
+    /// a peek grows once the mouse has rested on it a moment, or at once when it's going back; a
+    /// grown one the mouse isn't on goes back in a moment (see `left_peek`), so that a mouse that
+    /// slips out of it over the bar and back finds it as it was.
     fn bar_hover(&mut self, display: u32, p: Option<CGPoint>) {
         // The bar under a grown pill doesn't count
         if self.mouse_in_peek() {
             return;
         }
-        if self.peek.as_ref().is_some_and(|peek| peek.open) {
-            self.collapse_peek();
+        if self.peek.as_ref().is_some_and(|peek| peek.open && !peek.leaving) {
+            self.left_peek();
         }
         let pill = p.and_then(|p| {
             let bar = self.bars.iter().find(|b| b.display.id == display)?;
@@ -1268,6 +1284,11 @@ impl App {
         self.hovered_pill = pill.clone();
         self.peek_ticket += 1;
         let Some((display, name)) = pill else { return };
+        // Back on one going back: the mouse wants it
+        if self.peek.as_ref().is_some_and(|peek| !peek.open && peek.widget == name && peek.display == display) {
+            self.open_peek(&name, display);
+            return;
+        }
         let ticket = self.peek_ticket;
         runtime::after(PEEK_DELAY, move |app| {
             if app.peek_ticket == ticket {
@@ -1279,11 +1300,20 @@ impl App {
     /// The mouse left the grown pill: it goes back, unless the mouse is in it again in a moment,
     /// or drags a slider of it.
     fn left_peek(&mut self) {
-        self.peek_ticket += 1;
-        let ticket = self.peek_ticket;
+        self.leave_ticket += 1;
+        let ticket = self.leave_ticket;
+        if let Some(peek) = &mut self.peek {
+            peek.leaving = true;
+        }
         runtime::after(PEEK_LEAVE, move |app| {
+            if app.leave_ticket != ticket {
+                return;
+            }
+            if let Some(peek) = &mut app.peek {
+                peek.leaving = false;
+            }
             let dragging = app.peek.as_ref().is_some_and(|p| p.surface.dragging.is_some());
-            if app.peek_ticket == ticket && !dragging && !app.mouse_in_peek() {
+            if !dragging && !app.mouse_in_peek() {
                 app.collapse_peek();
             }
         });
@@ -1312,32 +1342,36 @@ impl App {
         if self.popup.as_ref().is_some_and(|p| p.widget == widget) {
             return;
         }
-        if let Some(peek) = &mut self.peek {
-            if peek.widget == widget && peek.display == display {
-                if !peek.open {
-                    peek.open = true;
-                    peek.serial += 1;
-                    peek.window.set_ignores_mouse(false);
-                    if !peek.hides_pill {
-                        peek.hides_pill = true;
-                        self.instant = true;
-                    }
-                    self.hovered_pill = None;
-                    self.dirty = true;
-                    self.with_slot(widget, |w, cx| w.event(&Event::PeekOpened, cx));
-                }
-                return;
+        // One shrinking grows again from where it is; one already handed back to the pill (see
+        // `collapse_peek`) starts again, as a new one
+        if let Some(peek) = &mut self.peek
+            && peek.widget == widget
+            && peek.display == display
+            && peek.hides_pill
+        {
+            if !peek.open {
+                peek.open = true;
+                peek.leaving = false;
+                peek.grown_glass = true;
+                peek.serial += 1;
+                peek.window.set_ignores_mouse(false);
+                self.hovered_pill = None;
+                self.dirty = true;
+                self.with_slot(widget, |w, cx| w.event(&Event::PeekOpened, cx));
             }
-            self.drop_peek();
+            return;
         }
+        // Another pill's peek gives way only to one with something to show
         let Some((_, frame)) = self.peek_tree(widget, display, false) else { return };
+        self.drop_peek();
+        let level = self.bar_level();
         let Some(bar) = self.bars.iter_mut().find(|b| b.display.id == display) else { return };
         // The bar's highlight goes with its pill: the peek has its own
         bar.surface.set_hover(None, None);
         let mut surface = Surface::new(bar.display.scale, self.theme.highlight);
         surface.animate = false;
-        let window = Window::new(self.mtm, SurfaceId::Peek, frame, NSPopUpMenuWindowLevel, &surface.root, Backdrop::None, 0.0);
-        self.peek = Some(Peek { widget: widget.to_string(), display, window, surface, open: false, hides_pill: false, frame, serial: 0 });
+        let window = Window::new(self.mtm, SurfaceId::Peek, frame, level, &surface.root, Backdrop::None, 0.0);
+        self.peek = Some(Peek { widget: widget.to_string(), display, window, surface, open: false, hides_pill: true, frame, serial: 0, leaving: false, grown_glass: true });
         if !self.render_peek(false) {
             self.peek = None;
             return;
@@ -1345,7 +1379,6 @@ impl App {
         let Some(peek) = &mut self.peek else { return };
         peek.window.show();
         peek.open = true;
-        peek.hides_pill = true;
         self.instant = true;
         self.hovered_pill = None;
         self.dirty = true;
@@ -1364,6 +1397,7 @@ impl App {
             return;
         }
         peek.open = false;
+        peek.grown_glass = false;
         peek.serial += 1;
         peek.window.set_ignores_mouse(true);
         peek.surface.set_hover(None, None);
@@ -1373,12 +1407,13 @@ impl App {
         self.with_slot(&widget, |w, cx| w.event(&Event::PeekClosed, cx));
         runtime::after(if animate { PEEK_ANIMATION + 0.02 } else { 0.0 }, move |app| {
             let Some(peek) = app.peek.as_mut().filter(|p| !p.open && p.serial == serial) else { return };
-            // Under it, so that there's no frame without either; for as short as that takes, as
-            // two glasses one over the other have a brighter rim
+            // The pill shows and the peek hides in the same render, so in the same frame (see
+            // `render_peek`): never a frame without either, nor with both, as two glasses one
+            // over the other have a brighter rim. Its window goes once that's on screen.
             peek.hides_pill = false;
             app.instant = true;
             app.dirty = true;
-            runtime::after(0.04, move |app| {
+            runtime::after(0.1, move |app| {
                 if app.peek.as_ref().is_some_and(|p| !p.open && p.serial == serial) {
                     app.peek = None;
                     // As after a popup (see `close_popup`)
@@ -1408,7 +1443,15 @@ impl App {
     /// it has nothing to show anymore.
     fn render_peek(&mut self, animate: bool) -> bool {
         let Some(peek) = &self.peek else { return false };
-        let Some((tree, frame)) = self.peek_tree(&peek.widget, peek.display, peek.open) else { return false };
+        let Some((mut tree, frame)) = self.peek_tree(&peek.widget, peek.display, peek.open) else { return false };
+        // Handed back to the pill in the bar, which shows in this same render: hidden at once,
+        // and its glass taken away, as a glass at alpha 0 still shows for a few frames
+        let handed_back = !peek.open && !peek.hides_pill;
+        if handed_back && let Some(card) = tree.children.first_mut() {
+            card.style.opacity = 0.0;
+            card.style.glass = false;
+        }
+        let animate = animate && !handed_back;
         let scale = self.bars.iter().find(|b| b.display.id == peek.display).map_or(2.0, |b| b.display.scale);
         let laid = Layout { scale }.place(&tree, 0.0, 0.0, frame.size.width, frame.size.height);
         let t = &self.theme;
@@ -1421,7 +1464,13 @@ impl App {
         peek.surface.motion = animate;
         peek.surface.render(&tree, &laid);
         peek.window.set_dark(t.glass_dark);
-        peek.window.set_glass(&peek.surface.glass, t.clear_glass, animate);
+        let mut glass = peek.surface.glass.clone();
+        if peek.grown_glass {
+            for g in &mut glass {
+                g.rect = CGRect::new(CGPoint::new(0.0, 0.0), frame.size);
+            }
+        }
+        peek.window.set_glass(&glass, t.clear_glass, animate && !peek.grown_glass);
         true
     }
 
@@ -1486,13 +1535,10 @@ impl App {
         row.style.height = Some(pill_h);
         let (card_x, card_w, card_h) = if open { (0.0, w, h) } else { (px, pill_w, pill_h) };
         let mut card = Node::default().key("card").size(card_w, card_h).at(card_x, 0.0).radius(look.radius).opacity(look.opacity).clip();
+        // Grown, it stays the pill it was: the same glass and veil
         card.style.glass = look.glass;
         card.style.border = look.border;
-        // Grown on glass, as legible as a popup
-        card.style.background = match t.popup_veil() {
-            Some(veil) if open && look.glass => Some(veil),
-            _ => look.background,
-        };
+        card.style.background = look.background;
         card.children.push(row.at(px - card_x, 0.0));
         if open {
             content.key = Some("peek".into());

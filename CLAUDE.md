@@ -303,23 +303,35 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 - Peek (`Widget::peek`, per ora solo `now_playing`, `hover = true` di default): col mouse fermo
   0,1 s su una pill (0,25 s era lento per l'utente), la pill cresce in giù con quello che dà `peek`
   (qui avanzamento con i tempi e ⏮ ⏯ ⏭ come l'app li prende, o "Si comanda da X"); un clic sulla
-  cima apre il popup, uscendo torna pill dopo 0,15 s. Niente bagliore dell'hover sulla pill né
-  sulla cima cresciuta (l'ha chiesto l'utente): un `hover` trasparente vuol dire nessuno, nemmeno
-  quello del tema; con `hover = false` torna quello solito. È una finestra sua (`SurfaceId::Peek`, livello dei popup) grande già da
-  cresciuta: dentro una card con l'aspetto della pill (vetro, velo, bordo; velo del popup da
-  cresciuta) che si allarga coi layer e ritaglia (`Style::clip`), il contenuto della pill fermo al
-  suo posto (preso dal nodo che la barra ha disegnato, `Bar::tree`/`peek_pill`, anche allargato da
-  `spare`). La pill nella barra intanto ha opacità 0, senza animazione (`App::instant`); al
-  ritorno riappare sotto il peek e il peek va 0,04 s dopo (due vetri sovrapposti hanno il bordo più
-  chiaro), poi `trim_cache` e `release_memory` come per i popup. Cresce dal lato del popup; il
-  gruppo centrale accanto al notch verso lo spazio che ha trovato, non sulle pill del suo lato.
+  cima apre il popup. Uscendo (anche sulla barra) torna pill dopo 0,2 s, se il mouse non rientra;
+  il mouse che torna sulla pill mentre si richiude la fa ricrescere subito. Niente bagliore
+  dell'hover sulla pill né sulla cima cresciuta (l'ha chiesto l'utente): un `hover` trasparente
+  vuol dire nessuno, nemmeno quello del tema; con `hover = false` torna quello solito. È una
+  finestra sua (`SurfaceId::Peek`, al livello della barra) grande già da cresciuta: dentro una card
+  con l'aspetto della pill (vetro, velo e bordo della pill anche da cresciuta: l'utente la vuole
+  di vetro come la pill, il velo del popup la faceva piatta) che si allarga coi layer e ritaglia
+  (`Style::clip`), il contenuto della pill fermo al suo posto (preso dal nodo che la barra ha
+  disegnato, `Bar::tree`/`peek_pill`, anche allargato da `spare`). La pill nella barra intanto ha
+  opacità 0, senza animazione (`App::instant`). Il vetro, imparato a fotogrammi su righe colorate:
+  una `NSGlassEffectView` ad alpha 0 si vede ancora (sotto il peek c'erano due vetri, più scuri),
+  e una tolta e rifatta compare scura e si schiarisce in ~0,3 s; quindi il vetro di una pill
+  nascosta all'istante va fuori dalla finestra (`PARKED`) e torna senza essere rifatto. Il vetro
+  prende una misura nuova dall'`animator` 2–3 fotogrammi dopo i layer: il contenitore dei vetri è
+  capovolto come la superficie (`GlassHolder`), così uno che cresce in giù cambia solo misura; il
+  vetro del peek ha la misura da cresciuto fin dal primo fotogramma (la card cresce dentro, mai
+  fuori dal vetro) e si stringe dietro la card tornando. Alla fine la pill riappare e il peek si
+  nasconde nello stesso render (card a opacità 0 e senza vetro, che va via subito); la finestra va
+  0,1 s dopo, poi `trim_cache` e `release_memory` come per i popup. Pannelli senza animazione di
+  finestra (`NSWindowAnimationBehavior::None`). Cresce dal lato del popup; il gruppo centrale
+  accanto al notch verso lo spazio che ha trovato, non sulle pill del suo lato.
   Eventi `PeekOpened`/`PeekClosed` (Lua `peek_opened`/`peek_closed`), `Cx::peek_open`: il tick di
   1 s solo da cresciuta. Provato coi dati finti sulla barra di prova (Mocha col vetro, col notch,
-  forma piena e compatta) con `msg peek`, a fotogrammi: cresce come un cassetto, torna identica alla
-  pill. A riposo ~15–16 MB, ~0,07% CPU, 0 processi (anche dopo 20 crescite); cresciuta ~18 MB,
-  0,2%. Una crescita e un ritorno ~160 ms di CPU (il popup ~64): il vetro misurato due volte da
-  SwiftUI. Da provare con l'utente: il passaggio del mouse vero (crescita, uscita, clic sui tasti e
-  sulla cima, trascinare l'avanzamento).
+  forma piena e compatta) con `msg peek`, a fotogrammi davanti a righe colorate: nessun fotogramma
+  senza pill né con due vetri, il ritorno è un passo solo. A riposo ~16 MB, ~0,07% CPU, 0 processi
+  (anche dopo 20 crescite); cresciuta ~18 MB, 0,2%. Una crescita e un ritorno ~125 ms di CPU (il
+  popup ~64). Provato dall'utente col mouse vero sulla barra di prova il 4/11/2026: crescita,
+  aspetto di vetro, ritorno senza sfarfallio, uscita e rientro veloci. Da provare: clic sui tasti
+  e sulla cima, trascinare l'avanzamento.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

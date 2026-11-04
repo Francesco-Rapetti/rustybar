@@ -15,8 +15,8 @@ use objc2_app_kit::{
     NSAppearanceNameDarkAqua, NSAutoresizingMaskOptions, NSBackingStoreType,
     NSColor, NSEvent, NSEventPhase, NSGlassEffectContainerView, NSGlassEffectView, NSGlassEffectViewStyle, NSPanel,
     NSScreen, NSTrackingArea, NSTrackingAreaOptions, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowLevel, NSWindowOrderingMode, NSWindowStyleMask,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowAnimationBehavior,
+    NSWindowCollectionBehavior, NSWindowLevel, NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSNumber, NSString, NSValue, ns_string};
@@ -128,6 +128,22 @@ impl SurfaceView {
 }
 
 define_class!(
+    /// Where the glass views go: flipped, as the surface is, so that a glass that grows down (a
+    /// peek) keeps its origin, and only its size moves, which the glass takes from AppKit's
+    /// animator a few frames late. Its origin moving at once with the layers would pull it away.
+    #[unsafe(super = NSView)]
+    #[thread_kind = MainThreadOnly]
+    struct GlassHolder;
+
+    impl GlassHolder {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+    }
+);
+
+define_class!(
     #[unsafe(super(NSPanel, NSWindow))]
     #[thread_kind = MainThreadOnly]
     pub struct Panel;
@@ -151,6 +167,8 @@ fn panel(mtm: MainThreadMarker, frame: CGRect, level: NSWindowLevel) -> Retained
     unsafe { panel.setReleasedWhenClosed(false) };
     panel.setOpaque(false);
     panel.setHasShadow(false);
+    // Shown and hidden at once, the fades are the app's
+    panel.setAnimationBehavior(NSWindowAnimationBehavior::None);
     panel.setBackgroundColor(Some(&NSColor::clearColor()));
     panel.setLevel(level);
     panel.setCollectionBehavior(
@@ -267,6 +285,10 @@ fn set_radius(view: &NSView, radius: f64) {
 /// show.
 const SNAP: f64 = 4.0;
 
+/// Where a glass hidden at once goes: out of its window. A glass view at alpha 0 still shows, and
+/// one taken away and made again appears slowly, dark at first.
+const PARKED: CGPoint = CGPoint { x: -100_000.0, y: -100_000.0 };
+
 /// Gives `views` their new size through AppKit, which SwiftUI's glass follows, in `duration`
 /// seconds; zero also stops an animation of theirs that's still running.
 fn resize(views: Vec<(Retained<NSView>, CGSize)>, duration: f64) {
@@ -368,8 +390,8 @@ impl Window {
         }
         let mtm = self.panel.mtm();
         let parent = self.glass_parent(mtm);
-        let height = self.view.frame().size.height;
-        let frame = |g: &Glass| CGRect::new(CGPoint::new(g.rect.origin.x, height - g.rect.origin.y - g.rect.size.height), g.rect.size);
+        // In surface coordinates, as the holder is flipped too
+        let frame = |g: &Glass| g.rect;
         // The glass is drawn by SwiftUI, which takes a frame animated through AppKit a frame late,
         // behind the pill it's under: the move and the fades go on the view's layer, in the
         // transaction of the surface's layers, and only a new size through AppKit.
@@ -377,11 +399,13 @@ impl Window {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for g in pills {
-            let to = frame(g);
+            // A pill hidden at once (under its peek) keeps its glass, out of the window
+            let hide = g.opacity == 0.0 && !animate;
+            let to = if hide { CGRect::new(PARKED, frame(g).size) } else { frame(g) };
             let Some(v) = self.pills.get(&g.path) else {
                 let v = glass(mtm, to, g.radius, clear);
                 parent.addSubview(&v);
-                v.setAlphaValue(g.opacity);
+                v.setAlphaValue(if hide { 1.0 } else { g.opacity });
                 if animate && let Some(layer) = v.layer() {
                     animate_from(&layer, ns_string!("opacity"), &NSNumber::new_f64(0.0), 0.32);
                 }
@@ -390,10 +414,16 @@ impl Window {
             };
             set_radius(v, g.radius);
             let from = v.frame();
+            if hide {
+                if from.origin != PARKED {
+                    v.setFrameOrigin(PARKED);
+                }
+                continue;
+            }
             if from.origin != to.origin {
                 let shown = v.layer().map(|l| unsafe { l.presentationLayer() }.unwrap_or(l).position());
                 v.setFrameOrigin(to.origin);
-                if animate && let (Some(layer), Some(shown)) = (v.layer(), shown) {
+                if animate && from.origin != PARKED && let (Some(layer), Some(shown)) = (v.layer(), shown) {
                     animate_from(&layer, ns_string!("position"), &NSValue::new(shown), 0.32);
                 }
             }
@@ -436,7 +466,8 @@ impl Window {
             return g.clone();
         }
         let bounds = self.view.frame();
-        let parent = NSView::initWithFrame(NSView::alloc(mtm), bounds);
+        let parent: Retained<GlassHolder> = unsafe { msg_send![GlassHolder::alloc(mtm), initWithFrame: bounds] };
+        let parent = Retained::into_super(parent);
         fill(&parent);
         let holder = if has_glass() {
             let container = NSGlassEffectContainerView::initWithFrame(NSGlassEffectContainerView::alloc(mtm), bounds);
