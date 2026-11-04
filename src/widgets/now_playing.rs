@@ -31,8 +31,17 @@
 //! macOS update may end: then the helper says so in the log, or just never sees anything playing,
 //! and the widget has Music and Spotify as before.
 //!
+//! On a screen with a notch, as the first of the center group, it's an extension of the notch with
+//! `notch` (on by default; see `Rx::island`): black as the notch and as tall, curving into the top
+//! of the screen as it does. Left of it the cover, the title and the artist, which take the room
+//! the bar leaves there; right of it bars that move to the music in the cover's liveliest color,
+//! or the pause sign. Under the mouse it grows down with the peek, on a click into the player, in
+//! the cover's colors on the notch's black, and by itself for a moment when the track changes,
+//! with the cover bigger (see `notice`): not for the first one, nor with the mouse on it.
+//!
 //! With made-up data (see `mock`), the players of `now_playing.json`, whose `artwork` is relative
-//! to its folder (the `other` one with `other_apps` only); the controls change them in memory only.
+//! to its folder (the `other` one with `other_apps` only); the controls change them in memory only,
+//! and ⏮ ⏭ go through the tracks of its `queue`.
 
 use std::ffi::c_void;
 use std::io::{BufRead, BufReader, Write};
@@ -53,15 +62,19 @@ use objc2_core_graphics::{CGBitmapContextCreate, CGColorSpace, CGContext, CGImag
 use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSNumber, NSObjectProtocol, NSString};
 use serde::Deserialize;
 
-use super::{Cx, Event, Rx, Widget};
+use super::{Cx, Event, Island, Rx, Widget};
 use crate::config::Options;
 use crate::gfx::Weight;
 use crate::i18n::t;
 use crate::palette::Palette;
+use crate::theme::Theme;
 use crate::time;
 use crate::ui::{Align, Justify, Kind, Node};
 
 const WIDTH: f64 = 300.0;
+/// In the island: the least the title takes, and how wide the peek and the notice are at least.
+const ISLAND_TEXT: f64 = 36.0;
+const ISLAND_WIDTH: f64 = 300.0;
 const COVER: f64 = 76.0;
 /// The side of the covers kept on disk, in pixels: the popup's at 2x, with room to spare.
 const COVER_PIXELS: i64 = 320;
@@ -257,6 +270,8 @@ fn track_key(title: &str, artist: &str, album: &str) -> String {
 #[serde(default)]
 struct Mock {
     players: Vec<Player>,
+    /// The tracks ⏮ ⏭ go through: title, artist, album, duration and artwork.
+    queue: Vec<Player>,
 }
 
 pub struct ObserverIvars {
@@ -296,7 +311,13 @@ pub struct NowPlaying {
     other_apps: bool,
     /// Under the mouse the pill grows down with the quick controls (see `peek`).
     hover: bool,
+    /// On a screen with a notch, an extension of it (see the top).
+    notch: bool,
     mock: bool,
+    /// The made-up tracks of ⏮ ⏭, after the one playing.
+    queue: Vec<Player>,
+    /// The track the bar played last (see `watch_track`), none before the first.
+    noticed: Option<String>,
     /// Music, Spotify and the other app, by `App`.
     players: [Player; 3],
     /// The player the popup shows, picked in it; else the bar's.
@@ -321,7 +342,10 @@ impl NowPlaying {
             cover_colors: options.bool("cover_colors").unwrap_or(true),
             other_apps: options.bool("other_apps").unwrap_or(false),
             hover: options.bool("hover").unwrap_or(true),
+            notch: options.bool("notch").unwrap_or(true),
             mock: false,
+            queue: Vec::new(),
+            noticed: None,
             players: ALL.map(Player::new),
             pick: None,
             ticking: 0,
@@ -374,7 +398,23 @@ impl NowPlaying {
             let app = p.app as usize;
             self.players[app] = p;
         }
+        self.queue = mock.queue;
+        for track in &mut self.queue {
+            track.artwork = track.artwork.take().map(|a| dir.join(a).to_string_lossy().into_owned());
+        }
         true
+    }
+
+    /// After a change of what plays: on a track that follows another one, the island shows it
+    /// for a moment (see `notice`). Not for the first after the start, nor for a pause.
+    fn watch_track(&mut self, cx: &mut Cx) {
+        let Some(key) = self.current().filter(|p| p.state == State::Playing).map(|p| format!("{}\u{1f}{}", p.bundle, track_key(&p.title, &p.artist, &p.album))) else {
+            return;
+        };
+        if self.noticed.as_ref().is_some_and(|k| *k != key) {
+            cx.notice();
+        }
+        self.noticed = Some(key);
     }
 
     /// Listens to the players' notifications and to their launches and quits.
@@ -460,6 +500,7 @@ impl NowPlaying {
         if matches!(p.access, Access::Granted | Access::Unknown) {
             self.refresh(app, false, cx);
         }
+        self.watch_track(cx);
     }
 
     /// Reads all of the player from its app, in the background; `ask` lets macOS ask for the
@@ -516,6 +557,7 @@ impl NowPlaying {
         }
         self.colorize(cx);
         cx.redraw();
+        self.watch_track(cx);
     }
 
     /// Works out, in the background, the colors of the covers that have none yet.
@@ -585,6 +627,50 @@ impl NowPlaying {
         }
     }
 
+    /// The room of the island, when the widget is one (see `Rx::island`).
+    fn island(&self, rx: &Rx) -> Option<Island> {
+        rx.island.filter(|_| self.notch)
+    }
+
+    /// The notch's black, with the liveliest color of the cover `p` shows for an accent.
+    fn notch_theme(&self, theme: &Theme, p: &Player) -> Theme {
+        theme.notch(self.palette(p).map(|palette| palette.dark_accent()))
+    }
+
+    /// The bar's player as an extension of the notch (see the top): left of it the cover, the
+    /// title and the artist, as in the pill; right of it bars that move to the music, in the
+    /// cover's liveliest color, or the pause sign, the cover dimmed. The cover and the bars always
+    /// have their room; the title and the artist take what the bar leaves beside them.
+    fn island_bar(&self, rx: &Rx, p: &Player, island: Island) -> Node {
+        let theme = self.notch_theme(rx.theme, p);
+        let rx = &Rx { theme: &theme, ..*rx };
+        let th = rx.theme;
+        let playing = p.state == State::Playing;
+        let size = island_cover(island);
+        // The cover as far from the island's edge as from its top and bottom
+        let inset = ((island.height - size) / 2.0).round();
+        let (title_w, artist_w) = island_text(th, p, island.left);
+        let mut left = vec![
+            self.cover(rx, p, size, 6.0).opacity(if playing { 1.0 } else { 0.6 }).key("cover"),
+            Node::text(&p.title, th.font(), if playing { th.text } else { th.subtext }).max_width(title_w).marquee(playing).key("title"),
+        ];
+        if artist_w > 0.0 {
+            left.push(Node::text(&p.artist, th.font(), th.subtext).max_width(artist_w).key("artist"));
+        }
+        let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
+        let sign = match playing {
+            true => Node::new(Kind::Bars { color: th.primary }).key("bars"),
+            false => Node::symbol("pause.fill", 12.0, Weight::Bold, th.subtext).key("paused"),
+        };
+        let right = Node::row(vec![Node::row(vec![sign]).size(size, size).justify(Justify::Center).align(Align::Center).key("sign")])
+            .align(Align::Center)
+            .height(island.height)
+            .padding(0.0, inset, 0.0, 8.0)
+            .key("wing");
+        // Under the mouse it grows (see `peek`): no highlight of its own
+        rx.island(vec![left], vec![right]).click(rx.toggle_popup()).hover(crate::gfx::Rgba(0.0, 0.0, 0.0, 0.0))
+    }
+
     /// The popup with nothing to play: the apps to open.
     fn idle_popup(&self, rx: &Rx) -> Node {
         let th = rx.theme;
@@ -613,6 +699,28 @@ fn open_row(rx: &Rx, p: &Player) -> Node {
     )
     .hover(th.highlight)
     .key(key)
+}
+
+/// How big the cover is in the island: as far from its top as from its bottom, as in the pill.
+fn island_cover(island: Island) -> f64 {
+    (island.height - 12.0).clamp(12.0, 28.0)
+}
+
+/// How wide the title and the artist are in the island's left wing, with `room` beside it: the
+/// title the least it takes, and then the room, to the title first and then to the artist, as
+/// far as they need it; no artist (0) without room for some of it.
+fn island_text(th: &Theme, p: &Player, room: f64) -> (f64, f64) {
+    let font = th.font();
+    let width = |text: &str| crate::gfx::measure_text(text, &font).width.ceil();
+    let whole = width(&p.title);
+    let least = whole.min(ISLAND_TEXT);
+    let mut spare = room.max(0.0);
+    let more = (whole - least).clamp(0.0, spare);
+    spare -= more;
+    // The artist after a gap, and only if at least the least of it fits
+    let artist = if p.artist.is_empty() { 0.0 } else { width(&p.artist) };
+    let artist_w = if artist > 0.0 && spare - 8.0 >= artist.min(ISLAND_TEXT) { artist.min(spare - 8.0) } else { 0.0 };
+    (least + more, artist_w)
 }
 
 /// `secs` as 3:07, or 1:02:03.
@@ -657,6 +765,9 @@ impl Widget for NowPlaying {
     fn bar(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
         let p = self.current()?;
+        if let Some(island) = self.island(rx) {
+            return Some(self.island_bar(rx, p, island));
+        }
         let playing = p.state == State::Playing;
         let size = (th.pill_height - 8.0).max(12.0);
         let mut children = vec![self.cover(rx, p, size, 5.0).opacity(if playing { 1.0 } else { 0.6 }).key("cover")];
@@ -693,9 +804,27 @@ impl Widget for NowPlaying {
         if !self.hover {
             return None;
         }
-        let th = rx.theme;
         let p = self.current()?;
+        // On the island, on the notch's black in the colors of the cover
+        let island = self.island(rx);
+        let theme = island.map(|_| self.notch_theme(rx.theme, p));
+        let own = theme.as_ref().map(|theme| Rx { theme, ..*rx });
+        let rx = own.as_ref().unwrap_or(rx);
+        let th = rx.theme;
         let mut rows = Vec::new();
+        // What the island had no room for: the title, if it's cut there, and the artist
+        if let Some(i) = island {
+            let (title_w, artist_w) = island_text(th, p, i.left);
+            let cut = title_w < crate::gfx::measure_text(&p.title, &th.font()).width.ceil();
+            if cut || (artist_w == 0.0 && !p.artist.is_empty()) {
+                let max = ISLAND_WIDTH - 24.0;
+                let mut lines = vec![Node::text(&p.title, th.font_with(Weight::Semibold, th.font_size), th.text).max_width(max).marquee(p.state == State::Playing).key("title")];
+                if !p.artist.is_empty() {
+                    lines.push(Node::text(&p.artist, th.small_font(), th.subtext).max_width(max).key("artist"));
+                }
+                rows.push(Node::column(lines).gap(1.0).padding(2.0, 0.0, 2.0, 0.0).key("track"));
+            }
+        }
         if p.duration > 0.0 {
             let pos = p.position_at(time::now());
             let mut slider = Node::new(Kind::Slider { value: pos / p.duration, color: th.primary, track: th.surface, font: None, labels: vec![] }).height(10.0).grow();
@@ -729,7 +858,13 @@ impl Widget for NowPlaying {
                     .hover(th.primary.mix(th.on_primary, 0.18))
                     .click(rx.action("playpause"))
                     .key("playpause");
+                // Shuffle and repeat for Music and Spotify, at the ends
+                let full = p.app != App::Other;
+                let repeat = p.repeat.unwrap_or_default();
                 let mut controls = Vec::new();
+                if full {
+                    controls.push(control(rx, "shuffle", 13.0, p.shuffle == Some(true), "shuffle"));
+                }
                 if previous {
                     controls.push(control(rx, "backward.fill", 16.0, false, "previous"));
                 }
@@ -737,7 +872,11 @@ impl Widget for NowPlaying {
                 if next {
                     controls.push(control(rx, "forward.fill", 16.0, false, "next"));
                 }
-                rows.push(Node::row(controls).gap(14.0).justify(Justify::Center).align(Align::Center).key("controls"));
+                if full {
+                    controls.push(control(rx, if repeat == Repeat::One { "repeat.1" } else { "repeat" }, 13.0, repeat != Repeat::Off, "repeat"));
+                }
+                let row = Node::row(controls).align(Align::Center).key("controls");
+                rows.push(if full { row.justify(Justify::Between) } else { row.gap(14.0).justify(Justify::Center) });
             }
             Some(_) => rows.push(
                 Node::row(vec![
@@ -752,14 +891,44 @@ impl Widget for NowPlaying {
                 .key("elsewhere"),
             ),
         }
-        Some(Node::column(rows).gap(6.0).padding(2.0, 12.0, 10.0, 12.0).min_width(240.0))
+        let peek = Node::column(rows).gap(6.0).padding(2.0, 12.0, 10.0, 12.0);
+        Some(if island.is_some() { peek.padding(4.0, 14.0, 12.0, 14.0).min_width(ISLAND_WIDTH) } else { peek.min_width(240.0) })
+    }
+
+    /// On the island, for a moment when the track changes (see `watch_track`): its cover
+    /// bigger, the title, the artist and the album.
+    fn notice(&self, rx: &Rx) -> Option<Node> {
+        self.island(rx)?;
+        let p = self.current()?;
+        let theme = self.notch_theme(rx.theme, p);
+        let rx = &Rx { theme: &theme, ..*rx };
+        let th = rx.theme;
+        let max = ISLAND_WIDTH - 28.0 - 56.0 - 12.0;
+        let mut lines = vec![Node::text(&p.title, th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max).marquee(p.state == State::Playing).key("title")];
+        if !p.artist.is_empty() {
+            lines.push(Node::text(&p.artist, th.font(), th.subtext).max_width(max).key("artist"));
+        }
+        if !p.album.is_empty() {
+            lines.push(Node::text(&p.album, th.small_font(), th.subtext).max_width(max).key("album"));
+        }
+        Some(
+            Node::row(vec![self.cover(rx, p, 56.0, 10.0).key("cover"), Node::column(lines).gap(2.0).grow().key("lines")])
+                .gap(12.0)
+                .align(Align::Center)
+                .padding(6.0, 14.0, 14.0, 14.0)
+                .min_width(ISLAND_WIDTH),
+        )
     }
 
     fn popup(&self, rx: &Rx) -> Option<Node> {
         let Some(p) = self.shown() else { return Some(self.idle_popup(rx)) };
         // In the colors of the cover, once they're there; the hovers too, as the popup's own
-        // highlight is the theme's
-        let tinted = self.palette(p).map(|palette| palette.theme(rx.theme));
+        // highlight is the theme's. On the island, on the notch's black
+        let island = self.island(rx);
+        let tinted = match island {
+            Some(_) => Some(self.notch_theme(rx.theme, p)),
+            None => self.palette(p).map(|palette| palette.theme(rx.theme)),
+        };
         let own = tinted.as_ref().map(|theme| Rx { theme, ..*rx });
         let rx = own.as_ref().unwrap_or(rx);
         let th = rx.theme;
@@ -927,6 +1096,8 @@ impl Widget for NowPlaying {
         rows.push(open_row(rx, p));
         let popup = rx.popup(WIDTH, rows).gap(10.0);
         Some(match &tinted {
+            // The island's black is its own
+            _ if island.is_some() => popup.padding(4.0, 14.0, 14.0, 14.0),
             // Over the theme's background, or its glass, which shows a little
             Some(t) => {
                 let alpha = if t.glass { 0.85 } else if t.popup_blur { t.popup_opacity } else { 1.0 };
@@ -972,6 +1143,29 @@ impl Widget for NowPlaying {
                 if self.mock {
                     p.position = 0.0;
                     p.at = now;
+                    // The next of the made-up tracks, or the one before: the one playing goes to
+                    // the other end of the queue
+                    let other = match name {
+                        "next" if !self.queue.is_empty() => Some(self.queue.remove(0)),
+                        _ => self.queue.pop(),
+                    };
+                    if let Some(mut track) = other {
+                        std::mem::swap(&mut p.title, &mut track.title);
+                        std::mem::swap(&mut p.artist, &mut track.artist);
+                        std::mem::swap(&mut p.album, &mut track.album);
+                        std::mem::swap(&mut p.duration, &mut track.duration);
+                        std::mem::swap(&mut p.artwork, &mut track.artwork);
+                        p.changed = now;
+                        if name == "next" {
+                            self.queue.push(track);
+                        } else {
+                            self.queue.insert(0, track);
+                        }
+                        self.colorize(cx);
+                        self.watch_track(cx);
+                    }
+                    cx.redraw();
+                    return;
                 }
                 let id = match (name, app) {
                     ("next", _) => b"Next",
@@ -1196,6 +1390,7 @@ impl NowPlaying {
             p.artwork = None;
         }
         cx.redraw();
+        self.watch_track(cx);
     }
 
     /// The helper ended: a crash, or perl gone. It starts again, later at each try.
@@ -1762,7 +1957,7 @@ mod tests {
     fn a_long_title_takes_the_room_beside_it_and_scrolls_while_playing() {
         let theme = crate::theme::Theme::from_config(&crate::config::ThemeConfig::default());
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1512.0, 982.0));
-        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: None, large: false };
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: None, notch_height: 0.0, large: false };
         let title = "A made-up title much longer than the pill has room for, on and on and on";
         let mut w = NowPlaying::new(&Options::default());
         w.players = [
@@ -1791,7 +1986,7 @@ mod tests {
     fn the_peek_has_the_controls_the_app_takes() {
         let theme = crate::theme::Theme::from_config(&crate::config::ThemeConfig::default());
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1512.0, 982.0));
-        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: None, large: false };
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: None, notch_height: 0.0, large: false };
         let rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false);
         let keys = |n: &Node| n.children.iter().filter_map(|c| c.key.clone()).collect::<Vec<_>>();
         let mut w = NowPlaying::new(&Options::default());
@@ -1802,7 +1997,7 @@ mod tests {
         // The pill that grows has no highlight of its own
         let clear = Some(crate::gfx::Rgba(0.0, 0.0, 0.0, 0.0));
         assert_eq!(w.bar(&rx).expect("a pill").hover, clear);
-        assert_eq!(keys(&peek.children[1]), ["previous", "playpause", "next"]);
+        assert_eq!(keys(&peek.children[1]), ["shuffle", "previous", "playpause", "next", "repeat"]);
         assert!(peek.children[0].children[1].on_click.is_some(), "Music seeks");
         // A stream has no time to seek in
         w.players[0].duration = 0.0;
@@ -1829,6 +2024,80 @@ mod tests {
         w.hover = true;
         w.players[2].state = State::Stopped;
         assert!(w.peek(&rx).is_none());
+    }
+
+    #[test]
+    fn around_the_notch_the_cover_and_the_bars_keep_their_room() {
+        let theme = crate::theme::Theme::from_config(&crate::config::ThemeConfig::default());
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1512.0, 982.0));
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: Some((646.0, 866.0)), notch_height: 38.0, large: false };
+        let keys = |n: &Node| n.children.iter().filter_map(|c| c.key.clone()).collect::<Vec<_>>();
+        let mut w = NowPlaying::new(&Options::default());
+        let title = "A made-up title much longer than the island has room for";
+        w.players = [
+            Player { app: App::Music, state: State::Playing, title: title.into(), artist: "A Made-up Band".into(), pid: Some(1), ..Default::default() },
+            Player::new(App::Spotify),
+            Player::new(App::Other),
+        ];
+        let island = Island { notch: 220.0, height: 38.0, ear: 6.0, radius: 10.0, left: 0.0, right: 0.0 };
+        let drawn = |w: &NowPlaying, left: f64| {
+            let mut rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false);
+            rx.island = Some(Island { left, ..island });
+            w.bar(&rx).expect("an island")
+        };
+        // The least: the cover, some of the title and the bars
+        let n = drawn(&w, 0.0);
+        assert!(n.style.notch.is_some());
+        assert_eq!(keys(&n), ["left", "notch", "right"]);
+        let wing = &n.children[0].children[0];
+        assert_eq!(keys(wing), ["cover", "title"]);
+        assert_eq!(wing.children[1].style.max_width, Some(ISLAND_TEXT));
+        assert!(wing.children[1].style.marquee);
+        assert_eq!(keys(&n.children[2].children[0].children[0]), ["bars"]);
+        // With room, the title first, then the artist
+        let whole = crate::gfx::measure_text(title, &theme.font()).width.ceil();
+        let wing = drawn(&w, whole - ISLAND_TEXT).children[0].children[0].clone();
+        assert_eq!((keys(&wing), wing.children[1].style.max_width), (vec!["cover".to_string(), "title".to_string()], Some(whole)));
+        assert_eq!(keys(&drawn(&w, 2000.0).children[0].children[0]), ["cover", "title", "artist"]);
+        // Paused: the pause sign, and a peek with the title the island cuts
+        w.players[0].state = State::Paused;
+        assert_eq!(keys(&drawn(&w, 0.0).children[2].children[0].children[0]), ["paused"]);
+        let mut rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false);
+        rx.island = Some(island);
+        assert_eq!(keys(&w.peek(&rx).expect("a peek")), ["track", "controls"]);
+        assert!(w.notice(&rx).is_some());
+        // Without the option, the pill
+        w.notch = false;
+        assert!(drawn(&w, 0.0).style.notch.is_none());
+        assert!(w.notice(&rx).is_none());
+    }
+
+    #[test]
+    fn a_track_after_another_shows_for_a_moment() {
+        let mut w = NowPlaying::new(&Options::default());
+        w.mock = true;
+        w.players = [
+            Player { app: App::Music, state: State::Playing, title: "A".into(), pid: Some(0), ..Default::default() },
+            Player::new(App::Spotify),
+            Player::new(App::Other),
+        ];
+        w.queue = vec![Player { title: "B".into(), ..Default::default() }];
+        let mut timers = Vec::new();
+        let mut cx = Cx { name: "now_playing", generation: 0, popup_open: false, peek_open: false, timers: &mut timers, effects: Vec::new() };
+        let notices = |cx: &Cx| cx.effects.iter().filter(|e| matches!(e, super::super::Effect::Notice)).count();
+        // Not the first one
+        w.watch_track(&mut cx);
+        assert_eq!(notices(&cx), 0);
+        w.action("next", None, &mut cx);
+        assert_eq!((w.players[0].title.as_str(), notices(&cx)), ("B", 1));
+        // Nor a pause and play again
+        for _ in 0..2 {
+            w.action("playpause", None, &mut cx);
+            w.watch_track(&mut cx);
+        }
+        assert_eq!(notices(&cx), 1);
+        w.action("previous", None, &mut cx);
+        assert_eq!((w.players[0].title.as_str(), notices(&cx)), ("A", 2));
     }
 
     #[test]

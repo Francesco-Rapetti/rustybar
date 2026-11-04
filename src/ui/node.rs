@@ -93,6 +93,12 @@ pub enum Kind {
     },
     /// A shimmering placeholder, while a widget has no data yet.
     Skeleton,
+    /// Thin bars that rise and fall by themselves, as an equalizer does: something plays. Core
+    /// Animation moves them in the window server; they stand still when the Mac asks for less
+    /// motion.
+    Bars {
+        color: Rgba,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -153,6 +159,22 @@ pub struct Style {
     /// Its children show only inside it, rounded as it is: what's under a pill that grows down
     /// shows as it grows.
     pub clip: bool,
+    /// Drawn as an extension of the notch (see `Notch`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notch: Option<Notch>,
+}
+
+/// The shape of a node that extends the notch: square at the top, where it meets the edge of the
+/// screen, with a concave curve of `ear` points flaring out at each side as the notch has, and
+/// round at the bottom with the node's radius. Its background fills that shape, which also clips
+/// its children. A change of shape animates with the surface's spring, if it has one.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Notch {
+    pub ear: f64,
+    /// The shape over this part of the node only, in its coordinates: from x, as wide and as tall
+    /// as given, ears included; none, over all of it. A shape that grows inside a frame that
+    /// stays, so that what's in it stays where it is.
+    pub area: Option<[f64; 3]>,
 }
 
 impl Default for Style {
@@ -177,6 +199,7 @@ impl Default for Style {
             glass: false,
             marquee: false,
             clip: false,
+            notch: None,
         }
     }
 }
@@ -340,6 +363,12 @@ impl Node {
 
     pub fn clip(mut self) -> Node {
         self.style.clip = true;
+        self
+    }
+
+    /// Drawn as an extension of the notch, with ears of `ear` points (see `Notch`).
+    pub fn notch(mut self, ear: f64) -> Node {
+        self.style.notch = Some(Notch { ear, area: None });
         self
     }
 

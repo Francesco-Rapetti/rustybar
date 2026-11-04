@@ -58,6 +58,7 @@ impl Layout {
             Kind::Progress { .. } => (60.0, 6.0),
             Kind::Toggle { .. } => (30.0, 18.0),
             Kind::Skeleton => (40.0, 12.0),
+            Kind::Bars { .. } => (super::render::BARS_WIDTH, 14.0),
             Kind::Scroll { max_height, .. } => {
                 let (cw, ch) = node
                     .children

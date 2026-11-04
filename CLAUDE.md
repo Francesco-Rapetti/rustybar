@@ -25,8 +25,9 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Con un suo `RUSTYBAR_CONFIG_DIR` ha socket e cache suoi, quindi gira accanto alla barra vera senza
   toccarla; `RUSTYBAR_CONFIG_DIR=<cartella> rustybar msg …` parla con lei. Per uno schermo stretto
   basta un `margin` grande; per il notch, un gruppo `center` (stesso codice: ogni lato il suo spazio).
-- `rustybar msg query` (widget, stato, posizione, peek), `msg popup <widget>`, `msg peek <widget>`
-  (la pill cresce come sotto il mouse; resta finché il mouse non passa sulla barra), `msg reload`,
+- `rustybar msg query` (widget, stato, posizione, peek, isola), `msg popup <widget>`, `msg peek <widget>`
+  (la pill cresce come sotto il mouse; resta finché il mouse non passa sulla barra),
+  `msg notice <widget>` (l'isola cresce da sola per 3 s, come a un cambio di traccia), `msg reload`,
   `msg trigger <evento> k=v…`, `msg settings [pagina]`, `msg quit`; `rustybar check` controlla
   config, widget Lua e nomi del layout; `rustybar settings [pagina]` apre la finestra delle
   impostazioni senza barra.
@@ -73,12 +74,15 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   oltre 120 MB su macOS 26; sfondi con un layer, non `drawRect`), poi una pagina per file
   (`rustybar.rs`, `aerospace.rs` con i bordi, `other.rs`). Dati finti: `<mock>/settings/`.
 - `widgets/`: un file per widget, registrato in `widgets::create`. Il trait `Widget` ha `start`,
-  `bar`, `popup`, `ready`, `action(name, value, cx)` ed `event` (`Wake`, `ScreensChanged`,
-  `Trigger`, `PopupOpened`, `PopupClosed`). `Cx` dà `redraw`, `close_popup`, `after`, `every`,
+  `bar`, `popup`, `peek`, `notice`, `ready`, `action(name, value, cx)` ed `event` (`Wake`,
+  `ScreensChanged`, `Trigger`, `PopupOpened`, `PopupClosed`, `PeekOpened`, `PeekClosed`). `Cx` dà
+  `redraw`, `close_popup`, `notice`, `after`, `every`,
   `background` (lavoro su un thread, risultato sul main thread) e `handle` (per i thread lunghi:
   `send` e `alive`, che diventa falso al reload). `Rx` dà `pill`, `popup`, `section`, `detail`,
-  `row_button`, `action`, `toggle_popup`, `compact` (la forma intera non ci sta, vedi `fit.rs`) e
-  `slim` (senza ciò di cui può fare a meno, per i widget di `slim_first`; vero anche da compatto).
+  `row_button`, `action`, `toggle_popup`, `compact` (la forma intera non ci sta, vedi `fit.rs`),
+  `slim` (senza ciò di cui può fare a meno, per i widget di `slim_first`; vero anche da compatto) e
+  `island` (il primo del gruppo `center` su uno schermo col notch: `Rx::island(left, right)` lo
+  disegna attorno al notch, e peek, popup e notice crescono dall'isola).
   Le opzioni del TOML arrivano come `Options` (`str`, `f64`, `bool`, `strings`).
 
 ### Regole del codice
@@ -332,6 +336,39 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   popup ~64). Provato dall'utente col mouse vero sulla barra di prova il 4/11/2026: crescita,
   aspetto di vetro, ritorno senza sfarfallio, uscita e rientro veloci. Da provare: clic sui tasti
   e sulla cima, trascinare l'avanzamento.
+- Isola del notch (`now_playing`, `notch = true` di default; decisioni di design dell'utente,
+  prese con i mockup prima di scrivere codice): sugli schermi col notch il primo widget del
+  gruppo `center` può essere un'estensione del notch (`Rx::island`, `Island` con la misura del
+  notch, `notch_height` da `safeAreaInsets`): nero, alto quanto il notch (38 pt), con le
+  "orecchie" concave in cima (`Style::notch`, `Notch { ear, area }`: maschera `CAShapeLayer` col
+  percorso del notch, `notch_path`, stessi punti per ogni misura). `bar_tree` misura prima l'isola
+  al minimo (copertina 26 pt + 36 pt di titolo a sinistra, barre a destra) e i lati le fanno
+  posto, poi le dà quello che i lati lasciano accanto (`island_spare`, con `steady_spare`); a
+  sinistra copertina, titolo e artista (titolo che scorre), a destra le barre (`Kind::Bars`,
+  animate nel window server) nel colore più vivo della copertina (`Palette::dark_accent`), in
+  pausa ⏸ e copertina attenuata; tema `Theme::notch` (nero anche coi temi chiari). Sotto il mouse
+  cresce col peek (anche shuffle e repeat, ora anche nel peek della pill), al clic nel player
+  (`Popup { view: None }`: il popup dell'isola è il peek allo stadio `Stage::Popup`), da sola per
+  3 s a un cambio di traccia (`Widget::notice`, `Cx::notice`, `watch_track`: non la prima, non
+  una pausa, non col mouse sopra, non col popup o il peek aperti). Si muove solo la maschera, con
+  una molla (`Surface::spring`, `CASpringAnimation` su `path` dal percorso a schermo; `GROW` con un
+  po' di rimbalzo, `SHRINK` senza); il contenuto resta al suo posto e il contenuto di ogni stadio
+  ha la stessa chiave, così avanzamento e controlli scivolano dal peek al player. Imparato a
+  fotogrammi (video di `screencapture -v`, fotogrammi con AVAssetImageGenerator): una finestra
+  che cambia misura mostra i layer già arrivati, senza animazioni; quindi la finestra dell'isola
+  ha da subito il posto per tutti gli stadi più il rimbalzo (`island_room`, `OVERSHOOT`) ed è
+  larga solo attorno al notch (`Peek::room`), e un layer col notch cambia frame senza animazione
+  (se no il nero restava indietro rispetto al contenuto). Nella finestra il mouse fuori dalla
+  forma va alla barra sotto (`on_mouse`); un clic sotto la barra chiude solo il player. Esc non
+  c'è: i popup non hanno tasti (servirebbe Monitoraggio input). Coi dati finti ⏮ ⏭ passano per la
+  `queue` di `now_playing.json`. Provata coi dati finti sulla barra di prova (col notch vero,
+  40 pt sotto): riposo, peek, player, notice, ritorno, a fotogrammi: a riposo ~18 MB, 0,07% CPU;
+  peek 19 MB, 0,25%; player 20 MB, 0,2%; dopo 10 crescite 19 MB, 0%; 0 processi. Sulla barra
+  vera dal 4/11/2026: attaccata al notch vero (orecchie comprese), a destra tutti compatti tranne
+  `notifications`; a riposo (con l'helper di `other_apps`) 25 MB in 2 processi, 0,17% CPU,
+  0 processi nuovi (il primo minuto dopo l'avvio 1,5%). Da provare con l'utente: il mouse vero
+  (crescita, clic sulla cima, clic fuori, passaggio alla barra sotto), il notice a un cambio di
+  traccia vero, le barre col colore di una copertina vera.
 - `events` a plancia: in cima l'evento della barra (`featured`: quello in corso che finisce prima,
   finché non comincia il prossimo, se no il prossimo) in un riquadro col colore del conto alla
   rovescia, con orari, calendario (pallino del suo colore) e luogo, invitati che hanno accettato,
