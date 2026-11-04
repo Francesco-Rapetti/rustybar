@@ -6,10 +6,11 @@ use std::collections::{HashMap, HashSet};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2_core_foundation::{CFType, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFRetained, CFType, CGPoint, CGRect, CGSize};
+use objc2_core_graphics::CGMutablePath;
 use objc2_foundation::{NSArray, NSNumber, ns_string};
 use objc2_quartz_core::{
-    CABasicAnimation, CAGradientLayer, CALayer, CAMediaTiming, CAMediaTimingFunction,
+    CABasicAnimation, CAGradientLayer, CALayer, CAMediaTiming, CAMediaTimingFunction, CAShapeLayer,
     CASpringAnimation, CATransaction, kCACornerCurveContinuous, kCAGravityCenter, kCAGravityLeft,
 };
 
@@ -55,6 +56,18 @@ struct Entry {
     generation: u64,
     /// A slider's colors and font, to draw it again while it's dragged.
     slider: Option<SliderLook>,
+    /// The mask of a node whose corners aren't all as round, with the corners and size it has.
+    corners: Option<(Retained<CAShapeLayer>, Corners, (f64, f64))>,
+}
+
+/// Corner radii: top left, top right, bottom right, bottom left.
+type Corners = [f64; 4];
+
+/// The rounded node that holds the ones inside it, in surface coordinates.
+#[derive(Clone, Copy)]
+struct Container {
+    rect: CGRect,
+    corners: Corners,
 }
 
 #[derive(Clone)]
@@ -165,7 +178,7 @@ impl Surface {
         CATransaction::setAnimationTimingFunction(Some(&ease()));
         let root = self.root.clone();
         let path = self.child_path("", node);
-        self.walk(node, laid, &root, path, 0.0, 0.0, None);
+        self.walk(node, laid, &root, path, 0.0, 0.0, None, None);
         self.sweep();
         CATransaction::commit();
     }
@@ -229,8 +242,10 @@ impl Surface {
         ox: f64,
         oy: f64,
         clip: Option<CGRect>,
+        container: Option<Container>,
     ) {
         let frame = rect(laid.x, laid.y, laid.w, laid.h);
+        let abs = rect(ox + laid.x, oy + laid.y, laid.w, laid.h);
         let created = !self.entries.contains_key(&path);
         if created {
             let layer = CALayer::new();
@@ -245,7 +260,7 @@ impl Surface {
             parent.addSublayer(&layer);
             self.entries.insert(
                 path.clone(),
-                Entry { layer, sig: None, parts: HashMap::new(), background: None, frame, generation: self.generation, slider: None },
+                Entry { layer, sig: None, parts: HashMap::new(), background: None, frame, generation: self.generation, slider: None, corners: None },
             );
         }
         let scale = self.scale;
@@ -274,7 +289,11 @@ impl Surface {
                 layer.setBackgroundColor(background.map(|c| c.cg()).as_deref());
             }
         }
-        layer.setCornerRadius(s.radius);
+        // A fill (the background, or the hover highlight of a click) follows the corners of the
+        // node it's in: a corner near one of the container's is concentric with it
+        let fills = matches!(node.kind, Kind::Box) && s.border.is_none() && !s.glass && (s.background.is_some() || node.on_click.is_some());
+        let corners = if fills { concentric(abs, s.radius, container) } else { [s.radius; 4] };
+        set_corners(entry, &layer, corners, laid.w, laid.h);
         match s.border {
             Some((w, c)) => {
                 layer.setBorderWidth(w);
@@ -419,7 +438,6 @@ impl Surface {
         }
 
         // Interactions and glass, in surface coordinates
-        let abs = rect(ox + laid.x, oy + laid.y, laid.w, laid.h);
         if s.glass && glass_fill.is_none() {
             self.glass.push(Glass { path: path.clone(), rect: abs, radius: s.radius, opacity: s.opacity });
         }
@@ -443,7 +461,8 @@ impl Surface {
             }
         }
 
-        // Children
+        // Children, in this node if it's rounded
+        let container = if corners.iter().any(|&r| r > 0.0) { Some(Container { rect: abs, corners }) } else { container };
         if let Kind::Scroll { start, .. } = &node.kind {
             let (Some(content), Some(content_laid)) = (node.children.first(), laid.children.first()) else { return };
             let content_path = format!("{path}/k:content");
@@ -477,12 +496,18 @@ impl Surface {
                 Some(c) => intersect(viewport, c).unwrap_or(rect(0.0, 0.0, 0.0, 0.0)),
                 None => viewport,
             });
-            self.walk(content, &shifted, &layer, content_path, ox + laid.x, oy + laid.y, clip);
+            // The corners of what's inside as when it isn't scrolled, so they don't change as it
+            // scrolls: the container goes up with the content
+            let container = container.map(|mut c| {
+                c.rect.origin.y -= state.offset;
+                c
+            });
+            self.walk(content, &shifted, &layer, content_path, ox + laid.x, oy + laid.y, clip, container);
             return;
         }
         for (child, child_laid) in node.children.iter().zip(&laid.children) {
             let child_path = self.child_path(&path, child);
-            self.walk(child, child_laid, &layer, child_path, ox + laid.x, oy + laid.y, clip);
+            self.walk(child, child_laid, &layer, child_path, ox + laid.x, oy + laid.y, clip, container);
         }
     }
 
@@ -641,6 +666,73 @@ fn part(entry: &mut Entry, name: &'static str, layer: &CALayer, scale: f64) -> R
         .clone()
 }
 
+/// The corners of a node at `abs` (surface coordinates) with radius `own`, inside `container`.
+/// Each corner near one of the container's is concentric with it, as macOS draws them: the
+/// container's radius less the farther of the two insets from that corner. Never less round than
+/// `own`, and no rounder than half the node's shorter side.
+fn concentric(abs: CGRect, own: f64, container: Option<Container>) -> Corners {
+    let mut corners = [own; 4];
+    let Some(c) = container else { return corners };
+    let left = abs.origin.x - c.rect.origin.x;
+    let top = abs.origin.y - c.rect.origin.y;
+    let right = (c.rect.origin.x + c.rect.size.width) - (abs.origin.x + abs.size.width);
+    let bottom = (c.rect.origin.y + c.rect.size.height) - (abs.origin.y + abs.size.height);
+    let insets = [left.max(top), right.max(top), right.max(bottom), left.max(bottom)];
+    let half = abs.size.width.min(abs.size.height) / 2.0;
+    for (corner, (radius, inset)) in corners.iter_mut().zip(c.corners.iter().zip(insets)) {
+        let r = (radius - inset.max(0.0)).min(half);
+        if r > *corner {
+            *corner = r;
+        }
+    }
+    corners
+}
+
+/// Rounds the layer's corners: with its radius when they're all the same, else with a mask.
+fn set_corners(entry: &mut Entry, layer: &CALayer, corners: Corners, w: f64, h: f64) {
+    if corners.iter().all(|&r| r == corners[0]) {
+        layer.setCornerRadius(corners[0]);
+        if entry.corners.take().is_some() {
+            unsafe { layer.setMask(None) };
+        }
+        return;
+    }
+    layer.setCornerRadius(0.0);
+    if entry.corners.as_ref().is_some_and(|(_, c, size)| *c == corners && *size == (w, h)) {
+        return;
+    }
+    let mask = match entry.corners.take() {
+        Some((mask, _, _)) => mask,
+        None => {
+            let mask = CAShapeLayer::new();
+            mask.setContentsScale(layer.contentsScale());
+            // A new layer with no superlayer, as a mask has to be
+            unsafe { layer.setMask(Some(&mask)) };
+            mask
+        }
+    };
+    mask.setFrame(rect(0.0, 0.0, w, h));
+    mask.setPath(Some(&rounded_rect(w, h, corners)));
+    entry.corners = Some((mask, corners, (w, h)));
+}
+
+/// A `w`×`h` rectangle with each corner as round as `corners` says.
+fn rounded_rect(w: f64, h: f64, corners: Corners) -> CFRetained<CGMutablePath> {
+    let [tl, tr, br, bl] = corners;
+    let path = CGMutablePath::new();
+    let p = Some(&*path);
+    let m = std::ptr::null();
+    unsafe {
+        CGMutablePath::move_to_point(p, m, tl, 0.0);
+        CGMutablePath::add_arc_to_point(p, m, w, 0.0, w, h, tr);
+        CGMutablePath::add_arc_to_point(p, m, w, h, 0.0, h, br);
+        CGMutablePath::add_arc_to_point(p, m, 0.0, h, 0.0, 0.0, bl);
+        CGMutablePath::add_arc_to_point(p, m, 0.0, 0.0, w, 0.0, tl);
+    }
+    CGMutablePath::close_subpath(p);
+    path
+}
+
 /// A thick track and a fill as round as it, gone at 0, and the percentage: in the fill before its
 /// end when it fits there, else on the track after it, else in the middle. The percentage is drawn
 /// twice, in a color that reads on the track and, clipped to the fill, in one that reads on the
@@ -758,5 +850,21 @@ mod tests {
         assert_eq!(slider_value(r, 200.0), 1.0);
         assert_eq!(ink(Rgba(0.8, 0.65, 0.97, 1.0)), Rgba(0.0, 0.0, 0.0, 0.75));
         assert_eq!(ink(Rgba(0.2, 0.2, 0.27, 1.0)), Rgba(1.0, 1.0, 1.0, 0.92));
+    }
+
+    #[test]
+    fn corners_follow_the_container() {
+        let popup = |h: f64| Some(Container { rect: rect(0.0, 0.0, 200.0, h), corners: [16.0; 4] });
+        // One row 4 points in: concentric all around, a capsule
+        assert_eq!(concentric(rect(4.0, 4.0, 192.0, 24.0), 8.0, popup(32.0)), [12.0; 4]);
+        // The first and last of three: round on the popup's side only
+        assert_eq!(concentric(rect(4.0, 4.0, 192.0, 24.0), 8.0, popup(80.0)), [12.0, 12.0, 8.0, 8.0]);
+        assert_eq!(concentric(rect(4.0, 52.0, 192.0, 24.0), 8.0, popup(80.0)), [8.0, 8.0, 12.0, 12.0]);
+        // 8 points in, the row's own radius is concentric already
+        assert_eq!(concentric(rect(8.0, 8.0, 184.0, 24.0), 8.0, popup(40.0)), [8.0; 4]);
+        // Never rounder than half the shorter side, nor less round than its own
+        assert_eq!(concentric(rect(1.0, 1.0, 198.0, 10.0), 2.0, popup(12.0)), [5.0; 4]);
+        assert_eq!(concentric(rect(4.0, 4.0, 192.0, 24.0), 14.0, popup(32.0)), [14.0; 4]);
+        assert_eq!(concentric(rect(4.0, 4.0, 192.0, 24.0), 8.0, None), [8.0; 4]);
     }
 }

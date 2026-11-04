@@ -258,7 +258,8 @@ impl Widget for Aerospace {
                     .height(22.0)
                     .padding(0.0, right, 0.0, 10.0)
                     .gap(if wins.is_empty() { 0.0 } else { 4.0 })
-                    .radius(7.0)
+                    // A capsule, as the selection behind the focused one and the pill's ends
+                    .radius(11.0)
                     .click(rx.action(&format!("ws:{ws}")));
                 if focused {
                     group = group.hover(th.on_primary.faded(0.12));
