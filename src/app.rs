@@ -62,6 +62,15 @@ pub struct Bar {
     pub fit: Vec<usize>,
     /// The form each widget took at the last render.
     pub forms: HashMap<String, Form>,
+    /// On a screen with a notch, where the center group went at the last render: beside the left
+    /// or the right side, in its own form or compact; none when it had no room.
+    pub center: Option<(Side, Form)>,
+    /// The room the center group had beside it at the last render (see `spare`).
+    pub spare: f64,
+    /// What it drew at the last render, for a peek to start from the pill as it is.
+    tree: Node,
+    /// The pill hidden under a peek, as it would show.
+    peek_pill: Option<Node>,
 }
 
 pub struct Popup {
@@ -73,6 +82,32 @@ pub struct Popup {
     pub side: Side,
 }
 
+/// A widget's pill grown down under the mouse, with what its `peek` shows: a window of its own
+/// over the pill, at the popups' level, that starts as the pill and grows, while the pill in the
+/// bar hides under it. Going back, it shrinks to the pill, the pill in the bar shows again under
+/// it, and then it goes.
+pub struct Peek {
+    pub widget: String,
+    pub display: u32,
+    window: Window,
+    surface: Surface,
+    /// Grown, or growing; false while it goes back.
+    open: bool,
+    /// The pill in the bar is hidden under it.
+    hides_pill: bool,
+    /// Its window, at the size it has grown (Cocoa coordinates).
+    frame: CGRect,
+    /// Counts its openings and closings: what was set up for an older one doesn't apply.
+    serial: u64,
+}
+
+/// How long the mouse rests on a pill before it grows, so that one crossed on the way somewhere
+/// else stays as it is; and how long it may be out of the grown one before it goes back.
+const PEEK_DELAY: f64 = 0.1;
+const PEEK_LEAVE: f64 = 0.15;
+/// The time the layers take to move and resize (see `Surface::render`).
+const PEEK_ANIMATION: f64 = 0.32;
+
 pub struct App {
     pub mtm: MainThreadMarker,
     pub config: Config,
@@ -82,6 +117,15 @@ pub struct App {
     pub slots: Vec<Slot>,
     pub bars: Vec<Bar>,
     pub popup: Option<Popup>,
+    pub peek: Option<Peek>,
+    /// The pill under the mouse in a bar: its display and its widget.
+    hovered_pill: Option<(u32, String)>,
+    /// Counts the mouse's comings and goings on the pills and the peek: a pending grow or shrink
+    /// of an older one doesn't happen.
+    peek_ticket: u64,
+    /// The next render of the bars isn't animated: a pill hides under a peek, or shows again
+    /// under one going away, at once.
+    instant: bool,
     pub cache: Cache,
     pub lua: Option<crate::lua::Host>,
     generation: u64,
@@ -159,6 +203,10 @@ pub fn start(mtm: MainThreadMarker) {
         slots: Vec::new(),
         bars: Vec::new(),
         popup: None,
+        peek: None,
+        hovered_pill: None,
+        peek_ticket: 0,
+        instant: false,
         cache: Cache::load(),
         lua: None,
         generation: current_gen(),
@@ -250,6 +298,7 @@ impl App {
         }
         self.theme = Theme::from_config(&self.config.theme);
         self.close_popup();
+        self.drop_peek();
         self.generation = GEN.fetch_add(1, Ordering::Relaxed) + 1;
         self.slots.clear();
         crate::gfx::trim_cache(0);
@@ -277,6 +326,9 @@ impl App {
             popup.surface.highlight = self.theme.highlight;
             popup.surface.glass_fill = Some(self.theme.surface);
         }
+        if let Some(peek) = &mut self.peek {
+            peek.surface.highlight = self.theme.highlight;
+        }
         if let Some(lua) = &self.lua {
             lua.retheme(&self.theme);
         }
@@ -299,11 +351,13 @@ impl App {
     pub fn with_slot(&mut self, name: &str, f: impl FnOnce(&mut dyn Widget, &mut Cx)) {
         let Some(i) = self.slots.iter().position(|s| s.name == name) else { return };
         let popup_open = self.popup.as_ref().is_some_and(|p| p.widget == name);
+        let peek_open = self.peek.as_ref().is_some_and(|p| p.widget == name && p.open);
         let slot = &mut self.slots[i];
         let mut cx = Cx {
             name: &slot.name,
             generation: self.generation,
             popup_open,
+            peek_open,
             timers: &mut slot.timers,
             effects: Vec::new(),
         };
@@ -407,9 +461,16 @@ impl App {
     /// The node of a widget in the bar of `d`: its own, its last known one (dimmed) until it's
     /// ready, a skeleton the very first time, or its error.
     fn item(&mut self, i: usize, d: &DisplayInfo, form: Form) -> Option<Node> {
+        self.item_wider(i, d, form, 0.0)
+    }
+
+    /// `item`, `spare` points wider at most (see `Rx::spare`). The cache keeps only the node as
+    /// wide as its form, the one the bar measures at start.
+    fn item_wider(&mut self, i: usize, d: &DisplayInfo, form: Form, spare: f64) -> Option<Node> {
         let popup_open = self.popup.as_ref().is_some_and(|p| p.widget == self.slots[i].name);
         let slot = &self.slots[i];
-        let rx = Rx::new(&slot.name, &self.theme, d, form, popup_open);
+        let mut rx = Rx::new(&slot.name, &self.theme, d, form, popup_open);
+        rx.spare = spare;
         if let Some(err) = &slot.failed {
             return Some(error_pill(&rx, err));
         }
@@ -429,7 +490,9 @@ impl App {
             Ok(Some(mut node)) => {
                 node.key = Some(slot.name.clone());
                 let name = slot.name.clone();
-                self.cache.put(&name, variant, &node);
+                if spare == 0.0 {
+                    self.cache.put(&name, variant, &node);
+                }
                 Some(node)
             }
             Ok(None) => None,
@@ -444,7 +507,11 @@ impl App {
     /// The bar of `self.bars[b]`: the left side at the left edge, the right one at the right edge,
     /// the center one in the middle, with the widgets of the left and right sides in the form that
     /// keeps them apart (see `fit`). Those that aren't in the bar are in the popup of a `⋯` pill, at
-    /// the inner end of their side.
+    /// the inner end of their side. On a screen with a notch the middle is the notch's: the center
+    /// group goes beside it, at the inner end of the left side if that has room for it, else of the
+    /// right one, else in its compact form the same way, else nowhere (see `place_center`). The
+    /// room left beside the center group, there or in the middle, goes to the text it had to cut
+    /// (see `widen`).
     fn bar_tree(&mut self, b: usize) -> Node {
         let d = self.bars[b].display.clone();
         let height = self.config.bar.height;
@@ -454,24 +521,27 @@ impl App {
         let layout = Layout { scale: d.scale };
         let mut forms: HashMap<String, Form> = HashMap::new();
 
-        let mut center = Vec::new();
-        for i in 0..self.slots.len() {
-            let form = self.config_form(&self.slots[i].name, &d);
-            if self.slots[i].side == Side::Center && form != Form::Hidden {
-                forms.insert(self.slots[i].name.clone(), form);
-                center.extend(self.item(i, &d, form));
-            }
-        }
-        let center = Node::row(center).gap(gap).key("center");
-        let (center_w, _) = layout.intrinsic(&center, None);
+        let centered: Vec<(usize, Form)> = (0..self.slots.len())
+            .filter(|&i| self.slots[i].side == Side::Center)
+            .map(|i| (i, self.config_form(&self.slots[i].name, &d)))
+            .filter(|(_, form)| *form != Form::Hidden)
+            .collect();
+        let draw_center = |app: &mut App, compact: bool| -> Vec<Node> {
+            centered.iter().filter_map(|&(i, form)| app.item(i, &d, if compact { Form::Compact } else { form })).collect()
+        };
+        let mut center = draw_center(self, false);
+        let center_w = center.iter().map(|n| layout.intrinsic(n, None).0).sum::<f64>() + gap * center.len().saturating_sub(1) as f64;
 
         // The room of the sides: up to the notch, or to the center group, with a gap; or all the
         // bar between the margins when there's nothing in the middle
-        let mut middle = d.notch;
-        if center_w > 0.0 {
-            let x = ((width - center_w) / 2.0).round();
-            middle = Some(middle.map_or((x, x + center_w), |(l, r)| (l.min(x), r.max(x + center_w))));
-        }
+        let middle = match d.notch {
+            Some(notch) => Some(notch),
+            None if center_w > 0.0 => {
+                let x = ((width - center_w) / 2.0).round();
+                Some((x, x + center_w))
+            }
+            None => None,
+        };
         let room = match middle {
             Some((l, r)) => Room::Split { left: l - margin - gap, right: width - margin - r - gap },
             None => Room::Shared(width - 2.0 * margin - gap),
@@ -544,6 +614,69 @@ impl App {
         if (0..items.len()).any(|k| !items[k].left && chosen[k] == Form::Hidden) {
             groups[1].insert(0, more_right);
         }
+
+        // Beside the notch, the center group takes what room the sides leave. Then, there or in
+        // the middle, what's left beside it goes to the text it had to cut (see `Rx::spare`)
+        let mut center_form = |name: &str, form: Form| forms.insert(name.to_string(), form);
+        let width_of = |nodes: &[Node]| nodes.iter().map(|n| layout.intrinsic(n, None).0).sum::<f64>() + gap * nodes.len().saturating_sub(1) as f64;
+        let used = groups.each_ref().map(|g| width_of(g));
+        if d.notch.is_some() && !center.is_empty() {
+            let Room::Split { left, right } = room else { unreachable!("a notch splits the bar") };
+            let prev = self.bars[b].center;
+            // The compact form is drawn only when the group's own doesn't fit on either side
+            let mut compact = None;
+            let mut placed = place_center(used, [left, right], center_w, None, gap, prev);
+            if placed.is_none() && !centered.iter().all(|(_, f)| *f == Form::Compact) {
+                let nodes = draw_center(self, true);
+                placed = place_center(used, [left, right], center_w, Some(width_of(&nodes)), gap, prev);
+                compact = Some(nodes);
+            }
+            self.bars[b].center = placed;
+            let nodes = match placed {
+                Some((side, form)) => {
+                    let nodes = if form == Form::Compact { compact.unwrap_or_default() } else { std::mem::take(&mut center) };
+                    let s = (side == Side::Right) as usize;
+                    let spare = [left, right][s] - used[s] - if used[s] > 0.0 { gap } else { 0.0 } - width_of(&nodes);
+                    self.widen(b, &centered, nodes, form == Form::Compact, spare)
+                }
+                None => Vec::new(),
+            };
+            for &(i, form) in &centered {
+                let form = match placed {
+                    Some((_, Form::Compact)) => Form::Compact,
+                    Some(_) => form,
+                    None => Form::Hidden,
+                };
+                center_form(&self.slots[i].name, form);
+            }
+            center.clear();
+            match placed {
+                Some((Side::Left, _)) => groups[0].extend(nodes),
+                Some(_) => drop(groups[1].splice(0..0, nodes)),
+                None => {}
+            }
+        } else {
+            self.bars[b].center = None;
+            for &(i, form) in &centered {
+                center_form(&self.slots[i].name, form);
+            }
+            // In the middle: on both sides as far as the wider side lets it
+            if !center.is_empty() {
+                let spare = width - 2.0 * (margin + used[0].max(used[1]) + gap) - center_w;
+                center = self.widen(b, &centered, center, false, spare);
+            }
+        }
+        // A pill grown under the mouse is in its own window: here it keeps its place, unseen
+        self.bars[b].peek_pill = None;
+        if let Some(peek) = self.peek.as_ref().filter(|p| p.hides_pill && p.display == d.id) {
+            for node in groups.iter_mut().flatten().chain(center.iter_mut()) {
+                if node.key.as_deref() == Some(peek.widget.as_str()) {
+                    self.bars[b].peek_pill = Some(node.clone());
+                    node.style.opacity = 0.0;
+                }
+            }
+        }
+        let center = Node::row(center).key("center");
         self.bars[b].fit = levels;
         self.bars[b].forms = forms;
 
@@ -560,6 +693,33 @@ impl App {
             root.children.push(group.at(x, ((height - h) / 2.0).round()));
         }
         root
+    }
+
+    /// The center group of `self.bars[b]` drawn again with `spare` points more room, which each of
+    /// its widgets takes in turn as far as it needs it (see `Rx::spare`). The room follows a side
+    /// that grows at once, one that shrinks only past a few points: a pill beside the group that
+    /// changes by a point or two (`system`'s digits) doesn't make it change too.
+    fn widen(&mut self, b: usize, centered: &[(usize, Form)], nodes: Vec<Node>, compact: bool, spare: f64) -> Vec<Node> {
+        let d = self.bars[b].display.clone();
+        let layout = Layout { scale: d.scale };
+        let mut spare = steady_spare(self.bars[b].spare, spare);
+        self.bars[b].spare = spare;
+        let mut wide = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            let slot = centered.iter().find(|(i, _)| node.key.as_deref() == Some(self.slots[*i].name.as_str())).copied();
+            let drawn = match slot {
+                Some((i, form)) if spare >= 1.0 => self.item_wider(i, &d, if compact { Form::Compact } else { form }, spare),
+                _ => None,
+            };
+            match drawn {
+                Some(w) => {
+                    spare -= (layout.intrinsic(&w, None).0 - layout.intrinsic(&node, None).0).max(0.0);
+                    wide.push(w);
+                }
+                None => wide.push(node),
+            }
+        }
+        wide
     }
 
     fn more_pill(&self, side: Side, d: &DisplayInfo) -> Node {
@@ -581,7 +741,8 @@ impl App {
             tree.normalize();
             let laid = Layout { scale: d.scale }.run(&tree, Some(d.frame.size.width));
             let bar = &mut self.bars[b];
-            bar.surface.animate = animate && self.first_frame_logged;
+            bar.surface.animate = animate && self.first_frame_logged && !self.instant;
+            bar.surface.motion = animate;
             bar.surface.render(&tree, &laid);
             bar.window.set_dark(self.theme.glass_dark);
             bar.window.set_glass(&bar.surface.glass, self.theme.clear_glass, bar.surface.animate);
@@ -595,18 +756,26 @@ impl App {
                     }
                 }
             }
-            // The popups of the widgets in a `⋯` popup open from the `⋯` pill
+            // The popups of the widgets in a `⋯` popup open from the `⋯` pill; a center one with
+            // no room beside the notch is in none
             for slot in &self.slots {
-                if bar.forms.get(&slot.name) == Some(&Form::Hidden)
+                if slot.side != Side::Center
+                    && bar.forms.get(&slot.name) == Some(&Form::Hidden)
                     && let Some(r) = bar.items.get(more_name(slot.side)).copied()
                 {
                     bar.items.insert(slot.name.clone(), r);
                 }
             }
+            bar.tree = tree;
         }
         // A `⋯` popup goes when its widgets are back in the bar
         if !self.render_popup(animate) && self.popup.as_ref().is_some_and(|p| more_side(&p.widget).is_some()) {
             self.close_popup();
+        }
+        self.instant = false;
+        // A peek goes with its pill, or with what it showed
+        if self.peek.is_some() && !self.render_peek(animate) {
+            self.drop_peek();
         }
         crate::gfx::trim_cache(256);
         if !self.first_frame_logged && !self.bars.is_empty() {
@@ -662,7 +831,7 @@ impl App {
                     surface.animate = false;
                     let window = Window::new(self.mtm, SurfaceId::Bar(d.id), frame, level, &surface.root, Backdrop::None, 0.0);
                     window.show();
-                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new() });
+                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new(), center: None, spare: 0.0, tree: Node::default(), peek_pill: None });
                     changed = true;
                 }
             }
@@ -731,6 +900,7 @@ impl App {
 
     fn screens_changed(&mut self) {
         self.close_popup();
+        self.drop_peek();
         if self.reconcile_displays() {
             self.broadcast(&Event::ScreensChanged);
         }
@@ -776,6 +946,7 @@ impl App {
         match id {
             SurfaceId::Bar(d) => self.bars.iter_mut().find(|b| b.display.id == d).map(|b| &mut b.surface),
             SurfaceId::Popup => self.popup.as_mut().map(|p| &mut p.surface),
+            SurfaceId::Peek => self.peek.as_mut().map(|p| &mut p.surface),
         }
     }
 
@@ -799,7 +970,16 @@ impl App {
         let display = match id {
             SurfaceId::Bar(d) => Some(d),
             SurfaceId::Popup => self.popup.as_ref().map(|p| p.display),
+            SurfaceId::Peek => self.peek.as_ref().map(|p| p.display),
         };
+        match (id, kind) {
+            (SurfaceId::Bar(d), Mouse::Moved) => self.bar_hover(d, Some(p)),
+            (SurfaceId::Bar(d), Mouse::Exited) => self.bar_hover(d, None),
+            // Back in it in time: it stays
+            (SurfaceId::Peek, Mouse::Moved) => self.peek_ticket += 1,
+            (SurfaceId::Peek, Mouse::Exited) => self.left_peek(),
+            _ => {}
+        }
         let Some(surface) = self.surface_mut(id) else { return };
         // What a press lands on, topmost first, and whether it has an action
         if std::env::var_os("RUSTYBAR_DEBUG").is_some() && matches!(kind, Mouse::Down) {
@@ -811,9 +991,10 @@ impl App {
         match kind {
             Mouse::Moved => {
                 if surface.dragging.is_none() {
-                    let hit = surface.hit(p, &[HitKind::Click]).map(|h| (h.path.clone(), h.hover));
+                    // One that asks for no highlight is as if the mouse were on nothing
+                    let hit = surface.hit(p, &[HitKind::Click]).and_then(|h| Some((h.path.clone(), h.hover?)));
                     match hit {
-                        Some((path, hover)) => surface.set_hover(Some(path), hover),
+                        Some((path, hover)) => surface.set_hover(Some(path), Some(hover)),
                         None => surface.set_hover(None, None),
                     }
                     let slider = surface.hit(p, &[HitKind::Slider]).map(|h| h.path.clone());
@@ -897,6 +1078,10 @@ impl App {
 
     pub fn open_popup(&mut self, widget: &str, display: u32) {
         self.close_popup();
+        // The popup has all the peek had: the pill goes back, under it
+        if self.peek.as_ref().is_some_and(|p| p.widget == widget) {
+            self.collapse_peek();
+        }
         let side = match more_side(widget) {
             Some(side) => side,
             None => match self.slots.iter().find(|s| s.name == widget) {
@@ -1026,6 +1211,7 @@ impl App {
         popup.window.set_frame(frame);
         popup.window.set_corner_radius(self.theme.popup_radius);
         popup.surface.animate = animate;
+        popup.surface.motion = animate;
         popup.surface.render(&tree, &laid);
         true
     }
@@ -1054,6 +1240,268 @@ impl App {
             }
         });
         self.dirty = true;
+    }
+
+    // ---- peek ----------------------------------------------------------------------------------
+
+    /// The mouse moved on the bar of `display` to `p`, or left it (none). A pill whose widget has
+    /// a peek grows once the mouse has rested on it a moment; a grown one the mouse isn't on goes
+    /// back.
+    fn bar_hover(&mut self, display: u32, p: Option<CGPoint>) {
+        // The bar under a grown pill doesn't count
+        if self.mouse_in_peek() {
+            return;
+        }
+        if self.peek.as_ref().is_some_and(|peek| peek.open) {
+            self.collapse_peek();
+        }
+        let pill = p.and_then(|p| {
+            let bar = self.bars.iter().find(|b| b.display.id == display)?;
+            let slot = self.slots.iter().find(|s| {
+                bar.forms.get(&s.name).is_some_and(|f| *f != Form::Hidden) && bar.items.get(&s.name).is_some_and(|r| crate::ui::contains(*r, p))
+            })?;
+            Some((display, slot.name.clone()))
+        });
+        if pill == self.hovered_pill {
+            return;
+        }
+        self.hovered_pill = pill.clone();
+        self.peek_ticket += 1;
+        let Some((display, name)) = pill else { return };
+        let ticket = self.peek_ticket;
+        runtime::after(PEEK_DELAY, move |app| {
+            if app.peek_ticket == ticket {
+                app.open_peek(&name, display);
+            }
+        });
+    }
+
+    /// The mouse left the grown pill: it goes back, unless the mouse is in it again in a moment,
+    /// or drags a slider of it.
+    fn left_peek(&mut self) {
+        self.peek_ticket += 1;
+        let ticket = self.peek_ticket;
+        runtime::after(PEEK_LEAVE, move |app| {
+            let dragging = app.peek.as_ref().is_some_and(|p| p.surface.dragging.is_some());
+            if app.peek_ticket == ticket && !dragging && !app.mouse_in_peek() {
+                app.collapse_peek();
+            }
+        });
+    }
+
+    /// The mouse is on the grown pill.
+    fn mouse_in_peek(&self) -> bool {
+        self.peek.as_ref().is_some_and(|p| p.open && crate::ui::contains(p.frame, NSEvent::mouseLocation()))
+    }
+
+    /// `rustybar msg peek <widget>`: grows its pill on the screen of the mouse, or brings it back.
+    /// One grown this way stays until the mouse leaves it, or moves on the bar.
+    pub fn toggle_peek(&mut self, widget: &str) {
+        if self.peek.as_ref().is_some_and(|p| p.widget == widget && p.open) {
+            self.collapse_peek();
+        } else {
+            let display = self.mouse_display();
+            self.open_peek(widget, display);
+        }
+    }
+
+    /// Grows the pill of `widget` on `display` with its peek, if it has one and its popup isn't
+    /// open: drawn first as the pill is, at once, then grown at the next render, animated, while
+    /// the pill in the bar hides under it. One on its way back grows again.
+    fn open_peek(&mut self, widget: &str, display: u32) {
+        if self.popup.as_ref().is_some_and(|p| p.widget == widget) {
+            return;
+        }
+        if let Some(peek) = &mut self.peek {
+            if peek.widget == widget && peek.display == display {
+                if !peek.open {
+                    peek.open = true;
+                    peek.serial += 1;
+                    peek.window.set_ignores_mouse(false);
+                    if !peek.hides_pill {
+                        peek.hides_pill = true;
+                        self.instant = true;
+                    }
+                    self.hovered_pill = None;
+                    self.dirty = true;
+                    self.with_slot(widget, |w, cx| w.event(&Event::PeekOpened, cx));
+                }
+                return;
+            }
+            self.drop_peek();
+        }
+        let Some((_, frame)) = self.peek_tree(widget, display, false) else { return };
+        let Some(bar) = self.bars.iter_mut().find(|b| b.display.id == display) else { return };
+        // The bar's highlight goes with its pill: the peek has its own
+        bar.surface.set_hover(None, None);
+        let mut surface = Surface::new(bar.display.scale, self.theme.highlight);
+        surface.animate = false;
+        let window = Window::new(self.mtm, SurfaceId::Peek, frame, NSPopUpMenuWindowLevel, &surface.root, Backdrop::None, 0.0);
+        self.peek = Some(Peek { widget: widget.to_string(), display, window, surface, open: false, hides_pill: false, frame, serial: 0 });
+        if !self.render_peek(false) {
+            self.peek = None;
+            return;
+        }
+        let Some(peek) = &mut self.peek else { return };
+        peek.window.show();
+        peek.open = true;
+        peek.hides_pill = true;
+        self.instant = true;
+        self.hovered_pill = None;
+        self.dirty = true;
+        // The top under the mouse has the highlight the pill had
+        let m = NSEvent::mouseLocation();
+        self.on_mouse(SurfaceId::Peek, Mouse::Moved, CGPoint::new(m.x - frame.origin.x, frame.origin.y + frame.size.height - m.y));
+        self.with_slot(widget, |w, cx| w.event(&Event::PeekOpened, cx));
+    }
+
+    /// The grown pill shrinks back to the pill; then the pill in the bar shows again under it,
+    /// and then it goes. The mouse goes through it meanwhile.
+    fn collapse_peek(&mut self) {
+        let animate = self.animations();
+        let Some(peek) = &mut self.peek else { return };
+        if !peek.open {
+            return;
+        }
+        peek.open = false;
+        peek.serial += 1;
+        peek.window.set_ignores_mouse(true);
+        peek.surface.set_hover(None, None);
+        peek.surface.set_slider_hover(None);
+        let (widget, serial) = (peek.widget.clone(), peek.serial);
+        self.dirty = true;
+        self.with_slot(&widget, |w, cx| w.event(&Event::PeekClosed, cx));
+        runtime::after(if animate { PEEK_ANIMATION + 0.02 } else { 0.0 }, move |app| {
+            let Some(peek) = app.peek.as_mut().filter(|p| !p.open && p.serial == serial) else { return };
+            // Under it, so that there's no frame without either; for as short as that takes, as
+            // two glasses one over the other have a brighter rim
+            peek.hides_pill = false;
+            app.instant = true;
+            app.dirty = true;
+            runtime::after(0.04, move |app| {
+                if app.peek.as_ref().is_some_and(|p| !p.open && p.serial == serial) {
+                    app.peek = None;
+                    // As after a popup (see `close_popup`)
+                    if app.popup.is_none() && app.closing.is_empty() {
+                        crate::gfx::trim_cache(0);
+                        release_memory();
+                    }
+                }
+            });
+        });
+    }
+
+    /// The peek goes at once, without shrinking first: a reload, a change of screens, another
+    /// pill's, or nothing to show anymore.
+    fn drop_peek(&mut self) {
+        let Some(peek) = self.peek.take() else { return };
+        if peek.hides_pill {
+            self.instant = true;
+            self.dirty = true;
+        }
+        if peek.open {
+            self.with_slot(&peek.widget, |w, cx| w.event(&Event::PeekClosed, cx));
+        }
+    }
+
+    /// Draws the peek as it is now, grown or going back, and fits its window to it. False when
+    /// it has nothing to show anymore.
+    fn render_peek(&mut self, animate: bool) -> bool {
+        let Some(peek) = &self.peek else { return false };
+        let Some((tree, frame)) = self.peek_tree(&peek.widget, peek.display, peek.open) else { return false };
+        let scale = self.bars.iter().find(|b| b.display.id == peek.display).map_or(2.0, |b| b.display.scale);
+        let laid = Layout { scale }.place(&tree, 0.0, 0.0, frame.size.width, frame.size.height);
+        let t = &self.theme;
+        let Some(peek) = self.peek.as_mut() else { return false };
+        if peek.frame != frame {
+            peek.window.set_frame(frame);
+            peek.frame = frame;
+        }
+        peek.surface.animate = animate;
+        peek.surface.motion = animate;
+        peek.surface.render(&tree, &laid);
+        peek.window.set_dark(t.glass_dark);
+        peek.window.set_glass(&peek.surface.glass, t.clear_glass, animate);
+        true
+    }
+
+    /// The peek of `widget` on `display`, and the frame of its window (Cocoa coordinates): the
+    /// pill as the bar has it, where it is, grown down when `open` to what the widget's `peek`
+    /// shows, and wider if that is, as its popup lines up (see `side` below). The
+    /// pill's look (glass, background, border) goes to a card that grows and clips what's in
+    /// it; its content stays where it is. The window has the grown size from the start, so that
+    /// only the layers and the glass move. None when the widget has nothing to show, or its pill
+    /// isn't in the bar.
+    fn peek_tree(&self, widget: &str, display: u32, open: bool) -> Option<(Node, CGRect)> {
+        let bar = self.bars.iter().find(|b| b.display.id == display)?;
+        let form = bar.forms.get(widget).copied().filter(|f| *f != Form::Hidden)?;
+        let item = bar.items.get(widget).copied()?;
+        let pill = bar
+            .peek_pill
+            .clone()
+            .filter(|n| n.key.as_deref() == Some(widget))
+            .or_else(|| bar.tree.children.iter().flat_map(|g| &g.children).find(|n| n.key.as_deref() == Some(widget)).cloned())?;
+        let slot = self.slots.iter().find(|s| s.name == widget && s.failed.is_none())?;
+        if !slot.widget.ready() {
+            return None;
+        }
+        let d = &bar.display;
+        let t = &self.theme;
+        let rx = Rx::new(&slot.name, t, d, form, false);
+        let mut content = catch_unwind(AssertUnwindSafe(|| slot.widget.peek(&rx))).ok().flatten()?;
+        content.normalize();
+        // As its popup does; the center group beside the notch is at the inner end of a side, and
+        // grows into the room it found there, not over that side's pills
+        let side = match (slot.side, bar.center) {
+            (Side::Center, Some((side, _))) => side,
+            (side, _) => side,
+        };
+
+        let layout = Layout { scale: d.scale };
+        let (pill_w, pill_h) = (item.size.width, item.size.height);
+        let (content_w, content_h) = layout.intrinsic(&content, None);
+        let (w, h) = (pill_w.max(content_w).ceil(), (pill_h + content_h).ceil());
+        let bar_frame = bar.window.panel.frame();
+        let pill_x = bar_frame.origin.x + item.origin.x;
+        let top = bar_frame.origin.y + bar_frame.size.height - item.origin.y;
+        let x = match side {
+            Side::Left => pill_x,
+            Side::Right => pill_x + pill_w - w,
+            Side::Center => pill_x + ((pill_w - w) / 2.0).round(),
+        };
+        let margin = self.config.bar.margin;
+        let (min_x, max_x) = (d.frame.origin.x + margin, d.frame.origin.x + d.frame.size.width - margin - w);
+        let x = x.clamp(min_x, max_x.max(min_x));
+        let frame = CGRect::new(CGPoint::new(x, top - h), CGSize::new(w, h));
+        let px = pill_x - x;
+
+        let look = pill.style.clone();
+        let mut row = pill;
+        row.key = Some("pill".into());
+        row.style.glass = false;
+        row.style.background = None;
+        row.style.border = None;
+        row.style.opacity = 1.0;
+        row.style.width = Some(pill_w);
+        row.style.height = Some(pill_h);
+        let (card_x, card_w, card_h) = if open { (0.0, w, h) } else { (px, pill_w, pill_h) };
+        let mut card = Node::default().key("card").size(card_w, card_h).at(card_x, 0.0).radius(look.radius).opacity(look.opacity).clip();
+        card.style.glass = look.glass;
+        card.style.border = look.border;
+        // Grown on glass, as legible as a popup
+        card.style.background = match t.popup_veil() {
+            Some(veil) if open && look.glass => Some(veil),
+            _ => look.background,
+        };
+        card.children.push(row.at(px - card_x, 0.0));
+        if open {
+            content.key = Some("peek".into());
+            content.style.width = Some(w);
+            card.children.push(content.at(0.0, pill_h));
+        }
+        let mut tree = Node::default().key("peek").size(w, h).push(card);
+        tree.normalize();
+        Some((tree, frame))
     }
 
     pub fn quit(&mut self) {
@@ -1090,11 +1538,28 @@ impl App {
             }
             // The widgets that gave way, so that the sides don't overlap
             for (form, label) in [(Form::Slim, "slim"), (Form::Compact, "compact"), (Form::Hidden, "in ⋯")] {
-                let names: Vec<&str> = self.slots.iter().filter(|s| b.forms.get(&s.name) == Some(&form)).map(|s| s.name.as_str()).collect();
+                let names: Vec<&str> = self
+                    .slots
+                    .iter()
+                    .filter(|s| b.forms.get(&s.name) == Some(&form) && !(form == Form::Hidden && s.side == Side::Center))
+                    .map(|s| s.name.as_str())
+                    .collect();
                 if !names.is_empty() {
                     out.push_str(&format!("  {:<14} {:<16} {}\n", b.display.name, label, names.join(", ")));
                 }
             }
+            // Beside the notch, where the center group went
+            if b.display.notch.is_some() && self.slots.iter().any(|s| s.side == Side::Center && b.forms.contains_key(&s.name)) {
+                let place = match b.center {
+                    Some((Side::Left, _)) => "on the left",
+                    Some(_) => "on the right",
+                    None => "hidden",
+                };
+                out.push_str(&format!("  {:<14} {:<16} {}\n", b.display.name, "center", place));
+            }
+        }
+        if let Some(p) = &self.peek {
+            out.push_str(&format!("peek: {} ({})\n", p.widget, if p.open { "grown" } else { "going back" }));
         }
         out.push_str(&format!("displays: {}\n", self.bars.iter().map(|b| format!("{} ({}x{}{})", b.display.name, b.display.frame.size.width, b.display.frame.size.height, if b.display.notch.is_some() { ", notch" } else { "" })).collect::<Vec<_>>().join(", ")));
         out
@@ -1105,6 +1570,35 @@ impl App {
 /// popups. Not names a widget of `[layout]` would have.
 const MORE_LEFT: &str = "⋯left";
 const MORE_RIGHT: &str = "⋯right";
+
+/// Where the center group goes on a screen with a notch: at the inner end of the left side, if it
+/// fits there beside that side's widgets (`used`, in `room`), else of the right one; else the same
+/// in its compact form (`compact_w`, none when it has no other); else nowhere. A better place than
+/// the last one (`prev`) needs some room to spare, so that the group doesn't go back and forth when
+/// its width or the sides' changes a little (a title, a number).
+fn place_center(used: [f64; 2], room: [f64; 2], full_w: f64, compact_w: Option<f64>, gap: f64, prev: Option<(Side, Form)>) -> Option<(Side, Form)> {
+    let mut places = vec![(Side::Left, Form::Full, full_w), (Side::Right, Form::Full, full_w)];
+    if let Some(w) = compact_w {
+        places.extend([(Side::Left, Form::Compact, w), (Side::Right, Form::Compact, w)]);
+    }
+    let last = prev.and_then(|p| places.iter().position(|&(side, form, _)| (side, form) == p)).unwrap_or(places.len());
+    places
+        .iter()
+        .enumerate()
+        .find(|&(k, &(side, _, w))| {
+            let s = (side == Side::Right) as usize;
+            let need = used[s] + if used[s] > 0.0 { gap } else { 0.0 } + w;
+            need <= room[s] - if k < last { fit::SLACK } else { 0.0 }
+        })
+        .map(|(_, &(side, form, _))| (side, form))
+}
+
+/// The room beside the center group (see `App::widen`): `spare` when it's less than at the last
+/// render (`prev`) or more by a few points, else `prev`.
+fn steady_spare(prev: f64, spare: f64) -> f64 {
+    const STEADY: f64 = 8.0;
+    if (prev..prev + STEADY).contains(&spare) { prev } else { spare.max(0.0).floor() }
+}
 
 fn more_name(side: Side) -> &'static str {
     if side == Side::Left { MORE_LEFT } else { MORE_RIGHT }
@@ -1159,4 +1653,48 @@ fn release_memory() {
 #[allow(dead_code)]
 fn _strings() -> &'static objc2_foundation::NSString {
     ns_string!("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_room_beside_the_center_takes_a_side_that_shrinks_a_little_only_later() {
+        // A side that grows takes the room at once, even by a point
+        assert_eq!(steady_spare(100.0, 98.6), 98.0);
+        // One that shrinks back a little leaves it as it was, until it's a few points
+        assert_eq!(steady_spare(98.0, 100.0), 98.0);
+        assert_eq!(steady_spare(98.0, 112.0), 112.0);
+        // None at all, never less
+        assert_eq!(steady_spare(0.0, -20.0), 0.0);
+    }
+
+    #[test]
+    fn the_center_goes_left_then_right_then_compact_then_nowhere() {
+        // 100 wide, 60 compact, with a gap of 8, beside sides of 300 and 200; from hidden, so with
+        // room to spare
+        let place = |room: [f64; 2]| place_center([300.0, 200.0], room.map(|r| r + fit::SLACK), 100.0, Some(60.0), 8.0, None);
+        assert_eq!(place([408.0, 308.0]), Some((Side::Left, Form::Full)));
+        assert_eq!(place([407.0, 308.0]), Some((Side::Right, Form::Full)));
+        assert_eq!(place([407.0, 307.0]), Some((Side::Left, Form::Compact)));
+        assert_eq!(place([367.0, 268.0]), Some((Side::Right, Form::Compact)));
+        assert_eq!(place([367.0, 267.0]), None);
+        // An empty side has no gap to leave
+        assert_eq!(place_center([0.0, 0.0], [100.0, 0.0], 100.0, None, 8.0, Some((Side::Left, Form::Full))), Some((Side::Left, Form::Full)));
+    }
+
+    #[test]
+    fn the_center_moves_back_only_with_room_to_spare() {
+        let place = |left: f64, prev| place_center([300.0, 0.0], [left, 400.0], 100.0, None, 8.0, prev);
+        // On the right since the left had no room: it stays there with just enough on the left
+        assert_eq!(place(410.0, Some((Side::Right, Form::Full))), Some((Side::Right, Form::Full)));
+        assert_eq!(place(408.0 + fit::SLACK, Some((Side::Right, Form::Full))), Some((Side::Left, Form::Full)));
+        // On the left, it stays while it fits at all
+        assert_eq!(place(408.0, Some((Side::Left, Form::Full))), Some((Side::Left, Form::Full)));
+        // Hidden: back only with room to spare too
+        let hidden = |left: f64| place_center([300.0, 300.0], [left, 400.0], 100.0, None, 8.0, None);
+        assert_eq!(hidden(410.0), None);
+        assert_eq!(hidden(408.0 + fit::SLACK), Some((Side::Left, Form::Full)));
+    }
 }

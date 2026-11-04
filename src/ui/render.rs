@@ -10,8 +10,8 @@ use objc2_core_foundation::{CFRetained, CFType, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGMutablePath;
 use objc2_foundation::{NSArray, NSNumber, ns_string};
 use objc2_quartz_core::{
-    CABasicAnimation, CAGradientLayer, CALayer, CAMediaTiming, CAMediaTimingFunction, CAShapeLayer,
-    CASpringAnimation, CATransaction, kCACornerCurveContinuous, kCAGravityCenter, kCAGravityLeft,
+    CAAnimation, CABasicAnimation, CAFrameRateRange, CAGradientLayer, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
+    CAShapeLayer, CASpringAnimation, CATransaction, kCACornerCurveContinuous, kCAGravityCenter, kCAGravityLeft,
 };
 
 use super::layout::Laid;
@@ -58,7 +58,26 @@ struct Entry {
     slider: Option<SliderLook>,
     /// The mask of a node whose corners aren't all as round, with the corners and size it has.
     corners: Option<(Retained<CAShapeLayer>, Corners, (f64, f64))>,
+    /// A text that scrolls (see `Style::marquee`).
+    marquee: Option<Marquee>,
 }
+
+/// The layers of a text that scrolls: the strip with the text and a copy of it after a gap, which
+/// moves, and the mask that fades the text where the box cuts it.
+struct Marquee {
+    strip: Retained<CALayer>,
+    fade: Retained<CAGradientLayer>,
+    size: (f64, f64),
+}
+
+/// Between the end of a scrolling text and its copy.
+const MARQUEE_GAP: f64 = 32.0;
+/// Points a second.
+const MARQUEE_SPEED: f64 = 30.0;
+/// Seconds at the start, before each turn.
+const MARQUEE_WAIT: f64 = 3.0;
+/// How wide the fade is where the box cuts the text.
+const MARQUEE_FADE: f64 = 12.0;
 
 /// Corner radii: top left, top right, bottom right, bottom left.
 type Corners = [f64; 4];
@@ -94,6 +113,8 @@ pub struct Surface {
     pub root: Retained<CALayer>,
     pub scale: f64,
     pub animate: bool,
+    /// Motion that goes on by itself (a text that scrolls); off when the Mac asks for less motion.
+    pub motion: bool,
     pub hits: Vec<Hit>,
     pub scrolls: HashMap<String, ScrollState>,
     pub hovered: Option<String>,
@@ -145,6 +166,7 @@ impl Surface {
             root,
             scale,
             animate: true,
+            motion: true,
             hits: Vec::new(),
             scrolls: HashMap::new(),
             hovered: None,
@@ -286,10 +308,21 @@ impl Surface {
             parent.addSublayer(&layer);
             self.entries.insert(
                 path.clone(),
-                Entry { layer, sig: None, parts: HashMap::new(), background: None, frame, generation: self.generation, slider: None, corners: None },
+                Entry {
+                    layer,
+                    sig: None,
+                    parts: HashMap::new(),
+                    background: None,
+                    frame,
+                    generation: self.generation,
+                    slider: None,
+                    corners: None,
+                    marquee: None,
+                },
             );
         }
         let scale = self.scale;
+        let motion = self.motion;
         let hovered = self.hovered.as_deref() == Some(path.as_str());
         let highlight = self.highlight;
         let glass_fill = self.glass_fill;
@@ -329,7 +362,21 @@ impl Surface {
         }
 
         // What the layer itself draws
+        let scrolls = s.marquee && motion && laid.text.is_some() && matches!(node.kind, Kind::Text { .. });
+        if !scrolls && entry.marquee.is_some() {
+            stop_marquee(entry, &layer);
+        }
         match &node.kind {
+            Kind::Text { text, font, color } if scrolls => {
+                let sig = format!("m|{text}|{font:?}|{color:?}|{scale}");
+                if entry.sig.as_deref() != Some(&sig) {
+                    start_marquee(entry, &layer, text, font, *color, laid.h, scale);
+                    entry.sig = Some(sig);
+                }
+                if let Some(m) = entry.marquee.as_mut() {
+                    fit_fade(m, laid.w, laid.h);
+                }
+            }
             Kind::Text { text, font, color } => {
                 let shown = laid.text.as_deref().unwrap_or(text);
                 let sig = format!("t|{shown}|{font:?}|{color:?}|{scale}");
@@ -363,6 +410,8 @@ impl Surface {
                 }
             }
             Kind::Image { path: file, width, height, tint } => {
+                // A radius rounds the picture too (a cover), not only a background
+                layer.setMasksToBounds(s.radius > 0.0);
                 let sig = format!("i|{file}|{width}|{height}|{tint:?}|{scale}");
                 if entry.sig.as_deref() != Some(&sig) {
                     match gfx::image_file(file, *width, *height, *tint, scale) {
@@ -434,6 +483,9 @@ impl Surface {
                     unsafe { layer.setContents(None) };
                     entry.sig = None;
                 }
+                if matches!(node.kind, Kind::Box) && layer.masksToBounds() != s.clip {
+                    layer.setMasksToBounds(s.clip);
+                }
             }
         }
 
@@ -481,9 +533,11 @@ impl Surface {
                 _ => None,
             };
             if let Some(kind) = kind {
-                let hover = match kind {
-                    HitKind::Click => Some(node.hover.unwrap_or(highlight)),
-                    _ => node.hover,
+                let hover = match (kind, node.hover) {
+                    // A clear one: none at all, not even the theme's
+                    (_, Some(c)) if c.3 == 0.0 => None,
+                    (HitKind::Click, hover) => Some(hover.unwrap_or(highlight)),
+                    (_, hover) => hover,
                 };
                 self.hits.push(Hit { path: path.clone(), rect: r, action: node.on_click.clone(), hover, kind });
             }
@@ -533,6 +587,12 @@ impl Surface {
             self.walk(content, &shifted, &layer, content_path, ox + laid.x, oy + laid.y, clip, container);
             return;
         }
+        // What a clipping node doesn't show can't be clicked either
+        let clip = match (s.clip, clip) {
+            (true, Some(c)) => Some(intersect(abs, c).unwrap_or(rect(0.0, 0.0, 0.0, 0.0))),
+            (true, None) => Some(abs),
+            (false, c) => c,
+        };
         for (child, child_laid) in node.children.iter().zip(&laid.children) {
             let child_path = self.child_path(&path, child);
             self.walk(child, child_laid, &layer, child_path, ox + laid.x, oy + laid.y, clip, container);
@@ -696,6 +756,96 @@ fn part(entry: &mut Entry, name: &'static str, layer: &CALayer, scale: f64) -> R
             p
         })
         .clone()
+}
+
+/// Makes the text layer `layer`, `h` high, scroll `text`: it waits at its start, then goes left
+/// until a copy of it, `MARQUEE_GAP` after it, is where it started, and again. Faded where the box
+/// cuts it: on the right, and on the left while it moves. Core Animation runs it in the window
+/// server, so RustyBar does nothing while it scrolls.
+fn start_marquee(entry: &mut Entry, layer: &CALayer, text: &str, font: &FontSpec, color: Rgba, h: f64, scale: f64) {
+    stop_marquee(entry, layer);
+    let Some(b) = gfx::text(text, font, color, scale) else { return };
+    unsafe { layer.setContents(None) };
+    let step = b.width.ceil() + MARQUEE_GAP;
+    let (strip, copy) = (CALayer::new(), CALayer::new());
+    let fade = CAGradientLayer::new();
+    transaction(false, 0.0, || {
+        for (l, x) in [(&strip, 0.0), (&copy, step)] {
+            l.setContentsScale(scale);
+            unsafe { l.setContents(Some(b.as_contents())) };
+            l.setContentsGravity(unsafe { kCAGravityLeft });
+            l.setFrame(rect(x, 0.0, b.width, h));
+        }
+        strip.addSublayer(&copy);
+        layer.addSublayer(&strip);
+        fade.setStartPoint(CGPoint::new(0.0, 0.5));
+        fade.setEndPoint(CGPoint::new(1.0, 0.5));
+        // A new layer with no superlayer, as a mask has to be
+        unsafe { layer.setMask(Some(&fade)) };
+    });
+
+    let (wait, total) = (MARQUEE_WAIT, MARQUEE_WAIT + step / MARQUEE_SPEED);
+    let times = |t: &[f64]| NSArray::from_retained_slice(&t.iter().map(|t| NSNumber::new_f64(t / total)).collect::<Vec<_>>());
+    let scroll = CAKeyframeAnimation::animationWithKeyPath(Some(ns_string!("transform.translation.x")));
+    let values = [0.0, 0.0, -step].map(NSNumber::new_f64);
+    let values: Vec<&AnyObject> = values.iter().map(|v| -> &AnyObject { v }).collect();
+    let still = CAMediaTimingFunction::functionWithControlPoints(0.0, 0.0, 1.0, 1.0);
+    let smooth = CAMediaTimingFunction::functionWithControlPoints(0.42, 0.0, 0.58, 1.0);
+    unsafe { scroll.setValues(Some(&NSArray::from_slice(&values))) };
+    scroll.setKeyTimes(Some(&times(&[0.0, wait, total])));
+    scroll.setTimingFunctions(Some(&NSArray::from_retained_slice(&[still, smooth])));
+
+    // The left edge fades in as it starts and out as it stops
+    let edges = |left: f32| {
+        let colors = [Rgba(0.0, 0.0, 0.0, left as f64), Rgba(0.0, 0.0, 0.0, 1.0), Rgba(0.0, 0.0, 0.0, 1.0), Rgba(0.0, 0.0, 0.0, 0.0)].map(|c| c.cg());
+        let objs: Vec<&AnyObject> = colors.iter().map(cg_obj).collect();
+        NSArray::from_slice(&objs)
+    };
+    let (rest, moving) = (edges(1.0), edges(0.0));
+    unsafe { fade.setColors(Some(&rest)) };
+    let ramp = 0.3;
+    let colors = CAKeyframeAnimation::animationWithKeyPath(Some(ns_string!("colors")));
+    let values: Vec<&AnyObject> = [&rest, &rest, &moving, &moving, &rest].into_iter().map(|a| -> &AnyObject { a }).collect();
+    unsafe { colors.setValues(Some(&NSArray::from_slice(&values))) };
+    colors.setKeyTimes(Some(&times(&[0.0, wait, wait + ramp, total - ramp, total])));
+
+    // Added in the same transaction, they start together. At most 60 frames a second, a pixel at
+    // a time on a Retina screen: a ProMotion one would draw the bar 120 times a second for it
+    let run = |anim: &CAAnimation, on: &CALayer| {
+        anim.setDuration(total);
+        anim.setRepeatCount(f32::INFINITY);
+        anim.setPreferredFrameRateRange(CAFrameRateRange::new(30.0, 60.0, 60.0));
+        on.addAnimation_forKey(anim, Some(ns_string!("marquee")));
+    };
+    run(&scroll, &strip);
+    run(&colors, &fade);
+    entry.marquee = Some(Marquee { strip, fade, size: (0.0, 0.0) });
+}
+
+/// Back to a text that stays still.
+fn stop_marquee(entry: &mut Entry, layer: &CALayer) {
+    if let Some(m) = entry.marquee.take() {
+        m.strip.removeFromSuperlayer();
+        unsafe { layer.setMask(None) };
+    }
+}
+
+/// The fade of a scrolling text over its box, `w`×`h`: the box can change without the text
+/// starting again.
+fn fit_fade(m: &mut Marquee, w: f64, h: f64) {
+    if m.size == (w, h) {
+        return;
+    }
+    // A new one is at once as big as its text, a box that changes animates with it
+    let first = m.size == (0.0, 0.0);
+    m.size = (w, h);
+    let edge = (MARQUEE_FADE / w.max(1.0)).min(0.3);
+    let locations = NSArray::from_retained_slice(&[0.0, edge, 1.0 - edge, 1.0].map(NSNumber::new_f64));
+    let set = || {
+        m.fade.setFrame(rect(0.0, 0.0, w, h));
+        m.fade.setLocations(Some(&locations));
+    };
+    if first { transaction(false, 0.0, set) } else { set() }
 }
 
 /// The corners of a node at `abs` (surface coordinates) with radius `own`, inside `container`.
@@ -993,5 +1143,19 @@ mod tests {
         // The mouse leaves: nothing over the selection
         surface.set_hover(None, None);
         assert_eq!(shown(&surface, &b.0), None);
+    }
+
+    #[test]
+    fn a_clear_hover_is_no_highlight() {
+        let click = Action::Widget { widget: "w".into(), name: "a".into() };
+        let node = Node::row(vec![Node::default().size(40.0, 20.0).click(click.clone()).key("plain"), Node::default().size(40.0, 20.0).click(click).hover(Rgba(0.0, 0.0, 0.0, 0.0)).key("clear")]);
+        let mut surface = Surface::new(2.0, Rgba(0.3, 0.3, 0.4, 1.0));
+        surface.animate = false;
+        let laid = super::super::layout::Layout { scale: 2.0 }.run(&node, None);
+        surface.render(&node, &laid);
+        let hover = |x: f64| surface.hit(CGPoint::new(x, 10.0), &[HitKind::Click]).map(|h| h.hover).expect("a click");
+        assert_eq!(hover(20.0), Some(Rgba(0.3, 0.3, 0.4, 1.0)));
+        // Still a click, without a highlight
+        assert_eq!(hover(60.0), None);
     }
 }

@@ -18,6 +18,7 @@ processes a minute.
 | `apple` | The Apple logo | The Apple menu: About This Mac, Force Quit, Sleep, Restart, Shut Down, Lock Screen, Log Out, and last Dotfiles Settings (see [Settings window](#settings-window)) |
 | `aerospace` | [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspaces with the icons of their windows in on-screen order, the focused one under a sliding highlight, the binding mode | — (clicks switch workspace, focus a window, leave the mode) |
 | `front_app` | The app in front | — |
+| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then); hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress and ⏮ ⏯ ⏭. In the center by default | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track |
 | `system` | CPU, GPU and memory, colored by load and memory pressure | A dashboard: CPU and GPU with the last minute as a graph; memory split into app, wired and compressed; each disk with its used, available and purgeable space (a click opens it in the Finder); the apps that use the most CPU, GPU or memory; Activity Monitor and Storage settings |
 | `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
@@ -53,13 +54,14 @@ Each widget with its popup, on made-up data (see below):
 <td align="center" valign="top"><img src="docs/screenshots/apple.png" width="244" alt="The Apple menu"><br><code>apple</code></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/screenshots/events.png" width="364" alt="Today's events, with Google Meet links"><br><code>events</code></td>
-<td align="center" valign="top"><img src="docs/screenshots/aerospace.png" width="348" alt="AeroSpace workspaces with the icons of their windows"><br><code>aerospace</code><br><br><img src="docs/screenshots/front_app.png" width="121" alt="The app in front"><br><code>front_app</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/events.png" width="364" alt="Today's events, with Google Meet links"><br><code>events</code><br><br><img src="docs/screenshots/aerospace.png" width="348" alt="AeroSpace workspaces with the icons of their windows"><br><code>aerospace</code><br><br><img src="docs/screenshots/front_app.png" width="121" alt="The app in front"><br><code>front_app</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/now_playing.png" width="343" alt="A player for Music in the colors of its cover, navy with golden controls: the cover, title, artist and album, a bar to seek, shuffle, previous, pause, next and repeat, the volume, and a switch to Spotify"><br><code>now_playing</code></td>
 </tr>
 </table>
 
 Widgets don't poll what macOS can tell them: AeroSpace events come from its socket, the battery
-from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, the sound from CoreAudio
+from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, what plays from the
+notifications of Music and Spotify, the sound from CoreAudio
 listeners, the network from the System Configuration store, the calendars from EventKit, Home
 Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
 from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
@@ -77,7 +79,9 @@ health at most once a day, when the battery popup opens, `curl` for the public I
 only way to the plan's numbers. It asks for them without sending a message, so it doesn't use the
 plan. The keychain is read and written through `security`, once for each secret. While the
 settings window is open it runs as a second RustyBar process, which ends when it closes, and a
-change to the borders starts `borders` with its new options if it's running.
+change to the borders starts `borders` with its new options if it's running. With `other_apps` of
+`now_playing`, off by default, a `perl` process runs as long as the bar (see
+[Now Playing](#now-playing)).
 
 Until a widget has its first data, the bar shows its last known state, dimmed, or a shimmering
 placeholder the very first time. A widget that fails shows an error pill; the rest of the bar
@@ -109,7 +113,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Location | `network` | The nearby Wi-Fi networks and joining them (when its popup opens); the name of the current network doesn't need it |
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
 | Accessibility | `notifications` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works |
-| Automation | `apple`, `clock` | Restart, Shut Down and Log Out; showing a day in Calendar |
+| Automation | `apple`, `clock`, `now_playing` | Restart, Shut Down and Log Out; showing a day in Calendar; for Music and Spotify, the position, the cover and the controls (when the popup opens or on a click); without it the bar still shows what plays |
 | Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup's details open), without which the rest works |
 
 To keep the macOS menu bar out of the way, turn on *Automatically hide and show the menu bar* in
@@ -179,6 +183,12 @@ to the popup of a `⋯` pill at the inner end of their side, where a click opens
 in the bar. They take their place back when there's room again. In `[displays]`,
 `compact_on_notch = true` makes every widget compact on screens with a notch, `always_compact` lists
 widgets compact on every screen, and `hide_on_notch` widgets that go in the `⋯` popup there.
+
+The `center` group is in the middle of the bar, between the two sides. On a screen with a notch
+the middle is the notch's, so the group goes beside it: at the inner end of the left side if that
+has room for it, else of the right one, else the same in its compact form; with no room on either
+side it doesn't show there. It only takes the room the sides leave, and moves back to a better
+place only with some to spare.
 `rustybar msg query` says which widgets gave way on each screen.
 
 What you'd rather keep out of a shared dotfiles repo, such as a server or your accounts, can go in
@@ -241,6 +251,59 @@ accounts = [{ dir = "~/.claude-work", color = "sky" }]
 With more than one account, each has its own pill and popup; when the bar has no room for them
 (after the volume sliders, see `slim_first`) one pill shows the busiest and its popup has them all.
 
+### Now Playing
+
+The `now_playing` widget shows what Music or Spotify plays: macOS has no public way to know what
+other apps play (MediaRemote, which Control Center uses, has answered only Apple's own apps since
+macOS 15.4), and these two tell it with a notification at every change, which needs no permission.
+The bar shows the one playing, or the one paused last; the popup has a switch when both have a
+track.
+
+A title too long for the pill takes the room the bar has left beside it: up to the notch, or up to
+the sides when it's in the middle; then the artist does. If it still doesn't fit, it scrolls while
+the track plays, as in Spotify: all of it, a pause of 3 seconds, and again. Core Animation moves it
+in the window server, so RustyBar does nothing meanwhile; with Reduce Motion (or
+`animations = false`) it's cut instead.
+
+With the mouse on the pill for a moment, the pill grows down into a card with quick controls: where
+the track is, with the time gone and left (drag to seek), and previous, play/pause and next, as the
+app takes them. Its top stays the pill as it was, and a click there opens the popup; when the mouse
+leaves, it shrinks back. Next to the notch it grows away from the pills beside it. It's a window of
+its own over the pill, which the bar hides meanwhile, so the bar doesn't change size; it ticks once
+a second only while grown. `hover = false` turns it off.
+
+The position in Music, the covers, shuffle, repeat, the volume and the controls go through Apple
+events to the app, with the Automation permission: macOS asks for it the first time the popup
+opens or a control is clicked, and RustyBar never asks at login. The events go only to an app that
+runs, so they never launch it. Spotify's cover is downloaded from the address Spotify gives (its
+image server); each cover is scaled down and kept in `~/Library/Caches/rustybar`, one per app.
+
+The popup takes its colors from the cover, as Android's media player does: the background from the
+color the cover has most of, the play button, the bars and what's on from its liveliest color with
+a fair share of it. Both keep their hue at the lightness of the theme, dark or light, so the text
+reads whatever the cover is; a black and white cover gives a gray popup. RustyBar works them out
+once per cover, in the background, from a copy 64 pixels wide (a few milliseconds);
+`cover_colors = false` keeps the theme's.
+
+With `other_apps = true` it shows any other app too, a browser, Podcasts…, through MediaRemote
+after all: Apple's processes can still ask it, and `/usr/bin/perl` is one of them. RustyBar starts
+`perl` with a small helper it carries (`src/widgets/now_playing.m`, written to the cache folder):
+one process of about 4 MB for as long as the bar runs, idle until MediaRemote says something
+changed, which ends with the bar. It shows another app with a player, the one playing (or the one
+it showed, paused), with its cover, play/pause and, if the app takes them, previous, next and seek;
+it needs no permission. With Spotify playing over a video, the video stays in the popup; but macOS
+sends the controls only to the app it calls playing, as Control Center has one, so while another
+plays the video's player says to control it in its app. It's a trick, so it's off by default: a macOS update may end it, and then
+the widget has Music and Spotify as before.
+
+```toml
+[widgets.now_playing]
+paused = true          # a paused track stays in the bar, dimmed
+hover = true           # with the mouse on it, the pill grows down with quick controls
+other_apps = false     # any app, through a perl process always running
+cover_colors = true    # the popup in the colors of the cover
+```
+
 ### Docker
 
 The `docker` widget finds the Engine API socket of Docker Desktop, OrbStack, colima, Rancher
@@ -293,7 +356,8 @@ rb.widget {
 
 - **Widget fields**: `name`, `init(self)`, `update(self)` with `every`, `bar(self, ctx)`,
   `popup(self, ctx)`, `event(self, name, args)` with `on = { "wake", … }`. `ctx` has `compact`
-  (the bar has no room for the full form), `notch`, `large`, `width` and `popup_open`.
+  (the bar has no room for the full form), `spare` (in the center group, how many points wider the
+  pill may be: the room the bar has left beside it), `notch`, `large`, `width` and `popup_open`.
 - **Components** (`rb.ui.*`): `row`, `column`, `grid` (`columns = n`), `pill`, `button`, `box`,
   `text`, `icon` (an SF Symbol), `app` (an app icon by bundle id), `image`, `slider`, `progress`,
   `toggle`, `scroll` (`max_height`), `skeleton`, `spacer`, `divider`, `section`, `detail`,
@@ -301,8 +365,8 @@ rb.widget {
   flag), `month`.
 - **Options**: `gap`, `pad`, `width`, `height`, `min_width`, `max_width`, `grow`, `radius`,
   `background`, `border`, `opacity`, `align`, `justify`, `key`, `hover`, `selected` (a sliding
-  highlight behind the child with that key), colors by palette name (`"primary"`, `"green@0.5"`)
-  or hex. A slider shows its percentage inside, unless `percent = false`, and its knob while the
+  highlight behind the child with that key), `marquee = true` (a text that doesn't fit scrolls
+  instead of being cut), colors by palette name (`"primary"`, `"green@0.5"`) or hex. A slider shows its percentage inside, unless `percent = false`, and its knob while the
   mouse is over it; with `labels = { "Low", "High" }` it stops at that many steps and shows the
   label of its step instead (`value` and `on_change` go from 0 for the first to 1 for the last).
 - **Actions**: `on_click` (and `on_change` for sliders, `on_edge` for scrolls) takes a function, a
@@ -372,6 +436,7 @@ rustybar msg reload                  reload the config
 rustybar msg query                   the widgets, their state, where they are and which gave way
 rustybar msg trigger <event> k=v…    send an event to every widget (Lua: event(self, name, args))
 rustybar msg popup <widget>          open or close a popup
+rustybar msg peek <widget>           grow a pill with its quick controls, as under the mouse, or back
 rustybar msg settings [page]         open the settings window, on a page
 rustybar settings [page]             the same, without the bar
 rustybar msg quit

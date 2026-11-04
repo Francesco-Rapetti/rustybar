@@ -24,6 +24,7 @@ pub mod front_app;
 pub mod home;
 pub mod network;
 pub mod notifications;
+pub mod now_playing;
 pub mod system;
 
 /// Something that happened outside the widget.
@@ -35,6 +36,9 @@ pub enum Event {
     Trigger { name: String, args: HashMap<String, String> },
     PopupOpened,
     PopupClosed,
+    /// The pill grew down with its peek under the mouse (see `Widget::peek`), and went back.
+    PeekOpened,
+    PeekClosed,
 }
 
 /// What a widget needs to draw itself.
@@ -49,12 +53,15 @@ pub struct Rx<'a> {
     /// go when there's no room, before any widget turns compact; so also when compact.
     pub slim: bool,
     pub popup_open: bool,
+    /// How much wider than this form the widget may be: the room the bar has left beside it, for
+    /// the widgets of the center group (0 for the others). Text cut to fit can take it.
+    pub spare: f64,
 }
 
 impl<'a> Rx<'a> {
     pub fn new(name: &'a str, theme: &'a Theme, display: &'a DisplayInfo, form: Form, popup_open: bool) -> Self {
         let compact = form == Form::Compact;
-        Rx { name, theme, display, compact, slim: compact || form == Form::Slim, popup_open }
+        Rx { name, theme, display, compact, slim: compact || form == Form::Slim, popup_open, spare: 0.0 }
     }
 
     /// An action sent back to this widget with `name`.
@@ -156,6 +163,8 @@ pub struct Cx<'a> {
     pub name: &'a str,
     pub generation: u64,
     pub popup_open: bool,
+    /// The pill is grown with its peek, on some screen.
+    pub peek_open: bool,
     pub(crate) timers: &'a mut Vec<Timer>,
     pub(crate) effects: Vec<Effect>,
 }
@@ -251,6 +260,13 @@ pub trait Widget: Any {
         None
     }
 
+    /// What shows under the pill while the mouse rests on it, if anything: the pill grows down
+    /// to show it (and sideways, to its width), its top staying as it is in the bar. Quick
+    /// controls; the popup is still a click away, on that top.
+    fn peek(&self, _rx: &Rx) -> Option<Node> {
+        None
+    }
+
     /// False until the first data arrives: the bar shows the last known state, dimmed, or a
     /// skeleton.
     fn ready(&self) -> bool {
@@ -265,7 +281,7 @@ pub trait Widget: Any {
 }
 
 /// The kinds `create` knows, in the order of the settings window's sidebar.
-pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "home", "system", "docker", "claude", "audio", "network", "battery", "events", "clock", "notifications"];
+pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "events", "clock", "notifications"];
 
 /// The name among `known` that `name` is most likely a typo of: at most two letters off.
 pub fn closest<'a>(name: &str, known: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
@@ -298,6 +314,7 @@ pub fn create(kind: &str, options: &Options) -> Option<Box<dyn Widget>> {
         "docker" => Box::new(docker::Docker::new(options)),
         "events" => Box::new(events::Events::new(options)),
         "front_app" => Box::new(front_app::FrontApp::default()),
+        "now_playing" => Box::new(now_playing::NowPlaying::new(options)),
         "home" => Box::new(home::Home::new(options)),
         "apple" => Box::new(apple::Apple::new(options)),
         "aerospace" => Box::new(aerospace::Aerospace::new(options)),

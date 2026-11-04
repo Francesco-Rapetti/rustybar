@@ -307,6 +307,7 @@ impl Host {
         let ctx = (|| -> mlua::Result<Table> {
             let ctx = lua.create_table()?;
             ctx.set("compact", rx.compact)?;
+            ctx.set("spare", rx.spare)?;
             ctx.set("popup_open", rx.popup_open)?;
             ctx.set("notch", rx.display.notch.is_some())?;
             ctx.set("large", rx.display.large)?;
@@ -462,6 +463,9 @@ impl Convert<'_> {
         }
         if let Some(v) = self.num(t, "grow") {
             s.grow = v;
+        }
+        if t.get::<Option<bool>>("marquee").ok().flatten() == Some(true) {
+            s.marquee = true;
         }
         if let Some(v) = self.num(t, "radius") {
             s.radius = v;
@@ -619,6 +623,8 @@ impl Widget for LuaWidget {
             Event::ScreensChanged => "screens".to_string(),
             Event::PopupOpened => "popup_opened".to_string(),
             Event::PopupClosed => "popup_closed".to_string(),
+            Event::PeekOpened => "peek_opened".to_string(),
+            Event::PeekClosed => "peek_closed".to_string(),
             Event::Trigger { name, .. } => name.clone(),
         };
         let wanted = host.events(&self.name);

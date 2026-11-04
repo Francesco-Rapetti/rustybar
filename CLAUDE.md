@@ -25,7 +25,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Con un suo `RUSTYBAR_CONFIG_DIR` ha socket e cache suoi, quindi gira accanto alla barra vera senza
   toccarla; `RUSTYBAR_CONFIG_DIR=<cartella> rustybar msg …` parla con lei. Per uno schermo stretto
   basta un `margin` grande; per il notch, un gruppo `center` (stesso codice: ogni lato il suo spazio).
-- `rustybar msg query` (widget, stato, posizione), `msg popup <widget>`, `msg reload`,
+- `rustybar msg query` (widget, stato, posizione, peek), `msg popup <widget>`, `msg peek <widget>`
+  (la pill cresce come sotto il mouse; resta finché il mouse non passa sulla barra), `msg reload`,
   `msg trigger <evento> k=v…`, `msg settings [pagina]`, `msg quit`; `rustybar check` controlla
   config, widget Lua e nomi del layout; `rustybar settings [pagina]` apre la finestra delle
   impostazioni senza barra.
@@ -56,7 +57,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 - `surface.rs`, `ui/` (`node.rs` albero dichiarativo, `layout.rs` flexbox, `render.rs` diff dei
   layer con animazioni implicite), `gfx.rs` (testo, SF Symbols e icone in bitmap, con cache a due
   generazioni ripulita dopo ogni render, e del tutto quando un popup si chiude, insieme alle pagine
-  libere di malloc), `theme.rs`, `config.rs` (`rustybar.local.toml` unito sopra `rustybar.toml`),
+  libere di malloc), `theme.rs`, `palette.rs` (i colori di un'immagine in Oklab e un tema fatto
+  con quelli), `config.rs` (`rustybar.local.toml` unito sopra `rustybar.toml`),
   `lua.rs` + `prelude.lua`,
   `ipc.rs`, `cache.rs` (ultimo stato su disco per l'avvio), `service.rs` (LaunchAgent), `iokit.rs`,
   `i18n.rs` (`t("italiano", "english")`), `mock.rs`, `net.rs` (WebSocket e richieste HTTP con
@@ -87,7 +89,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   alternativa, e documentato nel README (oggi: `brew` ogni ora, `system_profiler` con Bluetooth
   attivo, `curl` a ipinfo.io all'apertura dei dettagli del popup di rete, `claude` ogni 5 minuti,
   `security` una volta per segreto, la finestra delle impostazioni finché è aperta, `borders` quando
-  se ne cambia un'opzione).
+  se ne cambia un'opzione; sempre acceso solo `perl` con `other_apps` di `now_playing`, spento di
+  default).
 - AppKit e i layer solo sul main thread; il lavoro bloccante in `cx.background` o in un thread con
   `handle.alive()`.
 - Ogni widget che legge dati personali ha i dati finti: `crate::mock::load::<T>("<widget>")`, un file
@@ -227,6 +230,96 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Provato coi dati finti (it/en, scheda Memoria) e coi dati veri sulla barra di prova: uguale alla
   build di prima (14 MB all'avvio, 20 a popup aperto, 19 dopo; stessa CPU), 0 processi a riposo.
   Da provare: un disco esterno vero, il clic su un disco e su Impostazioni Archiviazione.
+- `now_playing` (al centro di default): Music e Spotify, perché MediaRemote da macOS 15.4 risponde
+  solo ai processi Apple. Stato e traccia dalle notifiche distribuite (`com.apple.Music.playerInfo`,
+  `com.spotify.client.PlaybackStateChanged`, registrate con `DeliverImmediately`: RustyBar non è
+  mai l'app attiva), il resto e i comandi con Apple event per pid (Automazione; senza prompt finché
+  non c'è un clic o il popup). Copertine ridotte con ImageIO a PNG in `~/Library/Caches/rustybar`.
+  Popup a player: copertina, avanzamento con seek, shuffle, ⏮ ⏯ ⏭, repeat, volume dell'app,
+  preferito (Music), scelta fra le due app. Col notch il gruppo `center` va accanto al notch:
+  a sinistra se c'è spazio, se no a destra, se no compatto, se no non si vede (`place_center`,
+  con `SLACK` per tornare a un posto migliore). Provato coi dati finti sulla barra di prova col
+  notch (sinistra, destra, compatto, nascosto): ~18 MB, ~0,07% CPU a riposo, 0,3% a popup aperto,
+  0 processi. Da provare dal vero con l'utente: Music e Spotify veri, il permesso Automazione, i
+  comandi; i clic sul popup (i clic sintetici con `postToPid` non arrivano alla barra).
+  `other_apps` (spento di default, scelto dall'utente): qualunque app da MediaRemote, dentro
+  `/usr/bin/perl` (firmato da Apple, quindi risponde; un nostro binario riceve niente). Un helper
+  in Objective-C (`now_playing.m`, compilato da `build.rs` con `xcrun clang`, universal, dentro il
+  binario con `include_bytes!`, scritto in `~/Library/Caches/rustybar/now_playing-<hash>.dylib`),
+  chiamato da perl come XSUB: `MRNowPlayingRequest` (`localNowPlayingItem`, `localIsPlaying`,
+  `localNowPlayingPlayerPath`, `localSupportedCommands`), copertina con
+  `MRMediaRemoteRequestNowPlayingPlaybackQueueForPlayer` (320 px, JPEG, base64 in una riga sua),
+  comandi con `MRMediaRemoteSendCommand` e `MRMediaRemoteSetElapsedTime`, eventi con
+  `MRMediaRemoteRegisterForNowPlayingNotifications` (un cambio di traccia ne manda 6, niente in
+  mezzo). `MRMediaRemoteGetNowPlayingInfo` su macOS 26 non risponde mai, neanche in perl. JSON su
+  stdout, comandi su stdin; finisce con stdin (reload, quit, anche `kill -9` della barra); se muore
+  riparte dopo 5 s, poi sempre più tardi. Terzo player `App::Other`, ignorato quando l'app è Music
+  o Spotify. Provato sulla barra di prova: dati finti (solo l'altra app; tre sorgenti), dati veri
+  (Spotify trattato per prova come altra app: copertina, testi, ⏮ ⏭ presenti), tre reload (un
+  helper solo), `kill -9` dell'helper (riparte), quit. Barra + helper ~23 MB, ~0,2% CPU, helper
+  ~4 MB e 0,02 s di CPU, 0 processi nuovi in 60 s. Dal vero con l'utente su Arc (YouTube):
+  copertina della pagina, posizione che avanza (`elapsedTimeTimestamp` è un CFAbsoluteTime, non
+  una data), solo ⏯ (Arc non dà ⏮ ⏭), pausa, play e seek mandati all'helper (la barra di prova
+  vede la pausa e si attenua). Da provare: il clic sui controlli del popup (i clic sintetici non
+  arrivano). Sulla barra vera dal 4/11/2026, con `center = ["now_playing"]` e `other_apps = true`
+  nei dotfiles: col notch va a sinistra, compatto. A riposo 32 MB in 2 processi (helper ~4 MB),
+  0,23% CPU, 0 processi nuovi. Nei primi minuti dopo l'installazione 2,55% a picchi (0,5–4%), con
+  l'utente che passava ad Arc per il video; non si ripete: con Spotify, dopo un riavvio, e con
+  Arc e Spotify insieme (barra vera e due barre di prova, solo `now_playing` e solo `system`)
+  0,1–0,3%, helper 0. Quasi certamente le pill col vetro che cambiano misura al cambio di
+  finestra (~35 ms l'una, vedi sopra), non la riproduzione. Con due app che suonano MediaRemote
+  ne dà una sola (lì Spotify): per questo l'helper ora riporta tutti i client
+  (`MRMediaRemoteGetNowPlayingClients`, per ognuno `MRPlayerPath` con `MROrigin.localOrigin`,
+  `GetPlaybackStateForPlayer`, `GetSupportedCommandsForPlayer` e la coda), in una riga
+  `{"players": […]}`; il widget tiene l'app che suona, se no quella che mostrava. I comandi però
+  macOS li manda solo all'app che chiama in riproduzione, anche con un `MRPlayerPath` completo
+  (`GetNowPlayingPlayerForClient`) e `SendCommandToPlayer`: provato, una pausa per Arc fermava
+  Spotify. Quindi ogni player ha `active`, l'helper scarta i comandi per un'app non attiva e il
+  popup al posto dei tasti dice di comandarla dalla sua app ("macOS manda i comandi a Spotify").
+  Provato dal vero con Arc e Spotify insieme (scheda di Arc che resta, pausa per Arc scartata).
+  Titolo lungo: il gruppo `center` riceve lo spazio che gli resta accanto (`Rx::spare`, in Lua
+  `ctx.spare`; fino al notch, o fino ai lati quando è in mezzo) e `now_playing` lo dà al titolo,
+  poi all'artista. `App::widen` ridisegna il gruppo con lo spazio, che segue subito un lato che
+  cresce e uno che cala solo oltre 8 pt (`steady_spare`: le cifre di `system`). Se il titolo
+  ancora non ci sta e suona, scorre (`Style::marquee`, in Lua `marquee = true`): striscia col
+  testo e una copia dopo 32 pt, `CAKeyframeAnimation` su `transform.translation.x` (3 s fermo, poi
+  30 pt/s), maschera a gradiente che sfuma a destra e, mentre scorre, a sinistra; tutto nel window
+  server, al massimo 60 fps (`preferredFrameRateRange`); niente con Riduci movimento. Il riquadro
+  che cambia non lo fa ripartire. Provato coi dati finti sulla barra di prova col notch: la pill
+  arriva al notch, scorre, in pausa si ferma coi puntini, da ferma a scorrere e ritorno coi
+  reload: ~18 MB, 0,05% CPU, 0 processi. Il costo nel WindowServer non si misura qui (oscilla
+  33–43% per altre app); a coppie sembrava ~3 punti mentre scorre, a 60 come senza limite.
+  Popup nei colori della copertina, come il player di Android Auto (`palette.rs`, `cover_colors`,
+  di default acceso): copia a 64 px con ImageIO in `cx.background` una volta per copertina (pochi
+  ms), pixel in Oklab, median cut poi k-means, colori vicini uniti; sfondo dal colore più esteso,
+  accento col punteggio di Material (quota della tinta + croma) più la distanza di tinta dallo
+  sfondo, e su uno sfondo colorato prima una tinta sua col 5%. Lo schema tiene la tinta e mette la
+  luminosità del tema (scuro o chiaro, `Theme::dark`); un test controlla i contrasti. Hover
+  espliciti (`th.highlight`), perché quello di default del popup è del tema globale. Sfondo del
+  popup a 0,85 sul vetro. Provato coi dati finti sulla barra di prova: Mocha col vetro (Neon Harbor
+  blu notte e oro), macOS scuro (Glass Orchard verde), Latte (oro che diventa ocra, per il
+  contrasto del bianco sul play). Popup aperto 40 s: ~20 MB, 0,2% CPU, 0 processi (senza i colori
+  19 MB, 0,25%). Da provare dal vero: copertine di Music, Spotify e di un'altra app.
+- Peek (`Widget::peek`, per ora solo `now_playing`, `hover = true` di default): col mouse fermo
+  0,1 s su una pill (0,25 s era lento per l'utente), la pill cresce in giù con quello che dà `peek`
+  (qui avanzamento con i tempi e ⏮ ⏯ ⏭ come l'app li prende, o "Si comanda da X"); un clic sulla
+  cima apre il popup, uscendo torna pill dopo 0,15 s. Niente bagliore dell'hover sulla pill né
+  sulla cima cresciuta (l'ha chiesto l'utente): un `hover` trasparente vuol dire nessuno, nemmeno
+  quello del tema; con `hover = false` torna quello solito. È una finestra sua (`SurfaceId::Peek`, livello dei popup) grande già da
+  cresciuta: dentro una card con l'aspetto della pill (vetro, velo, bordo; velo del popup da
+  cresciuta) che si allarga coi layer e ritaglia (`Style::clip`), il contenuto della pill fermo al
+  suo posto (preso dal nodo che la barra ha disegnato, `Bar::tree`/`peek_pill`, anche allargato da
+  `spare`). La pill nella barra intanto ha opacità 0, senza animazione (`App::instant`); al
+  ritorno riappare sotto il peek e il peek va 0,04 s dopo (due vetri sovrapposti hanno il bordo più
+  chiaro), poi `trim_cache` e `release_memory` come per i popup. Cresce dal lato del popup; il
+  gruppo centrale accanto al notch verso lo spazio che ha trovato, non sulle pill del suo lato.
+  Eventi `PeekOpened`/`PeekClosed` (Lua `peek_opened`/`peek_closed`), `Cx::peek_open`: il tick di
+  1 s solo da cresciuta. Provato coi dati finti sulla barra di prova (Mocha col vetro, col notch,
+  forma piena e compatta) con `msg peek`, a fotogrammi: cresce come un cassetto, torna identica alla
+  pill. A riposo ~15–16 MB, ~0,07% CPU, 0 processi (anche dopo 20 crescite); cresciuta ~18 MB,
+  0,2%. Una crescita e un ritorno ~160 ms di CPU (il popup ~64): il vetro misurato due volte da
+  SwiftUI. Da provare con l'utente: il passaggio del mouse vero (crescita, uscita, clic sui tasti e
+  sulla cima, trascinare l'avanzamento).
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

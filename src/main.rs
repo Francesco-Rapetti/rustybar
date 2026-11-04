@@ -12,6 +12,7 @@ mod ipc;
 mod lua;
 mod mock;
 mod net;
+mod palette;
 mod runtime;
 mod secret;
 mod service;
@@ -60,7 +61,7 @@ define_class!(
 
 const USAGE: &str = "usage:
   rustybar                 start the bar
-  rustybar msg <command>   talk to the running bar: reload, query, trigger <event> [k=v…], popup <widget>, settings [page], quit
+  rustybar msg <command>   talk to the running bar: reload, query, trigger <event> [k=v…], popup <widget>, peek <widget>, settings [page], quit
   rustybar check           check the config and the Lua widgets
   rustybar settings [page] the settings window of the dotfiles (as the Apple menu opens it)
   rustybar service install start RustyBar at login, and again if it crashes (a LaunchAgent)

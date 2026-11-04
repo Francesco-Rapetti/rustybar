@@ -488,6 +488,11 @@ impl Theme {
         self.glass_dark.map(|_| self.base.faded(0.5))
     }
 
+    /// Light text on a dark background.
+    pub fn dark(&self) -> bool {
+        luminance(self.text) > luminance(self.base)
+    }
+
     /// The background of a dashboard tile: a lit one takes a little of its color.
     pub fn tile(&self, color: Rgba, lit: bool) -> Rgba {
         if lit { self.surface.faded(0.55).mix(color.faded(0.55), 0.22) } else { self.surface.faded(0.55) }

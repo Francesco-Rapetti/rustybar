@@ -26,6 +26,7 @@ fn info(kind: &str) -> (&'static str, &'static str, &'static str) {
         "apple" => (t("Menu Apple", "Apple menu"), "apple.logo", t("Il logo Apple, con i comandi del menu Apple e questa finestra.", "The Apple logo, with the commands of the Apple menu and this window.")),
         "aerospace" => ("AeroSpace", "square.grid.2x2.fill", t("I workspace di AeroSpace con le icone delle loro finestre.", "AeroSpace's workspaces with the icons of their windows.")),
         "front_app" => (t("App attiva", "Front app"), "macwindow", t("Il nome dell'app in primo piano.", "The name of the app in front.")),
+        "now_playing" => (t("In riproduzione", "Now Playing"), "play.circle.fill", t("Cosa suonano Music e Spotify (o qualunque app, con l'opzione), con un player nel popup.", "What Music and Spotify are playing (or any app, with the option), with a player in the popup.")),
         "system" => (t("Sistema", "System"), "cpu", t("CPU, GPU e memoria, colorate dal carico; nel popup anche i dischi.", "CPU, GPU and memory, colored by load; the disks too in the popup.")),
         "battery" => (t("Batteria", "Battery"), "battery.75percent", t("La carica, con un'icona per il suo stato.", "The charge, with an icon for its state.")),
         "clock" => (t("Orologio", "Clock"), "clock.fill", t("Data e ora, con un calendario nel popup.", "Date and time, with a calendar in the popup.")),
@@ -338,7 +339,10 @@ pub fn layout(f: &mut Form, lua: &[String]) {
         let add = f.pull_down(title, items);
         f.line(&[&add], None);
         if i == 1 {
-            f.footer(t("Sugli schermi col notch il centro resta libero.", "On screens with a notch the center stays free."));
+            f.footer(t(
+                "Sugli schermi col notch questi widget vanno accanto al notch: a sinistra se c'è spazio, se no a destra, se no non si vedono.",
+                "On screens with a notch these widgets go beside it: on the left if there's room, else on the right, else they don't show.",
+            ));
         }
     }
     f.footer(t(
@@ -507,6 +511,35 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
         "claude" => {
             claude(f, &spot);
             &["color", "warning", "critical", "accounts"]
+        }
+        "now_playing" => {
+            f.group(Some(t("Opzioni", "Options")));
+            f.toggle_at(t("Anche in pausa", "Also when paused"), Some(t("Nella barra resta, attenuato, la traccia in pausa", "The paused track stays in the bar, dimmed")), &spot.k("paused"), true);
+            f.toggle_at(
+                t("Controlli sotto il mouse", "Controls under the mouse"),
+                Some(t(
+                    "Col mouse sopra, la pillola si allunga in giù con l'avanzamento e ⏮ ⏯ ⏭",
+                    "With the mouse on it, the pill grows down with the progress and ⏮ ⏯ ⏭",
+                )),
+                &spot.k("hover"),
+                true,
+            );
+            f.toggle_at(
+                t("Anche le altre app", "Other apps too"),
+                Some(t(
+                    "Browser, Podcast e le altre, con un processo perl sempre acceso: un trucco che un aggiornamento di macOS può chiudere",
+                    "Browsers, Podcasts and the others, with a perl process always running: a trick that a macOS update may end",
+                )),
+                &spot.k("other_apps"),
+                false,
+            );
+            f.toggle_at(
+                t("Colori della copertina", "Cover colors"),
+                Some(t("Il popup prende i colori dalla copertina di quello che suona", "The popup takes its colors from the cover of what plays")),
+                &spot.k("cover_colors"),
+                true,
+            );
+            &["paused", "hover", "other_apps", "cover_colors"]
         }
         "front_app" | "battery" | "network" | "docker" => {
             f.group(Some(t("Opzioni", "Options")));
