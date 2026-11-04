@@ -26,7 +26,7 @@ fn info(kind: &str) -> (&'static str, &'static str, &'static str) {
         "apple" => (t("Menu Apple", "Apple menu"), "apple.logo", t("Il logo Apple, con i comandi del menu Apple e questa finestra.", "The Apple logo, with the commands of the Apple menu and this window.")),
         "aerospace" => ("AeroSpace", "square.grid.2x2.fill", t("I workspace di AeroSpace con le icone delle loro finestre.", "AeroSpace's workspaces with the icons of their windows.")),
         "front_app" => (t("App attiva", "Front app"), "macwindow", t("Il nome dell'app in primo piano.", "The name of the app in front.")),
-        "system" => (t("Sistema", "System"), "cpu", t("CPU, GPU e memoria, colorate dal carico.", "CPU, GPU and memory, colored by load.")),
+        "system" => (t("Sistema", "System"), "cpu", t("CPU, GPU e memoria, colorate dal carico; nel popup anche i dischi.", "CPU, GPU and memory, colored by load; the disks too in the popup.")),
         "battery" => (t("Batteria", "Battery"), "battery.75percent", t("La carica, con un'icona per il suo stato.", "The charge, with an icon for its state.")),
         "clock" => (t("Orologio", "Clock"), "clock.fill", t("Data e ora, con un calendario nel popup.", "Date and time, with a calendar in the popup.")),
         "audio" => ("Audio", "speaker.wave.2.fill", t("L'uscita e l'ingresso in uso, con il volume.", "The output and input in use, with their volume.")),
@@ -468,7 +468,9 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
             f.group(Some(t("Opzioni", "Options")));
             f.number_at(t("Gialla da", "Yellow from"), Some(t("CPU e GPU, in percentuale", "CPU and GPU, in percent")), &spot.k("warning"), 75.0, Num::new(0.0, 100.0, 1.0, 0));
             f.number_at(t("Rossa da", "Red from"), None, &spot.k("critical"), 90.0, Num::new(0.0, 100.0, 1.0, 0));
-            &["warning", "critical"]
+            f.number_at(t("Disco giallo da", "Disk yellow from"), Some(t("Spazio usato, in percentuale", "Space used, in percent")), &spot.k("storage_warning"), 90.0, Num::new(0.0, 100.0, 1.0, 0));
+            f.number_at(t("Disco rosso da", "Disk red from"), None, &spot.k("storage_critical"), 95.0, Num::new(0.0, 100.0, 1.0, 0));
+            &["warning", "critical", "storage_warning", "storage_critical"]
         }
         "events" => {
             f.group(Some(t("Opzioni", "Options")));

@@ -18,7 +18,7 @@ processes a minute.
 | `apple` | The Apple logo | The Apple menu: About This Mac, Force Quit, Sleep, Restart, Shut Down, Lock Screen, Log Out, and last Dotfiles Settings (see [Settings window](#settings-window)) |
 | `aerospace` | [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspaces with the icons of their windows in on-screen order, the focused one under a sliding highlight, the binding mode | — (clicks switch workspace, focus a window, leave the mode) |
 | `front_app` | The app in front | — |
-| `system` | CPU, GPU and memory, colored by load and memory pressure | Usage bars, details and the top apps for each, Activity Monitor |
+| `system` | CPU, GPU and memory, colored by load and memory pressure | A dashboard: CPU and GPU with the last minute as a graph; memory split into app, wired and compressed; each disk with its used, available and purgeable space (a click opens it in the Finder); the apps that use the most CPU, GPU or memory; Activity Monitor and Storage settings |
 | `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
 | `audio` | The output and the input in use, with the battery of Bluetooth devices and a slider with the volume of each (`sliders = false` hides them), the first thing to go when the bar has no room; the Mac's own speakers and microphone, or both halves of a headset, show as one | A dashboard: the output and input volume, each with its level and a slider; tiles for the devices to switch to and for the paired Bluetooth headphones and speakers to connect or disconnect |
@@ -34,7 +34,7 @@ Each widget with its popup, on made-up data (see below):
 <table>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/home.png" width="372" alt="A dashboard of Home Assistant tiles: lights, a blind, the air conditioner, a 3D printer, a vacuum and scenes"><br><code>home</code></td>
-<td align="center" valign="top"><img src="docs/screenshots/system.png" width="342" alt="CPU, GPU and memory with the apps that use them most"><br><code>system</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/system.png" width="376" alt="CPU and GPU with a graph of the last minute, memory, the disks and the apps that use the most CPU"><br><code>system</code></td>
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/claude.png" width="440" alt="Three Claude accounts, each with its session and weekly usage and when they reset"><br><code>claude</code></td>
@@ -65,8 +65,8 @@ Assistant from its WebSocket API, Docker from the `/events` stream of its Engine
 from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
 memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility), and only while
 their popups are open the network's traffic and Wi-Fi link every second and a ping to the router
-every 5, and the battery's temperature and power every 2 seconds. The bar is redrawn only when a
-value changes.
+every 5, the battery's temperature and power every 2 seconds, and the disks every 10. The bar is
+redrawn only when a value changes.
 
 A few things still run a process: `brew outdated` every hour and on wake (only with `brewfile` or
 `brew = true`), `system_profiler` for AirPods batteries and paired devices when the audio popup

@@ -71,6 +71,8 @@ large_width = 3840        # from this width a screen is "large"
 # [widgets.system]
 # warning = 75            # CPU and GPU turn yellow from here
 # critical = 90           # and red from here
+# storage_warning = 90    # a disk in the popup turns yellow from this percent used
+# storage_critical = 95   # and red from here
 #
 # [widgets.events]
 # soon = 30               # minutes before an event when its time turns yellow

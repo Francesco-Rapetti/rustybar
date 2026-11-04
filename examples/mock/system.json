@@ -4,6 +4,7 @@
   "ram": 64,
   "pressure": "normal",
   "total": 32,
+  "cores": 8,
   "gpu_model": "Apple M3",
   "gpu_cores": 10,
   "user": 0.11,
@@ -11,6 +12,12 @@
   "idle": 0.82,
   "memory": {"used": 20.5, "app": 12.1, "wired": 4.6, "compressed": 3.8},
   "swap": 0,
+  "cpu_history": [9, 11, 8, 14, 22, 35, 41, 28, 19, 15, 12, 10, 13, 9, 8, 24, 52, 78, 64, 33, 21, 17, 14, 12, 16, 20, 15, 13, 17, 18],
+  "gpu_history": [4, 5, 4, 6, 9, 14, 18, 12, 8, 6, 5, 5, 6, 4, 4, 10, 26, 38, 30, 16, 11, 9, 8, 7, 9, 12, 10, 9, 11, 12],
+  "storage": [
+    {"name": "Macintosh HD", "path": "/", "total": 494.4, "available": 131.5, "purgeable": 5.9, "internal": true},
+    {"name": "Backup", "path": "/Volumes/Backup", "total": 2000, "available": 812, "purgeable": 0, "internal": false}
+  ],
   "cpu_top": [
     ["Safari", "com.apple.Safari", 6.2],
     ["Music", "com.apple.Music", 3.1],

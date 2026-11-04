@@ -10,8 +10,8 @@ Il [README](README.md) è la documentazione per chi la usa; qui ci sono le regol
 Rust viene da Homebrew ed è keg-only: ogni comando `cargo`, anche dentro `scripts/bundle.sh`, vuole
 prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 
-- `cargo build --release`, `cargo test --release`, `cargo clippy --release`. Clippy ha tre avvisi
-  vecchi (`ui/layout.rs`, `widgets/aerospace.rs`, `widgets/system.rs`): niente di nuovo oltre a quelli.
+- `cargo build --release`, `cargo test --release`, `cargo clippy --release`. Clippy ha due avvisi
+  vecchi (`ui/layout.rs`, `widgets/aerospace.rs`): niente di nuovo oltre a quelli.
 - `scripts/bundle.sh` → `target/RustyBar.app`, firmata con il certificato "RustyBar Local" del
   portachiavi (se manca, ad hoc).
 - La barra vera è `/Applications/RustyBar.app`, avviata dal LaunchAgent
@@ -198,6 +198,16 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   ingresso). La griglia ora misura ogni riga alla sua altezza. Provata coi dati finti (quattro
   stati, it/en) e coi dati veri sulla barra di prova (lettura sola): ~15 MB, ~0,1% CPU a popup
   aperto, 0 processi. Da provare dal vero con l'utente: trascinare lo slider (cambia il limite).
+- `system` a plancia: CPU e GPU affiancate con l'ultimo minuto a barre (30 letture tenute anche a
+  popup chiuso, così il grafico è pieno all'apertura), memoria con la barra divisa in app, wired e
+  compressa, un riquadro per disco (avvio prima, poi i volumi locali scrivibili visibili, niente
+  immagini disco né condivisioni di rete: `getfsstat` con `MNT_NOWAIT`, poi `NSURL` per usato,
+  disponibile ed eliminabile come il Finder, ~8 ms; all'avvio, all'apertura e ogni 10 s a popup
+  aperto; clic → Finder; `storage_warning`/`storage_critical` 90/95), un solo elenco di app con
+  il selettore CPU/GPU/Memoria (`selected`), Monitoraggio Attività e Impostazioni Archiviazione.
+  Provato coi dati finti (it/en, scheda Memoria) e coi dati veri sulla barra di prova: uguale alla
+  build di prima (14 MB all'avvio, 20 a popup aperto, 19 dopo; stessa CPU), 0 processi a riposo.
+  Da provare: un disco esterno vero, il clic su un disco e su Impostazioni Archiviazione.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a
