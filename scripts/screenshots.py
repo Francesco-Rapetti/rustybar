@@ -39,10 +39,14 @@ def windows(pid=None):
     out = subprocess.run([LISTER, pid or PID], capture_output=True, text=True).stdout
     return [tuple(int(x) for x in l.split()) for l in out.splitlines()]
 
-def grab(wid):
+def grab(win):
+    """A window, at one pixel a point: on a Retina display the capture has two, and the canvas
+    and the other screenshots are in points."""
+    wid, _, _, w, h = win
     path = os.path.join(TMP, f"{wid}.png")
     subprocess.run(["screencapture", "-x", "-o", f"-l{wid}", path], check=True)
-    return Image.open(path).convert("RGBA")
+    img = Image.open(path).convert("RGBA")
+    return img if img.size == (w, h) else img.resize((w, h), Image.LANCZOS)
 
 def query():
     """The widgets on the main display: name → x, y, width, height."""
@@ -70,7 +74,7 @@ x0, _, w0, _ = next(iter(pos.values()))
 # The bar of the main display: the window that spans it, with the first widget in it
 bar_win = next(w for w in windows() if w[1] <= x0 and x0 + w0 <= w[1] + w[3] and w[4] <= 60)
 bars = {w[0] for w in windows() if w[4] == bar_win[4]}
-bar = grab(bar_win[0])
+bar = grab(bar_win)
 _, bx, by, bw, _ = bar_win
 
 def save(name, left, top, right, bottom, pills, popup=None):
@@ -93,8 +97,8 @@ for name in [n for n in sys.argv[2:] if n != "settings"] or ([] if sys.argv[2:] 
     popup = None
     left, top, right, bottom = x, y, x + w, y + h
     if extra:
-        wid, px, py, pw, ph = extra[0]
-        popup = (grab(wid), px, py)
+        _, px, py, pw, ph = extra[0]
+        popup = (grab(extra[0]), px, py)
         left, right, bottom = min(left, px), max(right, px + pw), max(bottom, py + ph)
         subprocess.run([RB, "msg", "popup", name], capture_output=True)
         time.sleep(1.0)
@@ -114,8 +118,7 @@ if not sys.argv[2:] or "settings" in sys.argv[2:]:
     subprocess.run([RB, "msg", "settings", "widget:home"], capture_output=True)
     time.sleep(2.5)
     spid = subprocess.run(["pgrep", "-f", f"^{EXE} settings"], capture_output=True, text=True).stdout.split()[0]
-    wid = max(windows(spid), key=lambda w: w[3] * w[4])[0]
-    img = grab(wid)
+    img = grab(max(windows(spid), key=lambda w: w[3] * w[4]))
     canvas = background(img.width + 2 * MARGIN, img.height + 2 * MARGIN)
     canvas.alpha_composite(img, (MARGIN, MARGIN))
     canvas.convert("RGB").save(os.path.join(OUT, "settings.png"), optimize=True)

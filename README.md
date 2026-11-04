@@ -26,7 +26,7 @@ processes a minute.
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | Today's events; a click joins the Google Meet call or shows the event in Calendar |
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
-| `claude` | How much of the Claude plan each account has used: the 5-hour session and the week | For each account the plan, both limits with a bar and when they reset, log in and log out |
+| `claude` | How much of the Claude plan each account has used: the 5-hour session and the week | For each account its plan and two tiles, the session and the week, with a bar, when they reset and how long until then; how old the numbers are, ↻ to read them again, log in and log out; the usage page on claude.ai |
 | `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | A dashboard: the engine and what the containers use; every container, by Compose project, with its state, CPU, memory, image, ports (links to localhost) and uptime, and buttons to start, stop, restart and remove it (a project's at once too); disk usage of images, containers, volumes and build cache, each cleaned up with a click, unused networks and a system prune; Docker Desktop |
 
 Each widget with its popup, on made-up data (see below):
@@ -73,7 +73,7 @@ A few things still run a process: `brew outdated` every hour and on wake (only w
 opens and every 2 minutes while a Bluetooth device is in use, `system_profiler` for the battery
 health at most once a day, when the battery popup opens, `curl` for the public IP and its provider
 (from ipinfo.io) when the network popup opens, and Claude Code (`claude auth status` and
-`claude -p`, for each account) every 5 minutes, on wake and when the Claude popup opens: it's the
+`claude -p`, for each account) every 5 minutes, on wake, when the Claude popup opens and with ↻: it's the
 only way to the plan's numbers. It asks for them without sending a message, so it doesn't use the
 plan. The keychain is read and written through `security`, once for each secret. While the
 settings window is open it runs as a second RustyBar process, which ends when it closes, and a
