@@ -40,7 +40,7 @@ animations = true             # they also stop with Reduce Motion in System Sett
 
 [layout]
 left = ["apple", "aerospace", "front_app"]
-center = []
+center = ["now_playing"]  # beside the notch where there's one: on the left, else on the right
 right = ["audio", "network", "events", "system", "battery", "clock", "notifications"]
 
 # When the left and right sides don't fit on a screen (a small one, or beside the notch), the
@@ -61,6 +61,12 @@ large_width = 3840        # from this width a screen is "large"
 #
 # [widgets.apple]
 # icon = "apple.logo"     # any SF Symbol
+#
+# [widgets.now_playing]
+# paused = true           # a paused track stays in the bar, dimmed
+# hover = true            # with the mouse on it, the pill grows down with the progress and ⏮ ⏯ ⏭
+# other_apps = false     # any app (browsers, Podcasts…), through a perl process always running
+# cover_colors = true     # the popup in the colors of the cover
 #
 # [widgets.audio]
 # sliders = true          # a slider with the volume of the output and of the input in the bar

@@ -19,7 +19,8 @@ pub struct Node {
     pub children: Vec<Node>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub on_click: Option<Action>,
-    /// The background while the mouse is over the node; nodes with `on_click` get the theme's.
+    /// The background while the mouse is over the node; nodes with `on_click` get the theme's. A
+    /// clear one (alpha 0): none, the background stays as it is.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hover: Option<Rgba>,
     /// The key of the child that gets a sliding highlight behind it (the focused workspace…).
@@ -146,6 +147,12 @@ pub struct Style {
     pub at: Option<(f64, f64)>,
     /// Liquid Glass behind it, with its radius (a pill on the glass theme).
     pub glass: bool,
+    /// Text that doesn't fit scrolls instead of being cut: all of it, then a pause, and again.
+    /// Not when the Mac asks for less motion.
+    pub marquee: bool,
+    /// Its children show only inside it, rounded as it is: what's under a pill that grows down
+    /// shows as it grows.
+    pub clip: bool,
 }
 
 impl Default for Style {
@@ -168,6 +175,8 @@ impl Default for Style {
             opacity: 1.0,
             at: None,
             glass: false,
+            marquee: false,
+            clip: false,
         }
     }
 }
@@ -294,6 +303,11 @@ impl Node {
         self
     }
 
+    pub fn marquee(mut self, on: bool) -> Node {
+        self.style.marquee = on;
+        self
+    }
+
     pub fn columns(mut self, n: usize) -> Node {
         self.style.columns = Some(n);
         self
@@ -321,6 +335,11 @@ impl Node {
 
     pub fn glass(mut self) -> Node {
         self.style.glass = true;
+        self
+    }
+
+    pub fn clip(mut self) -> Node {
+        self.style.clip = true;
         self
     }
 

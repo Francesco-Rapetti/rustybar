@@ -27,7 +27,7 @@
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>
-  <string>RustyBar runs the commands of the Apple menu (restart, shut down, log out) and opens days in Calendar.</string>
+  <string>RustyBar runs the commands of the Apple menu (restart, shut down, log out), opens days in Calendar and controls what Music and Spotify are playing.</string>
   <key>NSCalendarsFullAccessUsageDescription</key>
   <string>RustyBar shows today's events in the bar.</string>
   <key>NSCalendarsUsageDescription</key>

@@ -1,0 +1,47 @@
+{
+  "players": [
+    {
+      "app": "music",
+      "state": "playing",
+      "title": "Neon Harbor",
+      "artist": "The Paper Lanterns",
+      "album": "Night Ferries",
+      "duration": 214,
+      "position": 83,
+      "shuffle": false,
+      "repeat": "all",
+      "volume": 70,
+      "favorited": true,
+      "artwork": "now_playing/harbor.jpg"
+    },
+    {
+      "app": "spotify",
+      "state": "paused",
+      "title": "Glass Orchard",
+      "artist": "Mira Solen",
+      "album": "Small Weather",
+      "duration": 187,
+      "position": 42,
+      "shuffle": true,
+      "repeat": "off",
+      "volume": 55,
+      "artwork": "now_playing/orchard.png"
+    },
+    {
+      "app": "other",
+      "bundle": "com.apple.Safari",
+      "name": "Safari",
+      "state": "paused",
+      "title": "Tide Tables, Explained",
+      "artist": "Harbor Notes",
+      "album": "",
+      "duration": 754,
+      "position": 312,
+      "controls": {
+        "next": false,
+        "previous": false,
+        "seek": true
+      }
+    }
+  ]
+}

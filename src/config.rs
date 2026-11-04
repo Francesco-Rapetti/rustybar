@@ -111,7 +111,7 @@ impl Default for LayoutConfig {
     fn default() -> Self {
         LayoutConfig {
             left: vec!["apple".into(), "aerospace".into(), "front_app".into()],
-            center: vec![],
+            center: vec!["now_playing".into()],
             right: vec!["system".into(), "battery".into(), "clock".into()],
         }
     }

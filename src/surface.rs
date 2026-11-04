@@ -29,6 +29,8 @@ use crate::ui::{Glass, ease};
 pub enum SurfaceId {
     Bar(u32),
     Popup,
+    /// A pill grown down under the mouse (see `Widget::peek`).
+    Peek,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -459,6 +461,13 @@ impl Window {
 
     pub fn show(&self) {
         self.panel.orderFrontRegardless();
+    }
+
+    /// Lets the mouse through to what's below, or takes it again.
+    pub fn set_ignores_mouse(&self, ignores: bool) {
+        if self.panel.ignoresMouseEvents() != ignores {
+            self.panel.setIgnoresMouseEvents(ignores);
+        }
     }
 
 
