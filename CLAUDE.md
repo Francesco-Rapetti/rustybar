@@ -85,9 +85,9 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   NSWorkspace…) e niente processi lanciati a regime: si legge in-process. Ciò che non ha eventi va
   su un timer in-process e ridisegna solo se il valore cambia. Un processo esterno solo dove non c'è
   alternativa, e documentato nel README (oggi: `brew` ogni ora, `system_profiler` con Bluetooth
-  attivo, `curl` a ipinfo.io all'apertura del popup di rete, `claude` ogni 5 minuti, `security`
-  una volta per segreto, la finestra delle impostazioni finché è aperta, `borders` quando se ne
-  cambia un'opzione).
+  attivo, `curl` a ipinfo.io all'apertura dei dettagli del popup di rete, `claude` ogni 5 minuti,
+  `security` una volta per segreto, la finestra delle impostazioni finché è aperta, `borders` quando
+  se ne cambia un'opzione).
 - AppKit e i layer solo sul main thread; il lavoro bloccante in `cx.background` o in un thread con
   `handle.alive()`.
 - Ogni widget che legge dati personali ha i dati finti: `crate::mock::load::<T>("<widget>")`, un file
@@ -179,16 +179,19 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 - `network` a plancia: in cima Wi-Fi (↻ e interruttore) con le reti vicine a riquadri e i servizi
   cablati con l'interruttore, sotto le metriche: la connessione col segnale (o la velocità di
   Ethernet), download e upload con gli ultimi 30 s a barre (contatori a 64 bit di `NET_RT_IFLIST2`),
-  il link Wi-Fi (velocità e generazione, canale con banda e larghezza, SNR, sicurezza: CoreWLAN,
-  senza la posizione), gli indirizzi che un clic copia (IP locale col prefisso, router col ping ICMP
-  senza privilegi, IP pubblico con la latenza e il provider da ipinfo.io, DNS, MAC privato o no,
-  IPv6), la VPN. Contatori, link e ping (ogni 5 s) solo a popup aperto, ogni secondo. Provata coi
+  la VPN, poi i Dettagli, chiusi finché non si cliccano e poi aperti fino al reload
+  (`Rx::disclosure`, in Lua `rb.ui.disclosure`): il link Wi-Fi (velocità e generazione, canale con
+  banda e larghezza, SNR, sicurezza: CoreWLAN, senza la posizione), gli indirizzi che un clic copia
+  (IP locale col prefisso, router col ping ICMP senza privilegi, IP pubblico con la latenza e il
+  provider da ipinfo.io, DNS, MAC privato o no, IPv6). Contatori e link solo a popup aperto, ogni
+  secondo; ping (ogni 5 s) e `curl` (una volta per popup) solo coi Dettagli aperti. Dettagli e
+  `rb.ui.disclosure` provati coi dati finti sulla barra di prova (clic, riapertura). Provata coi
   dati finti (it/en) e dal vero, sulla barra di prova e su quella vera, su Ethernet; il ping al
   router lì non risponde (`EHOSTUNREACH` sulla barra di prova): quasi certamente il permesso Rete
   locale, che RustyBar non ha (`home` va in HTTPS, non lo prova). Il ping è provato su loopback nei
   test. Con tutti i widget: a riposo ~20 MB, ~0,1% CPU; popup aperto ~24 MB, ~0,6%
-  CPU; 0 processi (un `curl` all'apertura). Da provare dal vero: il link Wi-Fi con la Wi-Fi come
-  connessione, il ping sulla barra vera, la copia negli appunti.
+  CPU; 0 processi (un `curl` all'apertura dei Dettagli). Da provare dal vero: il link Wi-Fi con la
+  Wi-Fi come connessione, il ping sulla barra vera, la copia negli appunti.
 - `battery` a plancia: in cima lo stato con la barra della carica (colore dell'icona, segno al
   limite), il limite di carica come slider a scatti (`Rx::steps`, `labels` di `Kind::Slider`, anche
   da Lua: si ferma ai passi, pallini sui passi dopo, etichette 80–100% sotto; disattivato mentre
