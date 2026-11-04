@@ -77,9 +77,8 @@ impl<'a> Rx<'a> {
             .radius(t.pill_radius);
         if !t.glass {
             pill.background(t.base).border(t.pill_border, t.surface)
-        } else if t.clear_glass {
-            // Clear glass shows the wallpaper as it is: a veil of the base keeps the text legible
-            pill.glass().background(t.base.faded(0.3))
+        } else if let Some(veil) = t.pill_veil() {
+            pill.glass().background(veil)
         } else {
             pill.glass()
         }
@@ -126,6 +125,7 @@ impl<'a> Rx<'a> {
         }
         Node::row(row).padding(8.0, 8.0, 4.0, 8.0).align(Align::Center)
     }
+
     /// A row that shows `children` under it only while `open`, with a chevron that points down
     /// then: the widget keeps `open` and flips it on `action`. A column, with the gap to set.
     pub fn disclosure(&self, title: &str, open: bool, action: Action, children: Vec<Node>) -> Node {
@@ -140,7 +140,6 @@ impl<'a> Rx<'a> {
         }
         Node::column(column).gap(2.0)
     }
-
 
     pub fn detail(&self, text: &str) -> Node {
         Node::text(text, self.theme.small_font(), self.theme.subtext).key(format!("d-{text}")).padding(0.0, 8.0, 2.0, 8.0)

@@ -583,6 +583,7 @@ impl App {
             let bar = &mut self.bars[b];
             bar.surface.animate = animate && self.first_frame_logged;
             bar.surface.render(&tree, &laid);
+            bar.window.set_dark(self.theme.glass_dark);
             bar.window.set_glass(&bar.surface.glass, self.theme.clear_glass, bar.surface.animate);
             // Where each widget's pill is, for its popup
             bar.items.clear();
@@ -926,7 +927,8 @@ impl App {
         surface.glass_fill = Some(t.surface);
         let frame = CGRect::new(anchor.origin, CGSize::new(10.0, 10.0));
         let level = NSPopUpMenuWindowLevel;
-        let window = Window::new(self.mtm, SurfaceId::Popup, frame, level, &surface.root, backdrop, t.popup_radius);
+        let mut window = Window::new(self.mtm, SurfaceId::Popup, frame, level, &surface.root, backdrop, t.popup_radius);
+        window.set_dark(t.glass_dark);
         window.panel.setAlphaValue(0.0);
         self.popup = Some(Popup { widget: widget.to_string(), display: d.id, window, surface, anchor, side });
         let name = widget.to_string();
@@ -996,6 +998,8 @@ impl App {
         let mut tree = Node::column(vec![content]).key("popup").radius(t.popup_radius);
         if !t.glass {
             tree = tree.background(t.base.faded(alpha)).border(t.popup_border, t.surface);
+        } else if let Some(veil) = t.popup_veil() {
+            tree = tree.background(veil);
         }
         tree.normalize();
         let layout = Layout { scale: d.scale };

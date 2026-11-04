@@ -57,7 +57,9 @@ pub struct ThemeConfig {
     pub pill_height: f64,
     pub pill_radius: f64,
     pub pill_border: f64,
-    /// The glass of the pills on the `macos` preset: `clear`, as the Dock, or `regular`, frosted.
+    /// Liquid Glass behind the pills and the popups, with any preset. Unset: only with `macos`.
+    pub glass: Option<bool>,
+    /// The glass of the pills: `clear`, as the Dock, or `regular`, frosted.
     pub pill_glass: String,
     pub pill_padding: f64,
     pub item_gap: f64,
@@ -83,6 +85,7 @@ impl Default for ThemeConfig {
             pill_height: 28.0,
             pill_radius: 14.0,
             pill_border: 2.0,
+            glass: None,
             pill_glass: "clear".into(),
             pill_padding: 10.0,
             item_gap: 8.0,

@@ -44,6 +44,9 @@ pub struct Theme {
     pub glass: bool,
     /// The pills' glass is clear, as the Dock's, rather than frosted.
     pub clear_glass: bool,
+    /// The glass is dark, or light, as the palette is, whatever macOS is: light text wants dark
+    /// glass under it. None with the macOS palette, whose glass is the system's, and without glass.
+    pub glass_dark: Option<bool>,
 }
 
 /// The colors every preset fills, in the order of `Preset::colors`: Catppuccin's, so that `sky` or
@@ -271,7 +274,8 @@ pub const PRESETS: &[Preset] = &[
 ];
 
 /// The preset that follows macOS, and the default: its system colors, light or dark as the Mac is,
-/// the accent of System Settings, and Liquid Glass behind the pills and the popups.
+/// the accent of System Settings, and Liquid Glass behind the pills and the popups (the other
+/// presets have it with `glass = true`).
 pub const MACOS: (&str, &str) = ("macos", "macOS");
 
 /// Every preset's name and label, macOS first.
@@ -367,15 +371,22 @@ fn rgb(v: u32) -> Rgba {
     Rgba(c(16), c(8), c(0), 1.0)
 }
 
+/// The relative luminance of a color, as WCAG has it: 0 for black, 1 for white.
+fn luminance(c: Rgba) -> f64 {
+    let ch = |v: f64| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+    0.2126 * ch(c.0) + 0.7152 * ch(c.1) + 0.0722 * ch(c.2)
+}
+
 impl Theme {
     pub fn from_config(c: &ThemeConfig) -> Theme {
-        let (colors, glass) = match palette(&c.preset) {
+        let (colors, macos) = match palette(&c.preset) {
             Some(colors) => (colors, is_macos(&c.preset)),
             None => {
                 crate::log(&format!("unknown theme preset {:?}, using {}", c.preset, MACOS.0));
                 (system_palette(), true)
             }
         };
+        let glass = c.glass.unwrap_or(macos);
         let mut palette: HashMap<String, Rgba> = colors.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         palette.insert("transparent".into(), Rgba::TRANSPARENT);
         palette.insert("white".into(), Rgba(1.0, 1.0, 1.0, 1.0));
@@ -421,7 +432,11 @@ impl Theme {
             animations: c.animations,
             glass,
             clear_glass: !c.pill_glass.trim().eq_ignore_ascii_case("regular"),
+            glass_dark: None,
         };
+        if glass && !macos {
+            theme.glass_dark = Some(luminance(theme.text) > luminance(theme.base));
+        }
         palette.insert("primary".into(), theme.primary);
         palette.insert("on_primary".into(), theme.on_primary);
         palette.insert("subtext".into(), theme.subtext);
@@ -459,6 +474,18 @@ impl Theme {
         } else {
             normal
         }
+    }
+
+    /// What goes over a pill's glass: a veil of `base`, which on clear glass keeps the text
+    /// legible on any wallpaper and on a palette's glass gives it the palette's color. None on the
+    /// macOS palette's frosted glass, which is the system's own.
+    pub fn pill_veil(&self) -> Option<Rgba> {
+        (self.clear_glass || self.glass_dark.is_some()).then(|| self.base.faded(0.3))
+    }
+
+    /// What goes over a popup's glass: a palette's `base`, so that it has the palette's color.
+    pub fn popup_veil(&self) -> Option<Rgba> {
+        self.glass_dark.map(|_| self.base.faded(0.5))
     }
 
     /// The background of a dashboard tile: a lit one takes a little of its color.
@@ -505,20 +532,30 @@ mod tests {
             assert!(theme.color(name).is_some_and(|c| c.3 > 0.0), "{name}");
         }
         assert_eq!(theme.primary, theme.color("accent").unwrap());
-        assert!(!Theme::from_config(&ThemeConfig { preset: "dracula".into(), ..Default::default() }).glass);
+        assert_eq!(theme.glass_dark, None);
+    }
+
+    /// Glass is the macOS palette's by default, and any palette's with `glass`, dark or light as
+    /// the palette is.
+    #[test]
+    fn glass_on_any_preset() {
+        let theme = |preset: &str, glass| Theme::from_config(&ThemeConfig { preset: preset.into(), glass, ..Default::default() });
+        assert!(!theme("dracula", None).glass);
+        assert!(!theme("macos", Some(false)).glass);
+        let mocha = theme("catppuccin-mocha", Some(true));
+        assert!(mocha.glass && mocha.glass_dark == Some(true));
+        assert_eq!(theme("catppuccin-latte", Some(true)).glass_dark, Some(false));
+        assert_eq!(theme("macos", Some(true)).glass_dark, None);
+        assert_eq!(theme("dracula", None).glass_dark, None);
     }
 
     /// From the text down to the background each shade is farther from the text, in dark and light
     /// presets alike, and the text reads on the background.
     #[test]
     fn presets_go_from_text_to_base() {
-        let lum = |c: Rgba| {
-            let ch = |v: f64| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
-            0.2126 * ch(c.0) + 0.7152 * ch(c.1) + 0.0722 * ch(c.2)
-        };
         let ladder = &NAMES[14..24];
         for p in PRESETS {
-            let l: Vec<f64> = ladder.iter().map(|n| lum(p.color(n).unwrap())).collect();
+            let l: Vec<f64> = ladder.iter().map(|n| luminance(p.color(n).unwrap())).collect();
             let dark = l[0] > l[9];
             assert!(l.windows(2).all(|w| if dark { w[0] > w[1] } else { w[0] < w[1] }), "{}", p.name);
             let (hi, lo) = if dark { (l[0], l[9]) } else { (l[9], l[0]) };

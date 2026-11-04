@@ -11,7 +11,7 @@ popup_gap = 6        # between the pills and their popups
 
 [theme]
 # The palette. macos: the system colors, light or dark as the Mac is, with the accent of System
-# Settings, on Liquid Glass. Or catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe,
+# Settings. Or catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe,
 # catppuccin-latte, dracula, everforest-dark, everforest-light, gruvbox-dark, gruvbox-light,
 # kanagawa-wave, kanagawa-dragon, kanagawa-lotus, nord, one-dark, one-light, rose-pine,
 # rose-pine-moon, rose-pine-dawn, solarized-dark, solarized-light, tokyo-night,
@@ -25,7 +25,8 @@ icon_size = 14
 pill_height = 28
 pill_radius = 14
 pill_border = 2               # not on glass
-pill_glass = "clear"          # macos: clear, as the Dock, or regular, frosted as the menus
+# glass = true                # Liquid Glass behind the pills and popups: by default only with macos
+pill_glass = "clear"          # with glass: clear, as the Dock, or regular, frosted as the menus
 pill_padding = 10
 item_gap = 8
 popup_radius = 16
