@@ -10,7 +10,7 @@ use crate::fit::Form;
 use crate::runtime::{self, Timer};
 use crate::theme::Theme;
 use crate::gfx::Weight;
-use crate::ui::{Action, Align, Kind, Node};
+use crate::ui::{Action, Align, Justify, Kind, Node};
 
 pub mod aerospace;
 pub mod apple;
@@ -126,6 +126,21 @@ impl<'a> Rx<'a> {
         }
         Node::row(row).padding(8.0, 8.0, 4.0, 8.0).align(Align::Center)
     }
+    /// A row that shows `children` under it only while `open`, with a chevron that points down
+    /// then: the widget keeps `open` and flips it on `action`. A column, with the gap to set.
+    pub fn disclosure(&self, title: &str, open: bool, action: Action, children: Vec<Node>) -> Node {
+        let t = self.theme;
+        let chevron = Node::row(vec![Node::symbol(if open { "chevron.down" } else { "chevron.right" }, 10.0, Weight::Bold, t.subtext).key("symbol")])
+            .width(14.0)
+            .justify(Justify::Center)
+            .key("chevron");
+        let mut column = vec![self.row_button(vec![Node::text(title, t.font(), t.text).key("title")], vec![chevron], action).key("header")];
+        if open {
+            column.extend(children);
+        }
+        Node::column(column).gap(2.0)
+    }
+
 
     pub fn detail(&self, text: &str) -> Node {
         Node::text(text, self.theme.small_font(), self.theme.subtext).key(format!("d-{text}")).padding(0.0, 8.0, 2.0, 8.0)

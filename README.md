@@ -22,7 +22,7 @@ processes a minute.
 | `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
 | `audio` | The output and the input in use, with the battery of Bluetooth devices and a slider with the volume of each (`sliders = false` hides them), the first thing to go when the bar has no room; the Mac's own speakers and microphone, or both halves of a headset, show as one | A dashboard: the output and input volume, each with its level and a slider; tiles for the devices to switch to and for the paired Bluetooth headphones and speakers to connect or disconnect |
-| `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph, on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click, and the VPN |
+| `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph and the VPN; then Details, closed until clicked: on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click |
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | Today's events; a click joins the Google Meet call or shows the event in Calendar |
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
@@ -41,7 +41,7 @@ Each widget with its popup, on made-up data (see below):
 <td align="center" valign="top"><img src="docs/screenshots/clock.png" width="290" alt="A calendar that scrolls through the months"><br><code>clock</code></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/screenshots/network.png" width="392" alt="The Wi-Fi networks to join and Ethernet, then the connection with its signal, download and upload graphs, the link, the addresses and the VPN"><br><code>network</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/network.png" width="392" alt="The Wi-Fi networks to join and Ethernet, then the connection with its signal, download and upload graphs and the VPN, and the details open: the link and the addresses"><br><code>network</code></td>
 <td align="center" valign="top"><img src="docs/screenshots/docker.png" width="392" alt="A dashboard of Docker containers by Compose project, with start, stop, restart and remove buttons, and the disk usage to clean up"><br><code>docker</code></td>
 </tr>
 <tr>
@@ -64,15 +64,15 @@ listeners, the network from the System Configuration store, the calendars from E
 Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
 from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
 memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility), and only while
-their popups are open the network's traffic and Wi-Fi link every second and a ping to the router
-every 5, the battery's temperature and power every 2 seconds, and the disks every 10. The bar is
-redrawn only when a value changes.
+their popups are open the network's traffic and Wi-Fi link every second and, with its details
+open, a ping to the router every 5, the battery's temperature and power every 2 seconds, and the
+disks every 10. The bar is redrawn only when a value changes.
 
 A few things still run a process: `brew outdated` every hour and on wake (only with `brewfile` or
 `brew = true`), `system_profiler` for AirPods batteries and paired devices when the audio popup
 opens and every 2 minutes while a Bluetooth device is in use, `system_profiler` for the battery
 health at most once a day, when the battery popup opens, `curl` for the public IP and its provider
-(from ipinfo.io) when the network popup opens, and Claude Code (`claude auth status` and
+(from ipinfo.io) when the network popup's details open, and Claude Code (`claude auth status` and
 `claude -p`, for each account) every 5 minutes, on wake, when the Claude popup opens and with ↻: it's the
 only way to the plan's numbers. It asks for them without sending a message, so it doesn't use the
 plan. The keychain is read and written through `security`, once for each secret. While the
@@ -110,7 +110,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
 | Accessibility | `notifications` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works |
 | Automation | `apple`, `clock` | Restart, Shut Down and Log Out; showing a day in Calendar |
-| Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup opens), without which the rest works |
+| Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup's details open), without which the rest works |
 
 To keep the macOS menu bar out of the way, turn on *Automatically hide and show the menu bar* in
 System Settings → Control Center.
@@ -295,7 +295,8 @@ rb.widget {
 - **Components** (`rb.ui.*`): `row`, `column`, `grid` (`columns = n`), `pill`, `button`, `box`,
   `text`, `icon` (an SF Symbol), `app` (an app icon by bundle id), `image`, `slider`, `progress`,
   `toggle`, `scroll` (`max_height`), `skeleton`, `spacer`, `divider`, `section`, `detail`,
-  `month`.
+  `disclosure` (a title whose children show only with `open = true`; its `on_click` flips your
+  flag), `month`.
 - **Options**: `gap`, `pad`, `width`, `height`, `min_width`, `max_width`, `grow`, `radius`,
   `background`, `border`, `opacity`, `align`, `justify`, `key`, `hover`, `selected` (a sliding
   highlight behind the child with that key), colors by palette name (`"primary"`, `"green@0.5"`)

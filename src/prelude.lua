@@ -27,6 +27,21 @@ function rb.ui.section(spec)
     rb.ui.text { spec[1] }, rb.ui.spacer(), spec.right }
 end
 
+-- A title that shows the children after it only while `open`, with a chevron that points down
+-- then; `on_click` is for the widget to flip `open`
+function rb.ui.disclosure(spec)
+  local chevron = spec.open and "chevron.down" or "chevron.right"
+  local column = { _t = "column", gap = spec.gap or 2, key = spec.key,
+    rb.ui.button { key = "header", height = 26, on_click = spec.on_click,
+      rb.ui.text { spec[1], key = "title" }, rb.ui.spacer(),
+      rb.ui.row { key = "chevron", width = 14, justify = "center",
+        rb.ui.icon { chevron, size = 10, weight = "bold", color = "subtext", key = "symbol" } } } }
+  if spec.open then
+    for i = 2, #spec do column[#column + 1] = spec[i] end
+  end
+  return column
+end
+
 -- Small grey text under a row
 function rb.ui.detail(text)
   return rb.ui.text { text, size = rb.theme.small_size, weight = "medium", color = "subtext", pad = { 0, 8, 2, 8 } }

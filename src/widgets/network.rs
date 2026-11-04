@@ -10,18 +10,20 @@
 //!   Good from −67, Fair from −75, else Weak), on Ethernet the link speed.
 //! - Download and upload: the speed now, the last 30 seconds as bars, and the total of the
 //!   interface since it came up.
-//! - On Wi-Fi: the link rate with the Wi-Fi generation, the channel with band and width, the
-//!   signal-to-noise ratio with the noise, the security.
-//! - Local IP (with the prefix), router (with its ping), public IP (with the latency to the
-//!   internet), provider (with city and country), DNS, MAC address (private or not) and IPv6; a
-//!   click copies an address, and the tile says Copied.
 //! - The VPN, with its interface and address.
+//! - Details, closed until clicked (and then kept open until a reload):
+//!   - On Wi-Fi: the link rate with the Wi-Fi generation, the channel with band and width, the
+//!     signal-to-noise ratio with the noise, the security.
+//!   - Local IP (with the prefix), router (with its ping), public IP (with the latency to the
+//!     internet), provider (with city and country), DNS, MAC address (private or not) and IPv6;
+//!     a click copies an address, and the tile says Copied.
 //!
 //! The state comes from the System Configuration store, which tells when it changes, and from
 //! CoreWLAN. Only while the popup is open, and in-process: every second the counters of the
-//! interface (the routing sysctl) and the Wi-Fi link (CoreWLAN), every 5 seconds a ping to the
-//! router (ICMP, without privileges). The public IP, its provider and the latency to the internet
-//! (the TCP handshake of that request) come from one `curl` to ipinfo.io when the popup opens.
+//! interface (the routing sysctl) and the Wi-Fi link (CoreWLAN, for the signal too), and while the
+//! details are open every 5 seconds a ping to the router (ICMP, without privileges). The public
+//! IP, its provider and the latency to the internet (the TCP handshake of that request) come from
+//! one `curl` to ipinfo.io when the details are first open in a popup.
 //! The network name comes from the last scan record the store keeps, as macOS gives it to CoreWLAN
 //! only with the Location permission, which the list of nearby networks needs: RustyBar asks for
 //! it the first time the popup opens.
@@ -58,6 +60,8 @@ const STAT: f64 = 54.0;
 /// The VPN and the wired services.
 const LINE: f64 = 50.0;
 const NEARBY: f64 = 48.0;
+/// The row that opens the details.
+const DISCLOSURE: f64 = 26.0;
 /// Seconds of traffic in the graphs, a bar each.
 const BARS: usize = 30;
 const GRAPH: f64 = 24.0;
@@ -226,6 +230,10 @@ pub struct Network {
     /// The public side and the connection it's of.
     public: Option<(Public, String)>,
     fetching: bool,
+    /// The `ticking` of the popup it was last fetched in: once each, when the details are open.
+    fetched: u64,
+    /// The link and the addresses are shown.
+    details: bool,
     scanning: bool,
     /// The network being joined, and since when: one at a time, for at most 2 minutes.
     joining: Option<(String, f64)>,
@@ -394,6 +402,8 @@ impl Network {
             location: None,
             public: None,
             fetching: false,
+            fetched: 0,
+            details: false,
             scanning: false,
             joining: None,
             failed: None,
@@ -467,6 +477,7 @@ impl Network {
         if self.fetching {
             return;
         }
+        self.fetched = self.ticking;
         if let Some(mock) = &self.mock {
             self.public = Some((mock.public.clone(), mock.state.key()));
             return;
@@ -481,7 +492,8 @@ impl Network {
         });
     }
 
-    /// Every second while the popup is open: the speeds and the Wi-Fi link; every 5, the ping.
+    /// Every second while the popup is open: the speeds and the Wi-Fi link; every 5, the ping, while
+    /// the details are open.
     fn tick(&mut self, ticking: u64, cx: &mut Cx) {
         if ticking != self.ticking || !cx.popup_open {
             return;
@@ -502,7 +514,7 @@ impl Network {
             next(cx);
             return;
         };
-        if self.ticks.is_multiple_of(5) {
+        if self.details && self.ticks.is_multiple_of(5) {
             self.ping_router(cx);
         }
         self.ticks += 1;
@@ -552,7 +564,8 @@ impl Network {
 
     fn ping_router(&mut self, cx: &mut Cx) {
         let Some(router) = self.state.as_ref().and_then(|s| s.router.clone()) else { return };
-        if self.pinging {
+        // The made-up router is pinged by no one: its time comes with the made-up data
+        if self.pinging || self.mock.is_some() {
             return;
         }
         self.pinging = true;
@@ -1012,25 +1025,12 @@ impl Widget for Network {
     fn popup(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
         let s = self.state.as_ref()?;
-        // The switches and the networks on top, the metrics under them
+        // The switches and the networks on top, the metrics under them, then the details
         let mut metrics = vec![self.header(rx, s)];
         let mut used = HEADER + GAP;
-        let grid = |tiles: Vec<Node>, key: &str, used: &mut f64| {
-            *used += tiles.len().div_ceil(2) as f64 * (STAT + GAP);
-            Node::row(tiles).columns(2).gap(GAP).key(key)
-        };
         if s.primary.is_some() {
             metrics.push(Node::row(vec![self.traffic(rx, true), self.traffic(rx, false)]).gap(GAP).key("traffic"));
             used += TRAFFIC + GAP;
-            if let Some(l) = self.link.as_ref().filter(|_| s.on_wifi()) {
-                metrics.push(grid(self.link_tiles(rx, l), "link", &mut used));
-            }
-            let (tiles, ipv6) = self.address_tiles(rx, s);
-            metrics.push(grid(tiles, "addresses", &mut used));
-            if let Some(ipv6) = ipv6 {
-                metrics.push(ipv6);
-                used += STAT + GAP;
-            }
         }
         if let Some(vpn) = &s.vpn {
             let detail = if self.copied.as_deref() == Some("vpn") {
@@ -1044,6 +1044,26 @@ impl Widget for Network {
             let room = crate::gfx::measure_text(connected, &th.small_font()).width;
             metrics.push(line(rx, "lock.shield.fill", th.green, vpn, detail, (state, room), true).click(rx.action("copy:vpn")).key("vpn"));
             used += LINE + GAP;
+        }
+        if s.primary.is_some() {
+            let grid = |tiles: Vec<Node>, key: &str, used: &mut f64| {
+                *used += tiles.len().div_ceil(2) as f64 * (STAT + GAP);
+                Node::row(tiles).columns(2).gap(GAP).key(key)
+            };
+            let mut details = Vec::new();
+            if self.details {
+                if let Some(l) = self.link.as_ref().filter(|_| s.on_wifi()) {
+                    details.push(grid(self.link_tiles(rx, l), "link", &mut used));
+                }
+                let (tiles, ipv6) = self.address_tiles(rx, s);
+                details.push(grid(tiles, "addresses", &mut used));
+                if let Some(ipv6) = ipv6 {
+                    details.push(ipv6);
+                    used += STAT + GAP;
+                }
+            }
+            metrics.push(rx.disclosure(t("Dettagli", "Details"), self.details, rx.action("details"), details).gap(GAP).key("details"));
+            used += DISCLOSURE + GAP;
         }
         let mut wired = Vec::new();
         for (i, w) in s.wired.iter().enumerate() {
@@ -1089,6 +1109,17 @@ impl Widget for Network {
                 self.scan(cx);
                 cx.redraw();
             }
+            "details" => {
+                self.details = !self.details;
+                // What only the details show: the public side once in each popup, the ping now
+                if self.details {
+                    if self.fetched != self.ticking {
+                        self.fetch_public(cx);
+                    }
+                    self.ping_router(cx);
+                }
+                cx.redraw();
+            }
             "location" => {
                 cx.close_popup();
                 crate::runtime::open("x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices");
@@ -1114,9 +1145,13 @@ impl Widget for Network {
         match event {
             Event::Wake => self.read(cx),
             Event::PopupOpened => {
+                self.ticking += 1;
+                self.ticks = 0;
                 self.failed = None;
                 self.read(cx);
-                self.fetch_public(cx);
+                if self.details {
+                    self.fetch_public(cx);
+                }
                 if self.state.as_ref().is_some_and(|s| s.wifi_device.is_some() && s.wifi_power) {
                     self.ask_location(cx);
                 }
@@ -1127,8 +1162,6 @@ impl Widget for Network {
                         self.push(down, up);
                     }
                 }
-                self.ticking += 1;
-                self.ticks = 0;
                 self.tick(self.ticking, cx);
             }
             Event::PopupClosed => {
