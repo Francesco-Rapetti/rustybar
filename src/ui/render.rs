@@ -75,6 +75,7 @@ struct SliderLook {
     color: Rgba,
     track: Rgba,
     font: Option<FontSpec>,
+    labels: Vec<String>,
     value: f64,
 }
 
@@ -357,12 +358,12 @@ impl Surface {
                 let w = (laid.w * value.clamp(0.0, 1.0)).max(if *value > 0.0 { h } else { 0.0 });
                 fill.setFrame(rect(0.0, 0.0, w, h));
             }
-            Kind::Slider { value, color, track, font } => {
+            Kind::Slider { value, color, track, font, labels } => {
                 let v = match &dragging {
                     Some((p, v)) if *p == path => *v,
-                    _ => value.clamp(0.0, 1.0),
+                    _ => snap(value.clamp(0.0, 1.0), labels.len()),
                 };
-                entry.slider = Some(SliderLook { color: *color, track: *track, font: font.clone(), value: v });
+                entry.slider = Some(SliderLook { color: *color, track: *track, font: font.clone(), labels: labels.clone(), value: v });
                 layout_slider(entry, &layer, laid.w, laid.h, v, knob, scale);
             }
             Kind::Toggle { on, color, track } => {
@@ -447,7 +448,9 @@ impl Surface {
         };
         if let Some(r) = visible {
             let kind = match node.kind {
-                Kind::Slider { .. } => Some(HitKind::Slider),
+                // One with nothing to tell when released stays where it is
+                Kind::Slider { .. } if node.on_click.is_some() => Some(HitKind::Slider),
+                Kind::Slider { .. } => None,
                 Kind::Scroll { .. } => Some(HitKind::Scroll),
                 _ if node.on_click.is_some() => Some(HitKind::Click),
                 _ => None,
@@ -572,14 +575,17 @@ impl Surface {
         e.layer.addAnimation_forKey(&anim, Some(ns_string!("press")));
     }
 
-    /// Moves a slider while it's dragged, and its percentage with it, without a full render.
+    /// Moves a slider while it's dragged, and its percentage with it, without a full render. One
+    /// with steps jumps to the nearest, quickly animated.
     pub fn drag_slider(&mut self, path: &str, value: f64) {
+        let steps = self.entries.get(path).and_then(|e| e.slider.as_ref()).map_or(0, |s| s.labels.len());
+        let value = snap(value, steps);
         self.dragging = Some((path.to_string(), value));
-        let scale = self.scale;
+        let (scale, animate) = (self.scale, self.animate && steps >= 2);
         let Some(e) = self.entries.get_mut(path) else { return };
         let (w, h) = (e.frame.size.width, e.frame.size.height);
         let layer = e.layer.clone();
-        transaction(false, 0.0, || layout_slider(e, &layer, w, h, value, true, scale));
+        transaction(animate, 0.12, || layout_slider(e, &layer, w, h, value, true, scale));
     }
 
     /// Shows the knob of the slider under the mouse, and moves its percentage out of the way;
@@ -733,8 +739,9 @@ fn rounded_rect(w: f64, h: f64, corners: Corners) -> CFRetained<CGMutablePath> {
     path
 }
 
-/// A thick track and a fill as round as it, gone at 0, and the percentage: in the fill before its
-/// end when it fits there, else on the track after it, else in the middle. The percentage is drawn
+/// A thick track and a fill as round as it, gone at 0 without steps, and the percentage (or the
+/// step's label): in the fill before its end when it fits there, else on the track after it, else
+/// in the middle. The percentage is drawn
 /// twice, in a color that reads on the track and, clipped to the fill, in one that reads on the
 /// fill, so it reads wherever it falls. The knob, a white disc in the fill's round end, shows only
 /// with `knob`, and the percentage then keeps clear of it.
@@ -747,11 +754,16 @@ fn layout_slider(entry: &mut Entry, layer: &CALayer, w: f64, h: f64, v: f64, kno
     track.setFrame(rect(0.0, 0.0, w, h));
     track.setCornerRadius(h / 2.0);
     track.setBackgroundColor(Some(&look.track.cg()));
+    // Under the label and the fill: a dot for each step not reached, where the knob would stop
+    let ticks = part(entry, "ticks", &track, scale);
+    ticks.setFrame(rect(0.0, 0.0, w, h));
+    layout_ticks(&ticks, &look, w, h, v, scale);
     let under = part(entry, "under", &track, scale);
     let fill = part(entry, "fill", &track, scale);
     // The knob's center is `slider_value`'s: from h/2 to w - h/2
     let travel = (w - h).max(0.0);
-    let edge = if v > 0.0 { h + v * travel } else { 0.0 };
+    // Gone at 0, unless 0 is a step like the others
+    let edge = if v > 0.0 || look.labels.len() >= 2 { h + v * travel } else { 0.0 };
     fill.setFrame(rect(0.0, 0.0, edge, h));
     fill.setCornerRadius(h / 2.0);
     fill.setMasksToBounds(true);
@@ -759,7 +771,10 @@ fn layout_slider(entry: &mut Entry, layer: &CALayer, w: f64, h: f64, v: f64, kno
     // The fill starts where the track does: the label's frame is the same in both
     let over = part(entry, "over", &fill, scale);
     if let Some(font) = &look.font {
-        let text = format!("{:.0}%", v * 100.0);
+        let text = match look.labels.len() {
+            0 | 1 => format!("{:.0}%", v * 100.0),
+            n => look.labels[step(v, n)].clone(),
+        };
         let m = gfx::measure_text(&text, font);
         let (tw, th) = (m.width, m.height().ceil());
         // Clear of the round ends, and of the knob when it shows
@@ -794,6 +809,44 @@ fn layout_slider(entry: &mut Entry, layer: &CALayer, w: f64, h: f64, v: f64, kno
     disc.setShadowOffset(CGSize::new(0.0, 1.0));
     disc.setFrame(rect(v * travel + 2.0, 2.0, k, k));
     disc.setOpacity(if knob { 1.0 } else { 0.0 });
+}
+
+/// The step (0..n) of a slider with `n` steps at `v`.
+fn step(v: f64, n: usize) -> usize {
+    ((v * (n - 1) as f64).round() as usize).min(n - 1)
+}
+
+/// `v` at the nearest of `n` evenly spaced steps, or as it is without steps.
+fn snap(v: f64, n: usize) -> f64 {
+    if n < 2 { v } else { step(v, n) as f64 / (n - 1) as f64 }
+}
+
+/// The dots of a slider's steps after `v`, on the track; none without steps.
+fn layout_ticks(ticks: &CALayer, look: &SliderLook, w: f64, h: f64, v: f64, scale: f64) {
+    let n = if look.labels.len() >= 2 { look.labels.len() } else { 0 };
+    let dots: Vec<Retained<CALayer>> = unsafe { ticks.sublayers() }.map(|a| a.to_vec()).unwrap_or_default();
+    for extra in dots.iter().skip(n) {
+        extra.removeFromSuperlayer();
+    }
+    let at = if n > 0 { step(v, n) } else { 0 };
+    let (d, travel) = ((h * 0.22).round().max(3.0), (w - h).max(0.0));
+    let color = ink(look.track).faded(0.4).cg();
+    for i in 0..n {
+        let dot = match dots.get(i) {
+            Some(d) => d.clone(),
+            None => {
+                let d = CALayer::new();
+                d.setContentsScale(scale);
+                ticks.addSublayer(&d);
+                d
+            }
+        };
+        let x = h / 2.0 + travel * i as f64 / (n - 1) as f64;
+        dot.setFrame(rect(x - d / 2.0, (h - d) / 2.0, d, d));
+        dot.setCornerRadius(d / 2.0);
+        dot.setBackgroundColor(Some(&color));
+        dot.setOpacity(if i > at { 1.0 } else { 0.0 });
+    }
 }
 
 /// The value (0..1) of a slider in `rect` with the knob's center at `x`.
@@ -850,6 +903,18 @@ mod tests {
         assert_eq!(slider_value(r, 200.0), 1.0);
         assert_eq!(ink(Rgba(0.8, 0.65, 0.97, 1.0)), Rgba(0.0, 0.0, 0.0, 0.75));
         assert_eq!(ink(Rgba(0.2, 0.2, 0.27, 1.0)), Rgba(1.0, 1.0, 1.0, 0.92));
+    }
+
+    #[test]
+    fn steps_snap_to_the_nearest() {
+        // 5 steps: 0, 0.25, 0.5, 0.75, 1
+        assert_eq!(snap(0.1, 5), 0.0);
+        assert_eq!(snap(0.13, 5), 0.25);
+        assert_eq!(snap(0.9, 5), 1.0);
+        assert_eq!(step(1.0, 5), 4);
+        assert_eq!(step(0.5, 5), 2);
+        // No steps: as it is
+        assert_eq!(snap(0.37, 0), 0.37);
     }
 
     #[test]

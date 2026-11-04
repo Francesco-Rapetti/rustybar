@@ -5,8 +5,10 @@
   "minutes": 25,
   "limit": 80,
   "limit_state": "on",
-  "watts": 96,
-  "health": "Good",
   "cycles": 48,
-  "max_capacity": "99%"
+  "design_cycles": 1000,
+  "adapter": { "watts": 96, "volts": 20, "kind": "USB-C" },
+  "health": "Good",
+  "max_capacity": "99%",
+  "live": { "temperature": 31.4, "system": 14.2, "battery": 38.5, "input": 54.6 }
 }

@@ -94,16 +94,18 @@ impl Layout {
             return (0.0, 0.0);
         }
         if let Some(cols) = s.columns.filter(|c| *c > 0) {
-            let (mut cw, mut ch) = (0.0f64, 0.0f64);
-            for c in &flow {
+            // Each row as high as its highest cell, as `place` lays them out
+            let rows = flow.len().div_ceil(cols);
+            let mut cw = 0.0f64;
+            let mut row_h = vec![0.0f64; rows];
+            for (n, c) in flow.iter().enumerate() {
                 let (w, h) = self.intrinsic(c, None);
                 cw = cw.max(w);
-                ch = ch.max(h);
+                row_h[n / cols] = row_h[n / cols].max(h);
             }
-            let rows = flow.len().div_ceil(cols);
             let cols_used = cols.min(flow.len());
             let w = cw * cols_used as f64 + s.gap * (cols_used as f64 - 1.0);
-            let h = ch * rows as f64 + s.gap * (rows as f64 - 1.0);
+            let h = row_h.iter().sum::<f64>() + s.gap * (rows as f64 - 1.0);
             return (w, h);
         }
         let gaps = s.gap * (flow.len() as f64 - 1.0);
@@ -291,7 +293,7 @@ mod tests {
     fn padded_slider_keeps_its_action() {
         let action = super::super::Action::Open("x".into());
         let (color, track) = (gfx::Rgba(1.0, 1.0, 1.0, 1.0), gfx::Rgba(0.0, 0.0, 0.0, 1.0));
-        let mut n = Node::new(Kind::Slider { value: 0.5, color, track, font: None }).click(action.clone()).padding(4.0, 0.0, 0.0, 0.0);
+        let mut n = Node::new(Kind::Slider { value: 0.5, color, track, font: None, labels: vec![] }).click(action.clone()).padding(4.0, 0.0, 0.0, 0.0);
         n.normalize();
         assert!(matches!(n.kind, Kind::Box) && n.on_click.is_none());
         assert_eq!(n.children[0].on_click, Some(action));
@@ -304,6 +306,14 @@ mod tests {
         let l = Layout { scale: 1.0 }.run(&n, Some(7.0 * 10.0 + 6.0 * 2.0));
         assert_eq!(l.children[7].y, 10.0);
         assert_eq!(l.children[8].x, 12.0);
+    }
+
+    #[test]
+    fn grid_rows_are_as_high_as_their_cells() {
+        let n = Node::row(vec![boxed(10.0, 20.0), boxed(10.0, 20.0), boxed(10.0, 10.0), boxed(10.0, 10.0)]).columns(2).gap(2.0);
+        let l = Layout { scale: 1.0 }.run(&n, None);
+        assert_eq!(l.children[2].y, 22.0);
+        assert_eq!(l.h, 32.0);
     }
 
     #[test]

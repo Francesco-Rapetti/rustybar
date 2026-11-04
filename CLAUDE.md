@@ -189,6 +189,15 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   test. Con tutti i widget: a riposo ~20 MB, ~0,1% CPU; popup aperto ~24 MB, ~0,6%
   CPU; 0 processi (un `curl` all'apertura). Da provare dal vero: il link Wi-Fi con la Wi-Fi come
   connessione, il ping sulla barra vera, la copia negli appunti.
+- `battery` a plancia: in cima lo stato con la barra della carica (colore dell'icona, segno al
+  limite), il limite di carica come slider a scatti (`Rx::steps`, `labels` di `Kind::Slider`, anche
+  da Lua: si ferma ai passi, pallini sui passi dopo, etichette 80–100% sotto; disattivato mentre
+  Completa carica ora lo sospende) con Completa carica ora sotto; riquadri capacità e condizione,
+  cicli su `DesignCycleCount9C`, temperatura e consumo (`PowerTelemetryData`, V×A della batteria)
+  letti da IOKit solo a popup aperto, ogni 2 s; l'alimentatore (W, USB-C/MagSafe, V, potenza in
+  ingresso). La griglia ora misura ogni riga alla sua altezza. Provata coi dati finti (quattro
+  stati, it/en) e coi dati veri sulla barra di prova (lettura sola): ~15 MB, ~0,1% CPU a popup
+  aperto, 0 processi. Da provare dal vero con l'utente: trascinare lo slider (cambia il limite).
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

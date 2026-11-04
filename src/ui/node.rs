@@ -59,12 +59,17 @@ pub enum Kind {
     },
     /// 0..1; dragging moves it, releasing sends `on_click` with the value. A thick track with the
     /// percentage inside, in `font` (none without one), and a knob while the mouse is over it.
+    /// With `labels` it stops at as many evenly spaced steps (`value` is then `step / (n - 1)`),
+    /// shows the label of its step instead of the percentage and a dot for each step after it.
+    /// Without `on_click` it can't be moved.
     Slider {
         value: f64,
         color: Rgba,
         track: Rgba,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         font: Option<FontSpec>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        labels: Vec<String>,
     },
     Progress {
         value: f64,

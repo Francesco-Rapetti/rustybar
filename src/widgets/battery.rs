@@ -1,6 +1,9 @@
-//! The battery of the Mac: the charge with an icon for its state, and a popup with the state in
-//! words, the Charge Limit of System Settings → Battery (macOS 26.4+), where a click sets another
-//! percentage, Charge to Full Now, the health of the battery and the Battery settings.
+//! The battery of the Mac: the charge with an icon for its state, and a dashboard in the popup.
+//! On top the state in words and the charge, with a bar that marks the limit; then the Charge
+//! Limit of System Settings → Battery (macOS 26.4+) as a slider that stops at its steps, with
+//! Charge to Full Now under it; tiles with the maximum capacity and the condition, the cycles
+//! against the ones the battery is made for, the temperature and the power the Mac draws; the
+//! adapter, while one is plugged in; the Battery settings.
 //!
 //! The icon: on battery the level, yellow in Low Power Mode or else red at 20% or less, as in the
 //! battery menu of macOS; charging, the bolt; plugged in but not charging, the plug, yellow when
@@ -9,9 +12,12 @@
 //! plug while Charge to Full Now pauses the limit.
 //!
 //! IOKit says when the battery changes and PowerUIAgent when the limit does, so nothing polls. The
-//! Charge Limit is PowerUIAgent's, asked through the private framework of System Settings.
+//! Charge Limit is PowerUIAgent's, asked through the private framework of System Settings. The
+//! temperature and the power change all the time and have no event: they're read from IOKit only
+//! while the popup is open, every 2 seconds.
 //!
-//! With made-up data (see `mock`) the state comes from `battery.json` and the clicks do nothing.
+//! With made-up data (see `mock`) the state comes from `battery.json`, and the slider and the
+//! buttons change only that, in memory.
 
 use std::ffi::{c_char, c_int, c_void};
 use std::time::Instant;
@@ -28,12 +34,26 @@ use super::{Cx, Event, Rx, Widget};
 use crate::gfx::{Rgba, Weight};
 use crate::i18n::t;
 use crate::runtime;
-use crate::ui::Node;
+use crate::ui::{Align, Justify, Kind, Node};
 
 const LIMITS: [u8; 5] = [80, 85, 90, 95, 100];
 /// Of `isMCLCurrentlyEnabled:`: on, or paused by Charge to Full Now.
 const MCL_ON: usize = 1;
 const MCL_PAUSED: usize = 3;
+
+/// The dashboard, as the network and Docker ones: two tiles a row.
+const TILE: f64 = 160.0;
+const GAP: f64 = 8.0;
+const WIDE: f64 = TILE * 2.0 + GAP;
+/// A tile's content, inside its padding.
+const INNER: f64 = TILE - 20.0;
+const STAT: f64 = 54.0;
+/// A tile with a bar under its value.
+const BARRED: f64 = 64.0;
+const LINE: f64 = 50.0;
+const SLIDER: f64 = 22.0;
+/// How often the temperature and the power are read while the popup is open.
+const LIVE: f64 = 2.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -62,8 +82,35 @@ struct Status {
     held: bool,
     desktop: bool,
     low_power: bool,
-    watts: Option<i64>,
     cycles: Option<i64>,
+    /// The cycles the battery is made for: 1000 on Apple's.
+    design_cycles: Option<i64>,
+    /// While one is plugged in.
+    adapter: Option<Adapter>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct Adapter {
+    watts: i64,
+    /// The voltage it gives, e.g. 20 V over USB-C.
+    volts: Option<f64>,
+    /// `USB-C` or `MagSafe`, from its name.
+    kind: Option<String>,
+}
+
+/// What changes all the time, read while the popup is open.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct Live {
+    /// Of the battery, in °C.
+    temperature: Option<f64>,
+    /// What the Mac uses, in W.
+    system: Option<f64>,
+    /// Into the battery, in W; less than 0 out of it.
+    battery: Option<f64>,
+    /// From the adapter, in W.
+    input: Option<f64>,
 }
 
 /// Battery Health as System Settings shows it: "Good" or another condition, and the maximum
@@ -74,7 +121,7 @@ struct Health {
     max_capacity: Option<String>,
 }
 
-/// Made-up data (see `mock`): the state, the condition and the maximum capacity.
+/// Made-up data (see `mock`): the state, the condition, the maximum capacity and the live values.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct Mock {
@@ -82,6 +129,7 @@ struct Mock {
     status: Status,
     health: Option<String>,
     max_capacity: Option<String>,
+    live: Live,
 }
 
 #[derive(Default)]
@@ -91,9 +139,14 @@ pub struct Battery {
     loaded: bool,
     /// From system_profiler, the only one that says it: at most once a day, when the popup opens.
     health: Option<(Health, Instant)>,
+    /// The last values read, kept when the popup closes so it opens again without a jump.
+    live: Option<Live>,
+    /// Bumped when the popup opens or closes: the reads of an older one stop.
+    ticking: u64,
     reading: bool,
     queued: bool,
-    /// The row whose action macOS refused, until the next update.
+    /// The action macOS refused (`limit` for the slider, `limit:80` or `full` for the button),
+    /// until the next update.
     failed: Option<String>,
     source: Option<RunLoopSource>,
     token: Option<c_int>,
@@ -121,6 +174,21 @@ impl Battery {
                 }
             });
             let _ = w;
+        });
+    }
+
+    /// Every 2 seconds while the popup is open: the temperature and the power.
+    fn tick(&mut self, ticking: u64, cx: &mut Cx) {
+        if ticking != self.ticking || !cx.popup_open {
+            return;
+        }
+        cx.background::<Battery, _>(read_live, move |w, live, cx| {
+            if ticking != w.ticking {
+                return;
+            }
+            w.live = Some(live);
+            cx.redraw();
+            cx.after::<Battery>(LIVE, move |w, cx| w.tick(ticking, cx));
         });
     }
 
@@ -193,11 +261,222 @@ impl Battery {
         } else {
             (t("La batteria non è in carica", "Battery Is Not Charging").to_string(), th.yellow)
         };
-        if let (true, Some(w)) = (s.ac, s.watts) {
-            details.push(t(&format!("alimentatore da {w} W"), &format!("{w} W adapter")).into());
-        }
         (status, color, capitalize(&details.join(" · ")))
     }
+
+    // Drawing
+
+    /// Two tiles wide: the icon, the state in words and the charge, over a bar of the charge
+    /// with a mark at the limit. The bar has the color of the icon, as in the battery menu of
+    /// macOS, and the tile a little of it unless that's the text's.
+    fn header(&self, rx: &Rx, s: &Status) -> Node {
+        let th = rx.theme;
+        let (icon, color) = self.icon(rx, s);
+        let (status, status_color, details) = self.state(rx, s);
+        let inner = WIDE - 24.0;
+        let percent = format!("{}%", s.percent);
+        let big = th.font_with(Weight::Semibold, 20.0);
+        // The padding, the icon, the gaps and the charge
+        let names = inner - 26.0 - 20.0 - crate::gfx::measure_text(&percent, &big).width;
+        let mut lines = vec![Node::text(status, th.font(), status_color).max_width(names).key("state")];
+        if !details.is_empty() {
+            lines.push(Node::text(details, th.small_font(), th.subtext).max_width(names).key("details"));
+        }
+        let top = Node::row(vec![
+            Node::row(vec![Node::symbol(icon, 18.0, Weight::Semibold, color)]).width(26.0).justify(Justify::Center).key("icon"),
+            Node::column(lines).gap(2.0).align(Align::Start).key("names"),
+            Node::spacer(),
+            Node::text(percent, big, th.text).key("percent"),
+        ])
+        .gap(10.0)
+        .width(inner)
+        .key("top");
+        let mut bar = vec![Node::new(Kind::Progress { value: s.percent as f64 / 100.0, color, track: th.surface }).size(inner, 6.0).key("level")];
+        if matches!(s.limit_state, LimitState::On | LimitState::Paused) && (LIMITS[0]..100).contains(&s.limit) {
+            let x = (inner * s.limit as f64 / 100.0 - 1.0).round();
+            bar.push(Node::default().size(2.0, 12.0).radius(1.0).background(th.subtext).at(x, -3.0).key("mark"));
+        }
+        Node::column(vec![top, Node::row(bar).size(inner, 6.0).key("bar")])
+            .gap(12.0)
+            .padding(10.0, 12.0, 12.0, 12.0)
+            .width(WIDE)
+            .radius(10.0)
+            .background(th.tile(color, color != th.text))
+            .key("header")
+    }
+
+    /// The Charge Limit: a slider with its steps, and what pauses it. Then Charge to Full Now, or
+    /// while it's paused the button that turns the limit back on.
+    fn limit(&self, rx: &Rx, s: &Status) -> Vec<Node> {
+        let th = rx.theme;
+        let paused = s.limit_state == LimitState::Paused;
+        let note = if self.failed.as_deref() == Some("limit") {
+            Some((t("Non riuscito", "Failed"), th.red))
+        } else if paused {
+            Some((t("Sospeso", "Paused"), th.yellow))
+        } else {
+            None
+        };
+        let mut top = vec![Node::text(t("Limite di carica", "Charge Limit"), th.small_font(), th.subtext).key("label"), Node::spacer()];
+        if let Some((text, color)) = note {
+            top.push(Node::text(text, th.small_font(), color).key("note"));
+        }
+        let labels = LIMITS.iter().map(|&l| if l == 100 { t("Nessun limite", "No Limit").to_string() } else { format!("{l}%") }).collect();
+        let step = match s.limit_state {
+            LimitState::Off => LIMITS.len() - 1,
+            _ => LIMITS.iter().position(|&l| l == s.limit).unwrap_or(LIMITS.len() - 1),
+        };
+        // While paused a step would turn the limit back on, at another one
+        let action = (!paused || s.limit == 0).then(|| rx.action("limit"));
+        let mut column = vec![
+            Node::row(top).width(WIDE - 20.0).height(14.0).key("top"),
+            rx.steps(labels, step, action).size(WIDE - 20.0, SLIDER).key("slider"),
+            self.steps(rx, step).key("steps"),
+        ];
+        if paused {
+            column.push(Node::text(t("Per Completa carica ora: macOS lo riattiva più tardi", "For Charge to Full Now: macOS turns it back on later"), th.small_font(), th.subtext).max_width(WIDE - 20.0).key("paused"));
+        }
+        let mut rows = vec![Node::column(column).gap(6.0).align(Align::Start).padding(9.0, 10.0, 10.0, 10.0).width(WIDE).radius(10.0).background(th.tile(th.primary, false)).key("limit")];
+
+        let full = match s.limit_state {
+            LimitState::Paused if s.limit > 0 => Some(("arrow.uturn.backward", t("Riattiva il limite ora", "Turn the Limit Back On Now"), format!("limit:{}", s.limit))),
+            LimitState::On if s.ac && s.percent < 100 => Some(("bolt.fill", t("Completa carica ora", "Charge to Full Now"), "full".to_string())),
+            _ => None,
+        };
+        if let Some((symbol, label, action)) = full {
+            let failed = self.failed.as_deref() == Some(action.as_str());
+            let (symbol, label, color, text) = if failed { ("exclamationmark.circle.fill", t("Non riuscito", "Failed"), th.red, th.red) } else { (symbol, label, th.primary, th.text) };
+            rows.push(
+                Node::row(vec![Node::symbol(symbol, 11.0, Weight::Bold, color).key("icon"), Node::text(label, th.font_with(Weight::Bold, 12.0), text).key("label")])
+                    .gap(6.0)
+                    .justify(Justify::Center)
+                    .size(WIDE, 30.0)
+                    .radius(15.0)
+                    .background(th.surface.faded(0.7))
+                    .click(rx.action(&action))
+                    .key("full"),
+            );
+        }
+        rows
+    }
+
+    /// The limits under the slider, as System Settings has them, each under the dot of its step.
+    fn steps(&self, rx: &Rx, at: usize) -> Node {
+        let th = rx.theme;
+        let (width, travel) = (WIDE - 20.0, WIDE - 20.0 - SLIDER);
+        let font = th.small_font();
+        let labels = LIMITS.iter().enumerate().map(|(i, l)| {
+            let text = format!("{l}%");
+            let w = crate::gfx::measure_text(&text, &font).width.ceil();
+            // Centered under the step, the first and the last inside the tile
+            let center = SLIDER / 2.0 + travel * i as f64 / (LIMITS.len() - 1) as f64;
+            let x = (center - w / 2.0).clamp(0.0, width - w).round();
+            Node::text(text, font.clone(), if i == at { th.text } else { th.subtext }).at(x, 0.0).key(format!("step-{l}"))
+        });
+        Node::row(labels.collect()).size(width, 14.0)
+    }
+
+    /// The maximum capacity and the condition, the cycles, the temperature and the power.
+    fn tiles(&self, rx: &Rx, s: &Status) -> Vec<Node> {
+        let th = rx.theme;
+        let value = |text: String, color: Rgba| Node::text(text, th.font_with(Weight::Medium, 14.0), color);
+        let note = |text: String, color: Rgba| Some(Node::text(text, th.small_font(), color));
+        let mut tiles = Vec::new();
+
+        // The condition and the maximum capacity once system_profiler says them
+        let health = self.health.as_ref().map(|(h, _)| h);
+        let good = health.and_then(|h| h.condition.as_deref()).map(|c| c == "Good");
+        let warn = if good == Some(false) { th.yellow } else { th.text };
+        let capacity = health.and_then(|h| h.max_capacity.clone());
+        let fraction = capacity.as_deref().and_then(|c| c.trim_end_matches('%').trim().parse::<f64>().ok()).map(|p| p / 100.0);
+        let condition = good.and_then(|g| if g { note(t("Normale", "Normal").into(), th.subtext) } else { note(t("Assistenza", "Service").into(), th.yellow) });
+        let bar = Some((fraction.unwrap_or(0.0), if good == Some(false) { th.yellow } else { th.green }));
+        tiles.push(stat(rx, t("Capacità", "Capacity"), condition, value(capacity.unwrap_or_else(|| "…".into()), warn), bar).key("capacity"));
+
+        if let Some(c) = s.cycles {
+            let of = s.design_cycles.filter(|d| *d > 0);
+            let used = of.map(|d| c as f64 / d as f64);
+            let color = used.map(|u| th.level(u, 0.8, 1.0, th.green)).unwrap_or(th.green);
+            let total = of.and_then(|d| note(t(&format!("su {d}"), &format!("of {d}")).into(), th.subtext));
+            tiles.push(stat(rx, t("Cicli", "Cycles"), total, value(c.to_string(), th.text), Some((used.unwrap_or(0.0), color))).key("cycles"));
+        }
+
+        let live = self.live.clone().unwrap_or_default();
+        if let Some(c) = live.temperature {
+            let (word, color) = match c {
+                45.0.. => (t("Molto calda", "Hot"), th.red),
+                40.0.. => (t("Calda", "Warm"), th.yellow),
+                _ => (t("Normale", "Normal"), th.subtext),
+            };
+            let tint = if color == th.subtext { th.text } else { color };
+            tiles.push(stat(rx, t("Temperatura", "Temperature"), note(word.into(), color), value(temperature(c), tint), None).key("temperature"));
+        }
+
+        // What the Mac uses; on an Intel Mac, on battery, what comes out of the battery
+        let used = live.system.or(live.battery.filter(|_| !s.ac).map(|b| -b));
+        if let Some(w) = used {
+            let flow = match live.battery {
+                Some(b) if b >= 0.5 => note(t(&format!("Batteria +{b:.0} W"), &format!("Battery +{b:.0} W")).into(), th.green),
+                Some(b) if b <= -0.5 && s.ac => note(t(&format!("Batteria −{:.0} W", -b), &format!("Battery −{:.0} W", -b)).into(), th.yellow),
+                _ if !s.ac => note(t("Dalla batteria", "From battery").into(), th.subtext),
+                _ => None,
+            };
+            tiles.push(stat(rx, t("Consumo", "Power"), flow, value(watts(w), th.text), None).key("power"));
+        }
+        tiles
+    }
+
+    /// The adapter, two tiles wide: its power and what it is, and what it gives now.
+    fn adapter(&self, rx: &Rx, a: &Adapter) -> Node {
+        let th = rx.theme;
+        let detail: Vec<String> = [a.kind.clone(), a.volts.map(|v| format!("{} V", decimal(v, if v.fract() == 0.0 { 0 } else { 1 })))].into_iter().flatten().collect();
+        let detail = if detail.is_empty() { t("Collegato", "Connected").to_string() } else { detail.join(" · ") };
+        let input = self.live.as_ref().and_then(|l| l.input).filter(|w| *w > 0.0);
+        let mut row = vec![
+            Node::row(vec![Node::symbol("powerplug.fill", 15.0, Weight::Semibold, th.primary)]).width(26.0).justify(Justify::Center).key("icon"),
+            Node::column(vec![
+                Node::text(t(&format!("Alimentatore da {} W", a.watts), &format!("{} W Power Adapter", a.watts)), th.font(), th.text).max_width(WIDE - 170.0).key("name"),
+                Node::text(detail, th.small_font(), th.subtext).max_width(WIDE - 170.0).key("detail"),
+            ])
+            .gap(2.0)
+            .align(Align::Start)
+            .key("names"),
+            Node::spacer(),
+        ];
+        if let Some(w) = input {
+            row.push(
+                Node::column(vec![Node::text(watts(w), th.font_with(Weight::Medium, 14.0), th.text).key("value"), Node::text(t("in ingresso", "drawing"), th.small_font(), th.subtext).key("label")])
+                    .gap(2.0)
+                    .align(Align::End)
+                    .key("input"),
+            );
+        }
+        Node::row(row).gap(10.0).padding(8.0, 12.0, 8.0, 10.0).size(WIDE, LINE).radius(10.0).background(th.tile(th.primary, false)).key("adapter")
+    }
+}
+
+/// A tile of the dashboard: a label with a note on its right, the value under them and, with
+/// `bar`, a bar of a fraction under the value.
+fn stat(rx: &Rx, label: &str, note: Option<Node>, value: Node, bar: Option<(f64, Rgba)>) -> Node {
+    let th = rx.theme;
+    // The note takes what the label leaves
+    let room = INNER - crate::gfx::measure_text(label, &th.small_font()).width - 6.0;
+    let mut top = vec![Node::text(label, th.small_font(), th.subtext).key("label"), Node::spacer()];
+    if let Some(n) = note {
+        top.push(n.max_width(room).key("note"));
+    }
+    let mut column = vec![Node::row(top).gap(6.0).width(INNER).height(14.0).key("top"), value.max_width(INNER).key("value")];
+    if let Some((fraction, color)) = bar {
+        let progress = Node::new(Kind::Progress { value: fraction.clamp(0.0, 1.0), color, track: th.surface }).size(INNER, 4.0).key("progress");
+        column.push(Node::row(vec![progress]).padding(3.0, 0.0, 0.0, 0.0).key("bar"));
+    }
+    Node::column(column)
+        .gap(4.0)
+        .align(Align::Start)
+        .padding(9.0, 10.0, 9.0, 10.0)
+        .size(TILE, if bar.is_some() { BARRED } else { STAT })
+        .radius(10.0)
+        .background(th.tile(th.primary, false))
 }
 
 impl Widget for Battery {
@@ -206,6 +485,7 @@ impl Widget for Battery {
             self.mock = true;
             self.status = Some(m.status);
             self.health = Some((Health { condition: m.health, max_capacity: m.max_capacity }, Instant::now()));
+            self.live = Some(m.live);
             self.loaded = true;
             return;
         }
@@ -250,106 +530,57 @@ impl Widget for Battery {
     fn popup(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
         let s = self.status.as_ref()?;
-        let (status, status_color, details) = self.state(rx, s);
-        let (_, color) = self.icon(rx, s);
-        let bold = th.font();
-        let mut rows = vec![rx.section(&status, Some(Node::text(format!("{}%", s.percent), bold.clone(), color))).key("status")];
-        rows[0] = Node::row(vec![Node::text(&status, bold.clone(), status_color), Node::spacer(), Node::text(format!("{}%", s.percent), bold.clone(), color)])
-            .padding(6.0, 8.0, 2.0, 8.0)
-            .key("status");
-        if !details.is_empty() {
-            rows.push(rx.detail(&details).key("details"));
-        }
-
+        let mut rows = vec![self.header(rx, s)];
         if s.limit_state != LimitState::None {
-            let paused = s.limit_state == LimitState::Paused;
-            let right = paused.then(|| Node::text(t("Sospeso", "Paused"), bold.clone(), th.yellow));
-            rows.push(rx.section(t("Limite di carica", "Charge Limit"), right).padding(14.0, 8.0, 4.0, 8.0).key("limit"));
-            if paused {
-                rows.push(rx.detail(t("Per Completa carica ora: macOS lo riattiva da solo più tardi", "For Charge to Full Now: macOS turns it back on later")).key("paused"));
-            }
-            // While paused a click on a percentage would turn the limit back on, at another one
-            let disabled = paused && s.limit > 0;
-            for l in LIMITS {
-                let name = format!("limit:{l}");
-                let label = if l == 100 { t("Nessun limite", "No Limit").to_string() } else { format!("{l}%") };
-                let current = l == s.limit || (l == 100 && s.limit_state == LimitState::Off);
-                let failed = self.failed.as_deref() == Some(name.as_str());
-                let text = if failed { t("Non riuscito", "Failed").to_string() } else { label };
-                let color = if failed {
-                    th.red
-                } else if disabled {
-                    th.overlay
-                } else {
-                    th.text
-                };
-                let mut row = Node::row(vec![Node::text(text, bold.clone(), color)]).pad(4.0, 8.0).height(24.0).radius(th.row_radius).key(name.clone());
-                if current {
-                    row = row.background(th.surface);
-                }
-                if !disabled {
-                    row = row.click(rx.action(&name));
-                }
-                rows.push(row);
-            }
-            let full = match s.limit_state {
-                LimitState::Paused if s.limit > 0 => Some((t("Riattiva il limite ora", "Turn the Limit Back On Now"), format!("limit:{}", s.limit))),
-                LimitState::On if s.ac && s.percent < 100 => Some((t("Completa carica ora", "Charge to Full Now"), "full".to_string())),
-                _ => None,
-            };
-            if let Some((label, action)) = full {
-                let failed = self.failed.as_deref() == Some("full");
-                let (text, color) = if failed { (t("Non riuscito", "Failed"), th.red) } else { (label, th.primary) };
-                rows.push(Node::row(vec![Node::text(text, bold.clone(), color)]).pad(4.0, 8.0).height(24.0).radius(th.row_radius).click(rx.action(&action)).key("full"));
-            }
+            rows.extend(self.limit(rx, s));
         }
-
-        // The cycles at once, the condition and the maximum capacity once system_profiler says them
-        let health = self.health.as_ref().map(|(h, _)| h);
-        let condition = health.and_then(|h| h.condition.as_deref());
-        let mut parts = Vec::new();
-        if let Some(cap) = health.and_then(|h| h.max_capacity.as_deref()) {
-            parts.push(t(&format!("Capacità massima {cap}"), &format!("Maximum capacity {cap}")).to_string());
+        rows.push(Node::row(self.tiles(rx, s)).columns(2).gap(GAP).key("tiles"));
+        if let Some(a) = s.adapter.as_ref().filter(|_| s.ac) {
+            rows.push(self.adapter(rx, a));
         }
-        if let Some(c) = s.cycles {
-            parts.push(t(&format!("{c} cicli"), &format!("{c} cycles")).to_string());
-        }
-        if condition.is_some() || !parts.is_empty() {
-            let right = condition.map(|c| {
-                let (text, color) = if c == "Good" { (t("Normale", "Normal"), th.subtext) } else { (t("Assistenza consigliata", "Service Recommended"), th.yellow) };
-                Node::text(text, bold.clone(), color)
-            });
-            rows.push(rx.section(t("Stato batteria", "Battery Health"), right).padding(14.0, 8.0, 4.0, 8.0).key("health"));
-            if !parts.is_empty() {
-                rows.push(rx.detail(&parts.join(" · ")).key("health-details"));
-            }
-        }
-
-        rows.push(Node::default().height(8.0).key("gap"));
-        rows.push(rx.row_button(vec![Node::text(t("Impostazioni Batteria…", "Battery Settings…"), bold, th.primary)], vec![], rx.action("settings")).key("settings"));
-        Some(rx.popup(260.0, rows).padding(4.0, 4.0, 4.0, 4.0).gap(0.0))
+        rows.push(rx.row_button(vec![Node::text(t("Impostazioni Batteria…", "Battery Settings…"), th.font(), th.primary)], vec![], rx.action("settings")).key("settings"));
+        Some(rx.popup(WIDE, rows).gap(GAP).padding(8.0, 8.0, 6.0, 8.0))
     }
 
     fn ready(&self) -> bool {
         self.loaded
     }
 
-    fn action(&mut self, name: &str, _value: Option<f64>, cx: &mut Cx) {
-        if self.mock {
-            cx.close_popup();
-            return;
-        }
+    fn action(&mut self, name: &str, value: Option<f64>, cx: &mut Cx) {
         if name == "settings" {
             cx.close_popup();
-            runtime::open("x-apple.systempreferences:com.apple.Battery-Settings.extension");
+            if !self.mock {
+                runtime::open("x-apple.systempreferences:com.apple.Battery-Settings.extension");
+            }
+            return;
+        }
+        // The slider's value is its step; the button's limit is in its name
+        let limit = match (name, value) {
+            ("limit", Some(v)) => Some(LIMITS[((v * (LIMITS.len() - 1) as f64).round() as usize).min(LIMITS.len() - 1)]),
+            _ => name.strip_prefix("limit:").and_then(|l| l.parse().ok()),
+        };
+        let Some(s) = self.status.as_mut() else { return };
+        let current = if s.limit_state == LimitState::Off { 100 } else { s.limit };
+        if name == "limit" && limit == Some(current) && s.limit_state != LimitState::Paused {
+            return;
+        }
+        // At once, so the slider stays where it's released: the update that follows corrects it
+        match limit {
+            Some(l) => (s.limit, s.limit_state) = (l, if l < 100 { LimitState::On } else { LimitState::Off }),
+            None if name == "full" => s.limit_state = LimitState::Paused,
+            None => return,
+        }
+        self.failed = None;
+        cx.redraw();
+        if self.mock {
             return;
         }
         let name = name.to_string();
         cx.background::<Battery, _>(
             {
                 let name = name.clone();
-                move || match name.strip_prefix("limit:") {
-                    Some(l) => l.parse().ok().map(set_limit).unwrap_or(false),
+                move || match limit {
+                    Some(l) => set_limit(l),
                     None if name == "full" => charge_to_full(),
                     None => true,
                 }
@@ -380,7 +611,10 @@ impl Widget for Battery {
                         }
                     });
                 }
+                self.ticking += 1;
+                self.tick(self.ticking, cx);
             }
+            Event::PopupClosed => self.ticking += 1,
             _ => {}
         }
     }
@@ -397,6 +631,23 @@ impl Drop for Battery {
             unsafe { objc2_foundation::NSNotificationCenter::defaultCenter().removeObserver(o.as_ref()) };
         }
     }
+}
+
+/// `14,2` in Italian, `14.2` in English.
+fn decimal(v: f64, decimals: usize) -> String {
+    let s = format!("{v:.decimals$}");
+    if crate::i18n::italian() { s.replace('.', ",") } else { s }
+}
+
+/// `14,2 W`, `112 W`.
+fn watts(w: f64) -> String {
+    format!("{} W", decimal(w, if w < 100.0 { 1 } else { 0 }))
+}
+
+/// `31,4 °C`, or in Fahrenheit when the Mac says so (System Settings → Language & Region).
+fn temperature(c: f64) -> String {
+    let fahrenheit = NSUserDefaults::standardUserDefaults().stringForKey(ns_string!("AppleTemperatureUnit")).is_some_and(|u| u.to_string() == "Fahrenheit");
+    if fahrenheit { format!("{} °F", decimal(c * 9.0 / 5.0 + 32.0, 0)) } else { format!("{} °C", decimal(c, 1)) }
 }
 
 fn duration(minutes: i64) -> String {
@@ -469,8 +720,47 @@ fn internal_battery() -> Option<Retained<Dict>> {
     crate::iokit::power_sources(false).into_iter().find(|d| string(d, ns_string!("Type")).as_deref() == Some("InternalBattery"))
 }
 
-fn cycle_count() -> Option<i64> {
-    crate::iokit::services(c"AppleSmartBattery").first()?.number("CycleCount")
+/// The cycles so far and the ones the battery is made for.
+fn cycles() -> (Option<i64>, Option<i64>) {
+    match crate::iokit::services(c"AppleSmartBattery").first() {
+        Some(b) => (b.number("CycleCount"), b.number("DesignCycleCount9C")),
+        None => (None, None),
+    }
+}
+
+/// The temperature and the power, as the battery's gauge and the Mac's telemetry say them. The
+/// battery's own from its voltage and its current, which is less than 0 while it discharges.
+fn read_live() -> Live {
+    let Some(b) = crate::iokit::services(c"AppleSmartBattery").into_iter().next() else { return Live::default() };
+    let telemetry = b.dict("PowerTelemetryData");
+    let watts = |key: &NSString| telemetry.as_ref().and_then(|t| number(t, key)).filter(|mw| *mw >= 0).map(|mw| mw as f64 / 1000.0);
+    let battery = match (b.number("Voltage"), b.number("Amperage")) {
+        (Some(mv), Some(ma)) => Some(mv as f64 * ma as f64 / 1e6),
+        _ => None,
+    };
+    Live {
+        temperature: b.number("Temperature").filter(|c| *c > 0).map(|c| c as f64 / 100.0),
+        system: watts(ns_string!("SystemLoad")),
+        battery,
+        input: watts(ns_string!("SystemPowerIn")),
+    }
+}
+
+/// The adapter plugged in: its power, its voltage and whether it's USB-C or MagSafe.
+fn read_adapter() -> Option<Adapter> {
+    let a: Retained<Dict> = unsafe { owned(IOPSCopyExternalPowerAdapterDetails()) }?;
+    let watts = number(&a, ns_string!("Watts")).filter(|w| *w > 0)?;
+    let name = string(&a, ns_string!("Name")).unwrap_or_default();
+    let description = string(&a, ns_string!("Description")).unwrap_or_default();
+    let kind = if name.contains("MagSafe") {
+        Some("MagSafe")
+    } else if name.contains("USB-C") || description == "pd charger" {
+        Some("USB-C")
+    } else {
+        None
+    };
+    let volts = number(&a, ns_string!("AdapterVoltage")).filter(|mv| *mv > 0).map(|mv| mv as f64 / 1000.0);
+    Some(Adapter { watts, volts, kind: kind.map(String::from) })
 }
 
 /// PowerUIAgent's client, as System Settings uses it. MCL is the Manual Charge Limit.
@@ -517,6 +807,7 @@ fn read_status() -> Option<Status> {
     let ac = string(&b, ns_string!("Power Source State")).as_deref() == Some("AC Power");
     let charging = number(&b, ns_string!("Is Charging")).unwrap_or(0) != 0;
     let minutes = number(&b, if charging { ns_string!("Time to Full Charge") } else { ns_string!("Time to Empty") }).unwrap_or(-1);
+    let (cycles, design_cycles) = cycles();
     let mut status = Status {
         percent: current * 100 / max,
         ac,
@@ -528,13 +819,10 @@ fn read_status() -> Option<Status> {
         held: false,
         desktop: false,
         low_power: NSProcessInfo::processInfo().isLowPowerModeEnabled(),
-        watts: None,
-        cycles: cycle_count(),
+        cycles,
+        design_cycles,
+        adapter: if ac { read_adapter() } else { None },
     };
-    if ac {
-        let adapter: Option<Retained<Dict>> = unsafe { owned(IOPSCopyExternalPowerAdapterDetails()) };
-        status.watts = adapter.and_then(|a| number(&a, ns_string!("Watts")));
-    }
     if let Some(c) = client() {
         unsafe {
             let mut error: *mut AnyObject = std::ptr::null_mut();

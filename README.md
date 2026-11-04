@@ -19,7 +19,7 @@ processes a minute.
 | `aerospace` | [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspaces with the icons of their windows in on-screen order, the focused one under a sliding highlight, the binding mode | — (clicks switch workspace, focus a window, leave the mode) |
 | `front_app` | The app in front | — |
 | `system` | CPU, GPU and memory, colored by load and memory pressure | Usage bars, details and the top apps for each, Activity Monitor |
-| `battery` | The charge, with an icon for its state | State, Charge Limit (macOS 26.4+) and Charge to Full Now, battery health, Battery settings |
+| `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
 | `audio` | The output and the input in use, with the battery of Bluetooth devices and a slider with the volume of each (`sliders = false` hides them), the first thing to go when the bar has no room; the Mac's own speakers and microphone, or both halves of a headset, show as one | A dashboard: the output and input volume, each with its level and a slider; tiles for the devices to switch to and for the paired Bluetooth headphones and speakers to connect or disconnect |
 | `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph, on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click, and the VPN |
@@ -46,7 +46,7 @@ Each widget with its popup, on made-up data (see below):
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/audio.png" width="429" alt="Output and input volume with sliders, tiles for the devices and for Bluetooth headphones and speakers"><br><code>audio</code></td>
-<td align="center" valign="top"><img src="docs/screenshots/battery.png" width="308" alt="The battery charging up to its limit, the Charge Limit and battery health"><br><code>battery</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/battery.png" width="392" alt="The battery charging up to its limit, the Charge Limit as a slider, tiles for capacity, cycles, temperature and power, and the adapter"><br><code>battery</code></td>
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/notifications.png" width="370" alt="A crash report, Dock badges and Homebrew updates"><br><code>notifications</code></td>
@@ -63,9 +63,10 @@ from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, the s
 listeners, the network from the System Configuration store, the calendars from EventKit, Home
 Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
 from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
-memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility), and only while the
-network popup is open its traffic and Wi-Fi link every second and a ping to the router every 5. The
-bar is redrawn only when a value changes.
+memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility), and only while
+their popups are open the network's traffic and Wi-Fi link every second and a ping to the router
+every 5, and the battery's temperature and power every 2 seconds. The bar is redrawn only when a
+value changes.
 
 A few things still run a process: `brew outdated` every hour and on wake (only with `brewfile` or
 `brew = true`), `system_profiler` for AirPods batteries and paired devices when the audio popup
@@ -299,7 +300,8 @@ rb.widget {
   `background`, `border`, `opacity`, `align`, `justify`, `key`, `hover`, `selected` (a sliding
   highlight behind the child with that key), colors by palette name (`"primary"`, `"green@0.5"`)
   or hex. A slider shows its percentage inside, unless `percent = false`, and its knob while the
-  mouse is over it.
+  mouse is over it; with `labels = { "Low", "High" }` it stops at that many steps and shows the
+  label of its step instead (`value` and `on_change` go from 0 for the first to 1 for the last).
 - **Actions**: `on_click` (and `on_change` for sliders, `on_edge` for scrolls) takes a function, a
   URL to open, `"popup"`, or a shell command.
 - **Functions**: `rb.exec(cmd, function(stdout, status, stderr) … end)` (in the background), `rb.shell(cmd)`, `rb.open(url)`,

@@ -102,7 +102,20 @@ impl<'a> Rx<'a> {
     /// released.
     pub fn slider(&self, value: f64, action: Action) -> Node {
         let t = self.theme;
-        Node::new(Kind::Slider { value, color: t.primary, track: t.surface, font: Some(t.font_with(Weight::Bold, 11.0)) }).click(action)
+        Node::new(Kind::Slider { value, color: t.primary, track: t.surface, font: Some(t.font_with(Weight::Bold, 11.0)), labels: vec![] }).click(action)
+    }
+
+    /// A slider that stops at `labels`, at `step`, with its label inside; `action` gets the value
+    /// of the step where it's released (`step / (n - 1)`), none to show it disabled.
+    pub fn steps(&self, labels: Vec<String>, step: usize, action: Option<Action>) -> Node {
+        let t = self.theme;
+        let value = if labels.len() < 2 { 0.0 } else { step.min(labels.len() - 1) as f64 / (labels.len() - 1) as f64 };
+        let color = if action.is_some() { t.primary } else { t.overlay };
+        let slider = Node::new(Kind::Slider { value, color, track: t.surface, font: Some(t.font_with(Weight::Bold, 11.0)), labels });
+        match action {
+            Some(a) => slider.click(a),
+            None => slider,
+        }
     }
 
     pub fn section(&self, title: &str, right: Option<Node>) -> Node {

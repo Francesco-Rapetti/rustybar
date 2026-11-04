@@ -403,6 +403,8 @@ impl Convert<'_> {
                 track: theme.surface,
                 // The percentage inside, unless `percent = false`
                 font: t.get::<Option<bool>>("percent")?.unwrap_or(true).then(|| FontSpec::new(&theme.font, Weight::Bold, 11.0)),
+                // Steps, each with the label shown inside instead of the percentage
+                labels: t.get::<Option<Vec<String>>>("labels")?.unwrap_or_default(),
             })
             .grow(),
             "progress" => Node::new(Kind::Progress {
