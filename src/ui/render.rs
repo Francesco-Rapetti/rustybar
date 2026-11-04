@@ -97,6 +97,8 @@ pub struct Surface {
     pub hits: Vec<Hit>,
     pub scrolls: HashMap<String, ScrollState>,
     pub hovered: Option<String>,
+    /// The highlight the hovered node shows.
+    hover_color: Option<Rgba>,
     pub highlight: Rgba,
     /// The glass nodes of the last render, for the window to put its glass views behind them.
     pub glass: Vec<Glass>,
@@ -146,6 +148,7 @@ impl Surface {
             hits: Vec::new(),
             scrolls: HashMap::new(),
             hovered: None,
+            hover_color: None,
             highlight,
             glass: Vec::new(),
             glass_fill: None,
@@ -181,7 +184,28 @@ impl Surface {
         let path = self.child_path("", node);
         self.walk(node, laid, &root, path, 0.0, 0.0, None, None);
         self.sweep();
+        self.refresh_hover();
         CATransaction::commit();
+    }
+
+    /// Gives the node under the mouse the highlight it has now, which a render can change without
+    /// the mouse moving: a tab clicked takes the one of the selected tab, instead of keeping the
+    /// opaque one it had over the selection sliding in. One that can't be clicked anymore loses it.
+    fn refresh_hover(&mut self) {
+        let Some(path) = self.hovered.clone() else { return };
+        let color = self.hits.iter().rev().find(|h| h.kind == HitKind::Click && h.path == path).and_then(|h| h.hover);
+        if color == self.hover_color {
+            return;
+        }
+        let Some(e) = self.entries.get(&path) else { return };
+        match color {
+            Some(c) => e.layer.setBackgroundColor(Some(&c.cg())),
+            None => {
+                e.layer.setBackgroundColor(e.background.map(|c| c.cg()).as_deref());
+                self.hovered = None;
+            }
+        }
+        self.hover_color = color;
     }
 
     /// Fades out and removes the layers of the nodes that are gone.
@@ -211,6 +235,7 @@ impl Surface {
         self.scrolls.retain(|k, _| self.entries.contains_key(k));
         if self.hovered.as_ref().is_some_and(|h| !self.entries.contains_key(h)) {
             self.hovered = None;
+            self.hover_color = None;
         }
         if self.slider_hovered.as_ref().is_some_and(|h| !self.entries.contains_key(h)) {
             self.slider_hovered = None;
@@ -553,6 +578,7 @@ impl Surface {
                     e.layer.setBackgroundColor(Some(&c.cg()));
                 }
         });
+        self.hover_color = if path.is_some() { color } else { None };
         self.hovered = path;
     }
 
@@ -931,5 +957,41 @@ mod tests {
         assert_eq!(concentric(rect(1.0, 1.0, 198.0, 10.0), 2.0, popup(12.0)), [5.0; 4]);
         assert_eq!(concentric(rect(4.0, 4.0, 192.0, 24.0), 14.0, popup(32.0)), [14.0; 4]);
         assert_eq!(concentric(rect(4.0, 4.0, 192.0, 24.0), 8.0, None), [8.0; 4]);
+    }
+
+    #[test]
+    fn hover_follows_a_tab_selected_under_the_mouse() {
+        let (primary, veil, highlight) = (Rgba(0.8, 0.65, 0.97, 1.0), Rgba(0.0, 0.0, 0.0, 0.12), Rgba(0.3, 0.3, 0.4, 1.0));
+        // Two tabs as the widgets draw them: the selected one has a veil as its hover
+        let switch = |on: &str| {
+            let tab = |key: &str| {
+                let n = Node::default().size(40.0, 20.0).click(Action::Widget { widget: "w".into(), name: key.into() }).key(key);
+                if key == on { n.hover(veil) } else { n }
+            };
+            Node::row(vec![tab("a"), tab("b")]).selected(Some(on.into()), primary).key("switch")
+        };
+        let mut surface = Surface::new(2.0, highlight);
+        surface.animate = false;
+        let shown = |s: &Surface, path: &str| {
+            let c = s.entries[path].layer.backgroundColor();
+            c.map(|c| (1..=4).map(|i| unsafe { *objc2_core_graphics::CGColor::components(Some(&c)).add(i - 1) }).collect::<Vec<_>>())
+        };
+        let rgba = |c: Rgba| Some(vec![c.0, c.1, c.2, c.3]);
+        let render = |s: &mut Surface, on: &str| {
+            let node = switch(on);
+            let laid = super::super::layout::Layout { scale: 2.0 }.run(&node, None);
+            s.render(&node, &laid);
+        };
+
+        render(&mut surface, "a");
+        let b = surface.hit(CGPoint::new(60.0, 10.0), &[HitKind::Click]).map(|h| (h.path.clone(), h.hover)).unwrap();
+        surface.set_hover(Some(b.0.clone()), b.1);
+        assert_eq!(shown(&surface, &b.0), rgba(highlight));
+        // Clicked, the mouse where it was: the veil over the selection, not the opaque highlight
+        render(&mut surface, "b");
+        assert_eq!(shown(&surface, &b.0), rgba(veil));
+        // The mouse leaves: nothing over the selection
+        surface.set_hover(None, None);
+        assert_eq!(shown(&surface, &b.0), None);
     }
 }
