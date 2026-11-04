@@ -1,6 +1,6 @@
 [
-  {"title": "Standup", "start": -50, "end": -35, "meet": true},
-  {"title": "Design review", "start": 12, "end": 42, "meet": true},
-  {"title": "Lunch with Sam", "start": 90, "end": 150},
-  {"title": "Release day", "all_day": true}
+  {"title": "Standup", "start": -50, "end": -35, "meet": true, "calendar": "Work", "color": "#1badf8", "guests": 6, "accepted": 5},
+  {"title": "Design review", "start": 12, "end": 42, "meet": true, "calendar": "Work", "color": "#1badf8", "location": "Room 4B", "guests": 4, "accepted": 3},
+  {"title": "Lunch with Sam", "start": 90, "end": 150, "calendar": "Personal", "color": "#63da38", "location": "Corner Cafe"},
+  {"title": "Release day", "all_day": true, "calendar": "Team", "color": "#cc73e1"}
 ]
