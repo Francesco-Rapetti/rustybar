@@ -332,6 +332,18 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   popup ~64). Provato dall'utente col mouse vero sulla barra di prova il 4/11/2026: crescita,
   aspetto di vetro, ritorno senza sfarfallio, uscita e rientro veloci. Da provare: clic sui tasti
   e sulla cima, trascinare l'avanzamento.
+- `events` a plancia: in cima l'evento della barra (`featured`: quello in corso che finisce prima,
+  finché non comincia il prossimo, se no il prossimo) in un riquadro col colore del conto alla
+  rovescia, con orari, calendario (pallino del suo colore) e luogo, invitati che hanno accettato,
+  avanzamento se è in corso e `Partecipa a Google Meet`; clic sul riquadro → Calendario. Sotto gli
+  eventi di tutto il giorno come chip, poi tutti quelli con l'orario: barretta del colore del
+  calendario, inizio sopra la fine, titolo sopra calendario · luogo, i passati attenuati e una riga
+  rossa all'ora di adesso dopo quelli cominciati; `Apri Calendario…` in fondo. Da EventKit anche
+  nome e colore del calendario (`NSColor` in sRGB, feature `objc2-app-kit` di `objc2-event-kit`),
+  luogo (non un link) e partecipanti. Con i dati finti i clic non fanno niente. Provato coi dati
+  finti (it/en, prossimo e in corso, titoli lunghi, chip su due righe): ~16 MB, ~0,1% CPU, 0
+  processi, popup aperto o chiuso. Da provare dal vero con l'utente: colori dei calendari veri,
+  i clic (riquadro, Partecipa, righe, chip).
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a
