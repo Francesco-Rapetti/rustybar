@@ -282,7 +282,18 @@ impl Widget for Notifications {
         if badges.is_empty() {
             return None;
         }
-        Some(Node::row(badges).gap(4.0).height(th.pill_height).key(rx.name).click(rx.toggle_popup()))
+        // No pill, as for apple: the hover highlight is a capsule as tall as one, around the badges
+        // as far as above and below them, so it's concentric with them (a circle around just one)
+        let ring = ((th.pill_height - 18.0) / 2.0).max(0.0);
+        Some(
+            Node::row(badges)
+                .gap(4.0)
+                .height(th.pill_height)
+                .padding(0.0, ring, 0.0, ring)
+                .radius(th.pill_height / 2.0)
+                .key(rx.name)
+                .click(rx.toggle_popup()),
+        )
     }
 
     fn popup(&self, rx: &Rx) -> Option<Node> {
