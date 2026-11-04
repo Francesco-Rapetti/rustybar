@@ -9,21 +9,25 @@
 //!   slim (when the bar has no room for them: after the volume sliders of `audio`, see
 //!   `slim_first`) or compact, one pill, the account with the busiest session, whose popup has
 //!   them all, each under its name in its color.
-//! - Popup: the name (or the email) and the plan (`Claude Max`), the email and the organization;
-//!   for the session and the week the percentage, a bar in the account's color (yellow and red as
-//!   in the bar) and the reset (`Reset tra 2 h 57 min · 01:10`, `Reset tra 3 g 5 h · ven 19:10`,
-//!   `Parte con il prossimo messaggio` before the window starts). `Esci`, which asks for a second
-//!   click (`Fai clic di nuovo per uscire`). While it reads again, `Aggiornamento…` in place of the
-//!   plan. Logged out: `Nessun account`, the config dir, a hint and `Accedi` (`Accedi nel browser…`
-//!   while Claude Code waits for the browser; a notification if it fails, whose click opens the
-//!   output in `~/Library/Logs/rustybar-claude.log`, `-2.log` for the second account…). An
-//!   account without plan limits (an API key) or whose numbers can't be read says so in yellow;
-//!   without Claude Code, `Claude Code non trovato` in red.
+//! - Popup: for each account a header with its spark, the name (or the email), the plan (`Max`),
+//!   the email and the organization (not the personal one, named after the email), how old the
+//!   numbers are (`3 min fa`, yellow when the last
+//!   reading failed, `Aggiornamento…` while it reads), ↻ to read again and sign out, which asks for
+//!   a second click (`Fai clic di nuovo per uscire` in place of the email). Under it two tiles, the
+//!   session and the week: the percentage, a bar in the account's color (yellow and red as in the
+//!   bar, and the tile tinted the same), when it resets (`14:12`, `ven 19:10` when it's more than
+//!   a day away) and how long until then (`tra 2 h 57 min`, `al prossimo messaggio` before the
+//!   window starts); while the popup is open the times follow the clock. Logged out:
+//!   `Nessun account`, the config dir (or a hint) and `Accedi` (`Accedi nel browser…` while Claude
+//!   Code waits for the browser; a notification if it fails, whose click opens the output in
+//!   `~/Library/Logs/rustybar-claude.log`, `-2.log` for the second account…). An account without
+//!   plan limits (an API key) or whose numbers can't be read says so in a yellow tile; without
+//!   Claude Code, a red one. At the bottom, the usage page on claude.ai.
 //! - Data: Claude Code itself, the only way to these numbers: `claude auth status --json` and
 //!   `claude -p` answering the `get_usage` control request (the data of `/usage`) without sending
 //!   a message, so without using the plan; Claude Code renews an expired login by itself and asks
-//!   the server only when its numbers are more than a minute old. Every 5 minutes, on wake, and
-//!   when the popup opens if the numbers are more than a minute old. Nothing of the account's
+//!   the server only when its numbers are more than a minute old. Every 5 minutes, on wake, with
+//!   ↻, and when the popup opens if the numbers are more than a minute old. Nothing of the account's
 //!   setup is loaded (CLAUDE.md, MCP servers, plugins, hooks) and no session is saved.
 
 use std::path::PathBuf;
@@ -37,13 +41,24 @@ use crate::config::Options;
 use crate::gfx::{Rgba, Weight};
 use crate::i18n::t;
 use crate::runtime;
-use crate::ui::{Kind, Node};
+use crate::ui::{Action, Align, Justify, Kind, Node};
 
 const ICON: &str = "/Applications/Claude.app/Contents/Resources/TrayIconTemplate@3x.png";
 const ORANGE: &str = "#d97757";
+const USAGE: &str = "https://claude.ai/settings/usage";
 const EVERY: f64 = 300.0;
 /// Numbers younger than this aren't read again when the popup opens.
 const FRESH: Duration = Duration::from_secs(60);
+/// How often the times in the open popup follow the clock.
+const TICK: f64 = 30.0;
+
+const TILE: f64 = 160.0;
+const GAP: f64 = 8.0;
+const WIDE: f64 = TILE * 2.0 + GAP;
+/// Inside the padding of a tile.
+const INNER: f64 = TILE - 20.0;
+/// The spark of a header, and the gap after it.
+const SPARK: f64 = 26.0 + 8.0;
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
@@ -67,6 +82,8 @@ struct Account {
     no_limits: bool,
     /// The last reading failed: these are the numbers of the one before.
     stale: bool,
+    /// When these numbers were read, in seconds since 1970; 0 without numbers.
+    at: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -84,7 +101,7 @@ impl Default for Setup {
 }
 
 /// Made-up data (see `mock`): the accounts, when the config has none, and what they read; the
-/// resets are in minutes from now.
+/// resets are in minutes from now, `at` in minutes ago.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct Mock {
@@ -165,41 +182,90 @@ fn read(path: &str, dir: &Option<String>, previous: Option<Account>) -> Account 
     let args = ["-p", "--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
     let out = claude(path, dir, &args, Some(&format!("{request}\n")), Duration::from_secs(30));
     match parse_usage(&out.stdout) {
-        Some(Ok((session, week))) => (account.session, account.week) = (Some(session), Some(week)),
+        Some(Ok((session, week))) => (account.session, account.week, account.at) = (Some(session), Some(week), crate::time::now()),
         Some(Err(())) => account.no_limits = true,
         None => {
             if let Some(p) = previous.filter(|p| p.email == account.email && p.session.is_some()) {
-                (account.session, account.week, account.stale) = (p.session, p.week, true);
+                (account.session, account.week, account.at, account.stale) = (p.session, p.week, p.at, true);
             }
         }
     }
     account
 }
 
-/// `Reset tra 2 h 57 min · 01:10`, with the day when it's more than a day away.
-fn reset_text(reset: Option<f64>) -> String {
-    let Some(at) = reset else { return t("Parte con il prossimo messaggio", "Starts with the next message").into() };
-    let left = at - crate::time::now();
-    if left < 60.0 {
-        return t("Reset tra meno di un minuto", "Resets in less than a minute").into();
-    }
+/// When a window resets, as on a clock: `14:12`, with the day when it's more than a day away
+/// (`ven 19:10`); nothing before it starts.
+fn reset_clock(reset: Option<f64>) -> String {
+    let Some(at) = reset else { return String::new() };
     let tm = crate::time::local(at);
-    let mut when = format!("{:02}:{:02}", tm.tm_hour, tm.tm_min);
-    if left >= 86_400.0 {
-        let days = if crate::i18n::italian() { ["dom", "lun", "mar", "mer", "gio", "ven", "sab"] } else { ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] };
-        when = format!("{} {when}", days[tm.tm_wday.clamp(0, 6) as usize]);
+    let time = format!("{:02}:{:02}", tm.tm_hour, tm.tm_min);
+    if at - crate::time::now() < 86_400.0 {
+        return time;
     }
-    let span = crate::time::span(left);
-    format!("{} · {when}", t(&format!("Reset tra {span}"), &format!("Resets in {span}")))
+    let days = if crate::i18n::italian() { ["dom", "lun", "mar", "mer", "gio", "ven", "sab"] } else { ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] };
+    format!("{} {time}", days[tm.tm_wday.clamp(0, 6) as usize])
 }
 
-/// `team` → `Claude Team`.
+/// How long until a window resets: `tra 2 h 57 min`, or that it starts with the next message.
+fn reset_in(reset: Option<f64>) -> String {
+    let Some(at) = reset else { return t("al prossimo messaggio", "with the next message").into() };
+    let left = at - crate::time::now();
+    if left < 60.0 {
+        return t("tra meno di un minuto", "in under a minute").into();
+    }
+    let span = crate::time::span(left);
+    t(&format!("tra {span}"), &format!("in {span}")).into()
+}
+
+/// How old numbers read at `at` are: `adesso`, `3 min fa`.
+fn age(at: f64) -> String {
+    let age = crate::time::now() - at;
+    if age < 60.0 {
+        return t("adesso", "just now").into();
+    }
+    let span = crate::time::span(age);
+    t(&format!("{span} fa"), &format!("{span} ago")).into()
+}
+
+/// Under the name: the email (unless it's the name already) and the organization, but not the
+/// personal one, which Claude names after the email (`alex@example.com's Organization`).
+fn details(a: &Account) -> String {
+    let email = if a.name.is_empty() { "" } else { a.email.as_str() };
+    let org = if !a.email.is_empty() && a.org.contains(&a.email) { "" } else { a.org.as_str() };
+    [email, org].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+}
+
+/// `team` → `Team`.
 fn plan_name(plan: &str) -> String {
     let mut chars = plan.chars();
     match chars.next() {
-        Some(c) => format!("Claude {}{}", c.to_uppercase(), chars.as_str()),
+        Some(c) => format!("{}{}", c.to_uppercase(), chars.as_str()),
         None => String::new(),
     }
+}
+
+/// A small button with a symbol, as on Docker's tiles; disabled without `action`.
+fn button(symbol: &str, color: Rgba, background: Rgba, action: Option<Action>, key: &str) -> Node {
+    let b = Node::row(vec![Node::symbol(symbol, 11.0, Weight::Bold, color)]).size(28.0, 22.0).justify(Justify::Center).radius(6.0).background(background).key(key);
+    match action {
+        Some(a) => b.click(a),
+        None => b,
+    }
+}
+
+/// A tile two wide that says something in `color`, with a detail under it.
+fn note(rx: &Rx, symbol: &str, color: Rgba, text: &str, detail: Option<&str>, key: &str) -> Node {
+    let th = rx.theme;
+    let mut lines = vec![Node::text(text, th.font(), color).max_width(WIDE - 20.0 - SPARK).key("text")];
+    lines.extend(detail.map(|d| Node::text(d, th.small_font(), th.subtext).max_width(WIDE - 20.0 - SPARK).key("detail")));
+    Node::row(vec![Node::row(vec![Node::symbol(symbol, 16.0, Weight::Semibold, color)]).width(26.0).justify(Justify::Center).key("icon"), Node::column(lines).gap(2.0).key("lines")])
+        .gap(8.0)
+        .align(Align::Center)
+        .padding(10.0, 10.0, 10.0, 10.0)
+        .width(WIDE)
+        .radius(10.0)
+        .background(th.tile(color, true))
+        .key(key)
 }
 
 pub struct Claude {
@@ -211,6 +277,8 @@ pub struct Claude {
     confirm_logout: Option<usize>,
     /// The account whose pill opened the popup, when each has its own.
     focus: Option<usize>,
+    /// Changes when the popup opens and closes, which stops the ticks of the one before.
+    ticking: u64,
     path: Option<String>,
     missing: bool,
     warning: f64,
@@ -240,6 +308,9 @@ impl Claude {
                     for w in [&mut a.session, &mut a.week].into_iter().flatten() {
                         w.reset = w.reset.map(|minutes| now + minutes * 60.0);
                     }
+                    if a.session.is_some() {
+                        a.at = now - a.at * 60.0;
+                    }
                     Some(a)
                 })
                 .collect();
@@ -253,6 +324,7 @@ impl Claude {
             logging_in: vec![false; n],
             confirm_logout: None,
             focus: None,
+            ticking: 0,
             path: None,
             missing: false,
             warning: options.f64("warning").unwrap_or(75.0),
@@ -342,11 +414,27 @@ impl Claude {
         (0..self.accounts.len()).fold(0, |best, i| if session(i) > session(best) { i } else { best })
     }
 
-    fn pill(&self, rx: &Rx, i: usize, time: bool, action: crate::ui::Action) -> Node {
-        let th = rx.theme;
+    /// The spark of the Claude app in the account's color, `✻` without the app.
+    fn spark(&self, rx: &Rx, i: usize) -> Node {
         let color = self.color(rx, i);
-        let icon = if std::path::Path::new(ICON).exists() { Node::image(ICON, 22.0, 22.0, Some(color)) } else { Node::text("✻", th.font_with(Weight::Bold, 15.0), color) };
-        let mut children = vec![icon.key("icon")];
+        let icon = if std::path::Path::new(ICON).exists() { Node::image(ICON, 22.0, 22.0, Some(color)) } else { Node::text("✻", rx.theme.font_with(Weight::Bold, 15.0), color) };
+        icon.key("icon")
+    }
+
+    /// While the popup is open, the times in it (how old the numbers are, how long until they
+    /// reset) follow the clock.
+    fn tick(&mut self, ticking: u64, cx: &mut Cx) {
+        cx.after::<Claude>(TICK, move |w, cx| {
+            if w.ticking == ticking && cx.popup_open {
+                cx.redraw();
+                w.tick(ticking, cx);
+            }
+        });
+    }
+
+    fn pill(&self, rx: &Rx, i: usize, time: bool, action: Action) -> Node {
+        let th = rx.theme;
+        let mut children = vec![self.spark(rx, i)];
         if let Some(a) = &self.data[i]
             && let (Some(s), Some(w)) = (&a.session, &a.week)
         {
@@ -364,70 +452,109 @@ impl Claude {
         pill
     }
 
-    /// The rows of account `i`, its name in `name_color`.
-    fn section(&self, rx: &Rx, i: usize, name_color: Rgba, rows: &mut Vec<Node>) {
+    /// The header of account `i`: its spark, name and plan, the email and the organization (or
+    /// what's going on instead), how old the numbers are, ↻ and sign out.
+    fn header(&self, rx: &Rx, i: usize) -> Node {
         let th = rx.theme;
-        let bold = th.font();
-        let key = |k: &str| format!("{i}-{k}");
-        let line = |left: Node, right: Option<Node>, k: &str| {
-            let mut c = vec![left, Node::spacer()];
-            c.extend(right);
-            Node::row(c).gap(16.0).padding(0.0, 8.0, 0.0, 8.0).key(key(k))
-        };
-        let small = |text: &str, k: &str, top: f64| Node::text(text, th.small_font(), th.subtext).padding(top, 8.0, 0.0, 8.0).key(key(k));
-        let action = |text: &str, color: Rgba, k: &str, clickable: bool| {
-            let mut row = Node::row(vec![Node::text(text, bold.clone(), color)]).padding(0.0, 8.0, 0.0, 8.0).height(26.0).radius(th.row_radius).key(key(k));
-            if clickable {
-                row = row.click(rx.action(&format!("{k}:{i}")));
+        let small = th.small_font();
+        let a = self.data[i].as_ref();
+        let logged_in = a.is_some_and(|a| a.logged_in);
+        let (name, plan, details) = match a {
+            None => (t("Lettura…", "Reading…").to_string(), None, String::new()),
+            Some(a) if !a.logged_in => {
+                let hint = t("Accedi per vedere quanto hai usato Claude", "Sign in to see how much you've used Claude");
+                (t("Nessun account", "No account").to_string(), None, self.accounts[i].dir.clone().unwrap_or_else(|| hint.into()))
             }
-            row
+            Some(a) => (if a.name.is_empty() { a.email.clone() } else { a.name.clone() }, Some(plan_name(&a.plan)).filter(|p| !p.is_empty()), details(a)),
         };
-        let updating = self.refreshing[i].then(|| Node::text(t("Aggiornamento…", "Updating…"), th.small_font(), th.subtext).key("plan"));
-        let Some(a) = &self.data[i] else {
-            rows.push(line(Node::text(t("Lettura…", "Reading…"), bold.clone(), name_color), None, "name"));
-            return;
+        let confirm = self.confirm_logout == Some(i);
+        let (details, details_color) = if confirm { (t("Fai clic di nuovo per uscire", "Click again to sign out").to_string(), th.red) } else { (details, th.subtext) };
+
+        // Name, plan, ↻ and sign out
+        let mut top = vec![Node::text(name, th.font(), th.text).max_width(WIDE - 150.0).key("name")];
+        if let Some(plan) = plan {
+            let color = self.color(rx, i);
+            top.push(Node::row(vec![Node::text(plan, small.clone(), color)]).padding(0.0, 5.0, 0.0, 5.0).height(16.0).radius(4.0).background(color.faded(0.16)).key("plan"));
+        }
+        top.push(Node::spacer());
+        let busy = a.is_none() || self.refreshing[i] || self.logging_in[i];
+        let (color, background) = if busy { (th.overlay, th.surface.faded(0.35)) } else { (th.text, th.surface.faded(0.7)) };
+        top.push(button("arrow.clockwise", color, background, (!busy).then(|| rx.action(&format!("refresh:{i}"))), "refresh"));
+        if logged_in {
+            let (color, background) = if confirm { (th.red, th.red.faded(0.22)) } else { (th.text, th.surface.faded(0.7)) };
+            top.push(button("rectangle.portrait.and.arrow.right", color, background, Some(rx.action(&format!("logout:{i}"))), "logout"));
+        }
+        let mut lines = vec![Node::row(top).gap(6.0).align(Align::Center).width(WIDE - SPARK).key("top")];
+
+        // The details, and how old the numbers are
+        let age = if self.refreshing[i] {
+            Some((t("Aggiornamento…", "Updating…").to_string(), th.subtext))
+        } else {
+            a.filter(|a| a.session.is_some() && a.at > 0.0).map(|a| (age(a.at), if a.stale { th.yellow } else { th.subtext }))
         };
-        if self.missing {
-            rows.push(line(Node::text(t("Claude Code non trovato", "Claude Code not found"), bold.clone(), th.red), None, "name"));
-            return;
+        if !details.is_empty() || age.is_some() {
+            let mut bottom = vec![Node::text(details, small.clone(), details_color).max_width(WIDE - SPARK - 90.0).key("details"), Node::spacer()];
+            bottom.extend(age.map(|(text, color)| Node::text(text, small.clone(), color).key("age")));
+            lines.push(Node::row(bottom).gap(6.0).width(WIDE - SPARK).key("bottom"));
         }
-        let dir = self.accounts[i].dir.clone();
-        if !a.logged_in {
-            rows.push(line(Node::text(t("Nessun account", "No account"), bold.clone(), name_color), updating, "name"));
-            if let Some(d) = &dir {
-                rows.push(small(d, "dir", 2.0));
-            }
-            rows.push(small(t("Accedi per vedere quanto hai usato Claude", "Sign in to see how much you've used Claude"), "hint", 2.0));
-            rows.push(Node::default().height(4.0).key(key("gap")));
-            rows.push(if self.logging_in[i] { action(t("Accedi nel browser…", "Sign in in the browser…"), th.yellow, "login", false) } else { action(t("Accedi", "Sign In"), th.primary, "login", true) });
-            return;
-        }
-        let name = if a.name.is_empty() { &a.email } else { &a.name };
-        let plan = updating.unwrap_or_else(|| Node::text(plan_name(&a.plan), th.small_font(), th.subtext).key("plan"));
-        rows.push(line(Node::text(name, bold.clone(), name_color), Some(plan), "name"));
-        let details: Vec<&str> = [if a.name.is_empty() { "" } else { a.email.as_str() }, a.org.as_str()].into_iter().filter(|s| !s.is_empty()).collect();
-        if !details.is_empty() {
-            rows.push(small(&details.join(" · "), "details", 2.0));
-        }
-        match (&a.session, &a.week) {
-            (Some(s), Some(w)) => {
-                for (title, window, k) in [(t("Sessione (5 ore)", "Session (5 hours)"), s, "session"), (t("Settimanale", "Weekly"), w, "week")] {
-                    let level = |normal| if a.stale { th.overlay } else { th.level(window.percent, self.warning, self.critical, normal) };
-                    rows.push(Node::default().height(8.0).key(key(&format!("{k}-gap"))));
-                    rows.push(line(Node::text(title, bold.clone(), th.text), Some(Node::text(format!("{:.0}%", window.percent), bold.clone(), level(th.text))), k));
-                    let bar = Node::new(Kind::Progress { value: window.percent / 100.0, color: level(self.color(rx, i)), track: th.surface }).height(6.0).grow();
-                    rows.push(Node::row(vec![bar]).padding(6.0, 8.0, 4.0, 8.0).key(key(&format!("{k}-bar"))));
-                    rows.push(small(&reset_text(window.reset), &format!("{k}-reset"), 0.0));
+        Node::row(vec![Node::row(vec![self.spark(rx, i)]).width(26.0).justify(Justify::Center).key("spark"), Node::column(lines).gap(2.0).key("lines")])
+            .gap(8.0)
+            .align(Align::Center)
+            .key("header")
+    }
+
+    /// The session or the week: how much is used, a bar, when it resets and how long until then.
+    fn window(&self, rx: &Rx, i: usize, a: &Account, w: &Window, week: bool) -> Node {
+        let th = rx.theme;
+        let small = th.small_font();
+        let level = |normal| if a.stale { th.overlay } else { th.level(w.percent, self.warning, self.critical, normal) };
+        let color = level(self.color(rx, i));
+        let label = if week { t("Settimana", "Week") } else { t("Sessione", "Session") };
+        Node::column(vec![
+            Node::row(vec![Node::text(label, small.clone(), th.subtext).key("label"), Node::spacer(), Node::text(reset_clock(w.reset), small.clone(), th.subtext).key("clock")]).width(INNER).key("top"),
+            Node::text(format!("{:.0}%", w.percent), th.font_with(Weight::Semibold, 20.0), level(th.text)).key("percent"),
+            Node::new(Kind::Progress { value: w.percent / 100.0, color, track: th.surface }).size(INNER, 6.0).key("bar"),
+            Node::text(reset_in(w.reset), small, th.subtext).max_width(INNER).key("left"),
+        ])
+        .gap(4.0)
+        .padding(10.0, 10.0, 10.0, 10.0)
+        .width(TILE)
+        .radius(10.0)
+        .background(th.tile(color, !a.stale))
+        .key(if week { "week" } else { "session" })
+    }
+
+    /// Account `i`: its header, and the tiles of its numbers or the sign-in button.
+    fn account(&self, rx: &Rx, i: usize) -> Node {
+        let th = rx.theme;
+        let mut rows = vec![self.header(rx, i)];
+        match &self.data[i] {
+            None => {}
+            Some(a) if !a.logged_in => {
+                let (symbol, label, color, action) = if self.logging_in[i] {
+                    ("hourglass", t("Accedi nel browser…", "Sign in in the browser…"), th.yellow, None)
+                } else {
+                    ("person.crop.circle", t("Accedi", "Sign In"), th.primary, Some(rx.action(&format!("login:{i}"))))
+                };
+                let mut sign_in = Node::row(vec![Node::symbol(symbol, 11.0, Weight::Bold, color).key("icon"), Node::text(label, th.font_with(Weight::Bold, 12.0), if action.is_some() { th.text } else { color }).key("label")])
+                    .gap(6.0)
+                    .justify(Justify::Center)
+                    .size(WIDE, 30.0)
+                    .radius(15.0)
+                    .background(th.surface.faded(0.7))
+                    .key("login");
+                if let Some(action) = action {
+                    sign_in = sign_in.click(action);
                 }
+                rows.push(sign_in);
             }
-            _ => {
-                let text = if a.no_limits { t("Il tuo account non ha limiti del piano", "Your account has no plan limits") } else { t("Impossibile leggere l'uso di Claude", "Can't read the usage of Claude") };
-                rows.push(Node::default().height(6.0).key(key("status-gap")));
-                rows.push(line(Node::text(text, bold.clone(), th.yellow), None, "status"));
-            }
+            Some(a) => match (&a.session, &a.week) {
+                (Some(s), Some(w)) => rows.push(Node::row(vec![self.window(rx, i, a, s, false), self.window(rx, i, a, w, true)]).gap(GAP).align(Align::Stretch).key("windows")),
+                _ if a.no_limits => rows.push(note(rx, "infinity", th.yellow, t("Il tuo account non ha limiti del piano", "Your account has no plan limits"), None, "status")),
+                _ => rows.push(note(rx, "exclamationmark.triangle.fill", th.yellow, t("Impossibile leggere l'uso di Claude", "Can't read the usage of Claude"), Some(t("Riprova con ↻", "Try again with ↻")), "status")),
+            },
         }
-        rows.push(Node::default().height(6.0).key(key("logout-gap")));
-        rows.push(if self.confirm_logout == Some(i) { action(t("Fai clic di nuovo per uscire", "Click again to sign out"), th.red, "logout", true) } else { action(t("Esci", "Sign Out"), th.primary, "logout", true) });
+        Node::column(rows).gap(8.0).key(format!("account-{i}"))
     }
 
     /// One pill per account, when there's room.
@@ -458,21 +585,19 @@ impl Widget for Claude {
 
     fn popup(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
-        let mut rows = vec![Node::default().height(4.0).key("top")];
-        let shown: Vec<usize> = match self.focus {
-            Some(i) if self.pills(rx) => vec![i],
-            _ => (0..self.accounts.len()).collect(),
-        };
-        for (n, &i) in shown.iter().enumerate() {
-            if n > 0 {
-                rows.push(Node::default().height(1.0).background(th.surface).padding(0.0, 8.0, 0.0, 8.0).key(format!("{i}-divider")));
-            }
-            let color = if shown.len() > 1 { self.color(rx, i) } else { th.text };
-            let mut section = Vec::new();
-            self.section(rx, i, color, &mut section);
-            rows.push(Node::column(section).gap(2.0).padding(if n > 0 { 6.0 } else { 0.0 }, 0.0, 6.0, 0.0).key(format!("account-{i}")));
+        let mut rows = Vec::new();
+        if self.missing {
+            let detail = t("RustyBar legge l'uso del piano da Claude Code", "RustyBar reads the plan's usage through Claude Code");
+            rows.push(note(rx, "xmark.octagon.fill", th.red, t("Claude Code non trovato", "Claude Code not found"), Some(detail), "missing"));
+        } else {
+            let shown: Vec<usize> = match self.focus {
+                Some(i) if self.pills(rx) => vec![i],
+                _ => (0..self.accounts.len()).collect(),
+            };
+            rows.extend(shown.into_iter().map(|i| self.account(rx, i)));
         }
-        Some(rx.popup(260.0, rows).padding(4.0, 4.0, 4.0, 4.0).gap(4.0))
+        rows.push(rx.row_button(vec![Node::text(t("Apri l'utilizzo su claude.ai", "Open Usage on claude.ai"), th.font(), th.primary)], vec![], rx.action("usage")).key("usage"));
+        Some(rx.popup(WIDE, rows).gap(14.0).padding(10.0, 8.0, 6.0, 8.0))
     }
 
     fn ready(&self) -> bool {
@@ -480,6 +605,13 @@ impl Widget for Claude {
     }
 
     fn action(&mut self, name: &str, _value: Option<f64>, cx: &mut Cx) {
+        if name == "usage" {
+            cx.close_popup();
+            if !self.mock {
+                runtime::open(USAGE);
+            }
+            return;
+        }
         let Some((kind, i)) = name.split_once(':').and_then(|(k, i)| Some((k, i.parse::<usize>().ok().filter(|i| *i < self.accounts.len())?))) else { return };
         match kind {
             // A pill of its own: the popup of its account, or the same popup switched to it
@@ -493,6 +625,7 @@ impl Widget for Claude {
                     cx.toggle_popup();
                 }
             }
+            "refresh" => self.refresh(i, false, cx),
             "login" => self.auth(i, true, cx),
             "logout" if self.confirm_logout == Some(i) => {
                 self.confirm_logout = None;
@@ -516,11 +649,16 @@ impl Widget for Claude {
         match event {
             Event::Wake => self.refresh_all(false, cx),
             Event::Trigger { name, .. } if name == "claude_update" => self.refresh_all(false, cx),
-            Event::PopupOpened => match self.focus {
-                Some(i) => self.refresh(i, true, cx),
-                None => self.refresh_all(true, cx),
-            },
+            Event::PopupOpened => {
+                self.ticking += 1;
+                self.tick(self.ticking, cx);
+                match self.focus {
+                    Some(i) => self.refresh(i, true, cx),
+                    None => self.refresh_all(true, cx),
+                }
+            }
             Event::PopupClosed => {
+                self.ticking += 1;
                 self.focus = None;
                 self.confirm_logout = None;
             }
@@ -545,7 +683,30 @@ mod tests {
         let none = r#"{"type":"control_response","response":{"request_id":"usage","response":{"rate_limits_available":false}}}"#;
         assert_eq!(parse_usage(none), Some(Err(())));
         assert_eq!(parse_usage("garbage"), None);
-        assert_eq!(plan_name("max"), "Claude Max");
+        assert_eq!(plan_name("max"), "Max");
         assert_eq!(plan_name(""), "");
+    }
+
+    #[test]
+    fn details_skip_the_personal_organization() {
+        let account = |name: &str, email: &str, org: &str| Account { name: name.into(), email: email.into(), org: org.into(), ..Default::default() };
+        assert_eq!(details(&account("Alex Doe", "alex@example.com", "alex@example.com's Organization")), "alex@example.com");
+        assert_eq!(details(&account("Alex Doe", "alex@work.example", "Example Inc.")), "alex@work.example · Example Inc.");
+        // Without a name the email is the name already
+        assert_eq!(details(&account("", "alex@example.org", "alex@example.org's Organization")), "");
+        assert_eq!(details(&account("", "alex@example.org", "Example Inc.")), "Example Inc.");
+        assert_eq!(details(&account("", "", "")), "");
+    }
+
+    #[test]
+    fn times() {
+        let now = crate::time::now();
+        assert_eq!(reset_clock(None), "");
+        assert_eq!(reset_clock(Some(now + 3600.0)).len(), 5);
+        assert!(reset_clock(Some(now + 3.0 * 86_400.0)).contains(' '));
+        assert!(reset_in(Some(now + 30.0)).contains("minut"));
+        assert!(reset_in(Some(now + 2.0 * 3600.0 + 90.0)).ends_with("2 h 1 min"));
+        assert!(age(now - 10.0) == "adesso" || age(now - 10.0) == "just now");
+        assert!(age(now - 180.0).starts_with("3 min "));
     }
 }

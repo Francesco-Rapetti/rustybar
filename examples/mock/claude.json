@@ -4,11 +4,11 @@
     {"dir": "~/.claude-personal", "color": "#a6e3a1"}
   ],
   "data": [
-    {"logged_in": true, "name": "Alex Doe", "email": "alex@example.com", "plan": "max",
+    {"logged_in": true, "name": "Alex Doe", "email": "alex@example.com", "org": "alex@example.com's Organization", "plan": "max", "at": 2,
      "session": {"percent": 42, "reset": 177}, "week": {"percent": 31, "reset": 4630}},
-    {"logged_in": true, "name": "Alex Doe", "email": "alex@work.example", "org": "Example Inc.", "plan": "team",
+    {"logged_in": true, "name": "Alex Doe", "email": "alex@work.example", "org": "Example Inc.", "plan": "team", "at": 0,
      "session": {"percent": 78, "reset": 95}, "week": {"percent": 46, "reset": 2000}},
-    {"logged_in": true, "email": "alex@example.org", "plan": "pro",
+    {"logged_in": true, "email": "alex@example.org", "org": "alex@example.org's Organization", "plan": "pro", "at": 4,
      "session": {"percent": 12, "reset": 210}, "week": {"percent": 64, "reset": 6000}}
   ]
 }
