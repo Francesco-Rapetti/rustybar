@@ -43,5 +43,21 @@
         "seek": true
       }
     }
+  ],
+  "queue": [
+    {
+      "title": "Paper Satellites",
+      "artist": "The Paper Lanterns",
+      "album": "Night Ferries",
+      "duration": 198,
+      "artwork": "now_playing/orchard.png"
+    },
+    {
+      "title": "Low Tide Radio",
+      "artist": "Mira Solen",
+      "album": "Small Weather",
+      "duration": 231,
+      "artwork": "now_playing/harbor.jpg"
+    }
   ]
 }

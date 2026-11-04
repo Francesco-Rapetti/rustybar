@@ -8,14 +8,14 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFRetained, CFType, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGMutablePath;
-use objc2_foundation::{NSArray, NSNumber, ns_string};
+use objc2_foundation::{NSArray, NSNumber, NSObjectNSKeyValueCoding, ns_string};
 use objc2_quartz_core::{
     CAAnimation, CABasicAnimation, CAFrameRateRange, CAGradientLayer, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
     CAShapeLayer, CASpringAnimation, CATransaction, kCACornerCurveContinuous, kCAGravityCenter, kCAGravityLeft,
 };
 
 use super::layout::Laid;
-use super::node::{Action, Kind, Node};
+use super::node::{Action, Kind, Node, Notch};
 use crate::gfx::{self, FontSpec, Rgba};
 
 /// An interactive region of a surface, in its coordinates (top-left origin).
@@ -60,6 +60,8 @@ struct Entry {
     corners: Option<(Retained<CAShapeLayer>, Corners, (f64, f64))>,
     /// A text that scrolls (see `Style::marquee`).
     marquee: Option<Marquee>,
+    /// The mask of a node shaped as the notch (see `Notch`), with what its path was made of.
+    notch: Option<(Retained<CAShapeLayer>, [f64; 7])>,
 }
 
 /// The layers of a text that scrolls: the strip with the text and a copy of it after a gap, which
@@ -81,6 +83,19 @@ const MARQUEE_FADE: f64 = 12.0;
 
 /// Corner radii: top left, top right, bottom right, bottom left.
 type Corners = [f64; 4];
+
+/// The bars of `Kind::Bars`: how many, how wide, how far apart.
+const BARS: usize = 4;
+const BAR_W: f64 = 3.0;
+const BAR_GAP: f64 = 2.0;
+pub const BARS_WIDTH: f64 = BARS as f64 * BAR_W + (BARS - 1) as f64 * BAR_GAP;
+/// Each bar's lowest height (a share of the node's), the seconds it takes to rise, and where it
+/// starts in its cycle: out of step with one another, as the sound would have them.
+const BAR_LOW: [f64; BARS] = [0.3, 0.25, 0.35, 0.2];
+const BAR_TIME: [f64; BARS] = [0.47, 0.71, 0.38, 0.59];
+const BAR_PHASE: [f64; BARS] = [0.1, 0.5, 0.25, 0.4];
+/// Their heights when they stand still.
+const BAR_STILL: [f64; BARS] = [0.55, 0.9, 0.45, 0.7];
 
 /// The rounded node that holds the ones inside it, in surface coordinates.
 #[derive(Clone, Copy)]
@@ -125,6 +140,9 @@ pub struct Surface {
     pub glass: Vec<Glass>,
     /// Draws the glass nodes with this fill instead (a popup, which is glass already).
     pub glass_fill: Option<Rgba>,
+    /// The stiffness and damping of the spring that changes of a notch's shape follow (see
+    /// `Notch`), instead of the ease of the rest.
+    pub spring: Option<(f64, f64)>,
     entries: HashMap<String, Entry>,
     generation: u64,
     /// Sliders being dragged keep their value until released.
@@ -174,6 +192,7 @@ impl Surface {
             highlight,
             glass: Vec::new(),
             glass_fill: None,
+            spring: None,
             entries: HashMap::new(),
             generation: 0,
             dragging: None,
@@ -318,11 +337,13 @@ impl Surface {
                     slider: None,
                     corners: None,
                     marquee: None,
+                    notch: None,
                 },
             );
         }
         let scale = self.scale;
         let motion = self.motion;
+        let spring = self.spring.filter(|_| self.animate);
         let hovered = self.hovered.as_deref() == Some(path.as_str());
         let highlight = self.highlight;
         let glass_fill = self.glass_fill;
@@ -332,11 +353,17 @@ impl Surface {
         entry.generation = self.generation;
         let layer = entry.layer.clone();
 
+        let s = &node.style;
         if entry.frame != frame || created {
-            layer.setFrame(frame);
+            // A notch's shape moves with its mask alone: bounds that moved too would cut its
+            // background short of the mask, and not what's in it
+            if s.notch.is_some() {
+                transaction(false, 0.0, || layer.setFrame(frame));
+            } else {
+                layer.setFrame(frame);
+            }
             entry.frame = frame;
         }
-        let s = &node.style;
         let opacity = s.opacity as f32;
         if (layer.opacity() - opacity).abs() > f32::EPSILON {
             layer.setOpacity(opacity);
@@ -352,7 +379,18 @@ impl Surface {
         // node it's in: a corner near one of the container's is concentric with it
         let fills = matches!(node.kind, Kind::Box) && s.border.is_none() && !s.glass && (s.background.is_some() || node.on_click.is_some());
         let corners = if fills { concentric(abs, s.radius, container) } else { [s.radius; 4] };
-        set_corners(entry, &layer, corners, laid.w, laid.h);
+        // What's in a notch is in its shape, which is round at the bottom only
+        let notched = s.notch.map(|n| {
+            set_notch(entry, &layer, n, s.radius, laid.w, laid.h, spring);
+            let (x, w, h) = n.area.map_or((0.0, laid.w, laid.h), |[x, w, h]| (x, w, h));
+            Container { rect: rect(abs.origin.x + x + n.ear, abs.origin.y, (w - 2.0 * n.ear).max(0.0), h), corners: [0.0, 0.0, s.radius, s.radius] }
+        });
+        if notched.is_none() {
+            if entry.notch.take().is_some() {
+                unsafe { layer.setMask(None) };
+            }
+            set_corners(entry, &layer, corners, laid.w, laid.h);
+        }
         match s.border {
             Some((w, c)) => {
                 layer.setBorderWidth(w);
@@ -478,6 +516,7 @@ impl Surface {
                 sh.setFrame(rect(0.0, 0.0, laid.w, laid.h));
                 sh.setCornerRadius(s.radius);
             }
+            Kind::Bars { color } => layout_bars(entry, &layer, *color, laid.w, laid.h, motion, scale),
             Kind::Box | Kind::Scroll { .. } => {
                 if entry.sig.is_some() {
                     unsafe { layer.setContents(None) };
@@ -544,7 +583,11 @@ impl Surface {
         }
 
         // Children, in this node if it's rounded
-        let container = if corners.iter().any(|&r| r > 0.0) { Some(Container { rect: abs, corners }) } else { container };
+        let container = match notched {
+            Some(n) => Some(n),
+            None if corners.iter().any(|&r| r > 0.0) => Some(Container { rect: abs, corners }),
+            None => container,
+        };
         if let Kind::Scroll { start, .. } = &node.kind {
             let (Some(content), Some(content_laid)) = (node.children.first(), laid.children.first()) else { return };
             let content_path = format!("{path}/k:content");
@@ -898,6 +941,129 @@ fn set_corners(entry: &mut Entry, layer: &CALayer, corners: Corners, w: f64, h: 
     entry.corners = Some((mask, corners, (w, h)));
 }
 
+/// Gives the layer the shape of the notch, `w`×`h`, as a mask (see `Notch`). A new shape follows
+/// `spring` from the one on screen, if there's one; else the transaction's animation, as the
+/// layer's frame does.
+fn set_notch(entry: &mut Entry, layer: &CALayer, n: Notch, radius: f64, w: f64, h: f64, spring: Option<(f64, f64)>) {
+    if entry.corners.take().is_some() {
+        unsafe { layer.setMask(None) };
+    }
+    layer.setCornerRadius(0.0);
+    let (x, sw, sh) = n.area.map_or((0.0, w, h), |[x, sw, sh]| (x, sw, sh));
+    let key = [x, sw, sh, n.ear, radius, w, h];
+    if entry.notch.as_ref().is_some_and(|(_, k)| *k == key) {
+        return;
+    }
+    let path = notch_path(x, sw, sh, n.ear, radius);
+    let Some((mask, _)) = entry.notch.take() else {
+        let mask = CAShapeLayer::new();
+        mask.setContentsScale(layer.contentsScale());
+        transaction(false, 0.0, || {
+            mask.setFrame(rect(0.0, 0.0, w, h));
+            mask.setPath(Some(&path));
+        });
+        // A new layer with no superlayer, as a mask has to be
+        unsafe { layer.setMask(Some(&mask)) };
+        entry.notch = Some((mask, key));
+        return;
+    };
+    match spring {
+        Some((stiffness, damping)) => {
+            // From where it is on screen, also in the middle of another spring
+            let shown = unsafe { mask.presentationLayer() }.unwrap_or_else(|| Retained::into_super(mask.clone()));
+            let from = shown.valueForKey(ns_string!("path"));
+            transaction(false, 0.0, || {
+                mask.setFrame(rect(0.0, 0.0, w, h));
+                mask.setPath(Some(&path));
+            });
+            let anim = CASpringAnimation::animationWithKeyPath(Some(ns_string!("path")));
+            anim.setMass(1.0);
+            anim.setStiffness(stiffness);
+            anim.setDamping(damping);
+            let to: &CFType = &path;
+            unsafe {
+                anim.setFromValue(from.as_deref());
+                anim.setToValue(Some(to.as_ref()));
+            }
+            anim.setDuration(anim.settlingDuration());
+            mask.addAnimation_forKey(&anim, Some(ns_string!("path")));
+        }
+        None => {
+            mask.setFrame(rect(0.0, 0.0, w, h));
+            mask.setPath(Some(&path));
+        }
+    }
+    entry.notch = Some((mask, key));
+}
+
+/// The notch's shape from `x`, `w`×`h` with its ears (see `Notch`): from the top left corner a
+/// curve of `ear` in to the side, down it, round at the bottom with `radius`, and out again to the
+/// top right corner. The same points for any size, so that one shape can turn into another.
+fn notch_path(x: f64, w: f64, h: f64, ear: f64, radius: f64) -> CFRetained<CGMutablePath> {
+    let ear = ear.clamp(0.0, (w / 2.0).max(0.0));
+    let r = radius.clamp(0.0, ((w - 2.0 * ear) / 2.0).min(h - ear).max(0.0));
+    let (left, right) = (x + ear, x + w - ear);
+    let path = CGMutablePath::new();
+    let p = Some(&*path);
+    let m = std::ptr::null();
+    unsafe {
+        CGMutablePath::move_to_point(p, m, x, 0.0);
+        CGMutablePath::add_quad_curve_to_point(p, m, left, 0.0, left, ear);
+        CGMutablePath::add_line_to_point(p, m, left, h - r);
+        CGMutablePath::add_quad_curve_to_point(p, m, left, h, left + r, h);
+        CGMutablePath::add_line_to_point(p, m, right - r, h);
+        CGMutablePath::add_quad_curve_to_point(p, m, right, h, right, h - r);
+        CGMutablePath::add_line_to_point(p, m, right, ear);
+        CGMutablePath::add_quad_curve_to_point(p, m, right, 0.0, x + w, 0.0);
+    }
+    CGMutablePath::close_subpath(p);
+    path
+}
+
+/// How long a spring of `stiffness` and `damping` takes to come to rest, in seconds.
+pub fn settling(stiffness: f64, damping: f64) -> f64 {
+    let anim = CASpringAnimation::new();
+    anim.setMass(1.0);
+    anim.setStiffness(stiffness);
+    anim.setDamping(damping);
+    anim.settlingDuration()
+}
+
+/// The bars of `Kind::Bars`, `w`×`h`: each rises to the top and falls to its lowest by itself, out
+/// of step with the others, at 30 frames a second at most; with `motion` off they stand still at
+/// heights of their own.
+fn layout_bars(entry: &mut Entry, layer: &CALayer, color: Rgba, w: f64, h: f64, motion: bool, scale: f64) {
+    const NAMES: [&str; BARS] = ["bar0", "bar1", "bar2", "bar3"];
+    let x0 = ((w - BARS_WIDTH) / 2.0).max(0.0);
+    for (i, name) in NAMES.iter().enumerate() {
+        let bar = part(entry, name, layer, scale);
+        bar.setFrame(rect(x0 + i as f64 * (BAR_W + BAR_GAP), 0.0, BAR_W, h));
+        bar.setCornerRadius(BAR_W / 2.0);
+        bar.setBackgroundColor(Some(&color.cg()));
+        let moving = unsafe { bar.animationForKey(ns_string!("bars")) }.is_some();
+        if motion && !moving {
+            let anim = CABasicAnimation::animationWithKeyPath(Some(ns_string!("transform.scale.y")));
+            unsafe {
+                anim.setFromValue(Some(&NSNumber::new_f64(BAR_LOW[i])));
+                anim.setToValue(Some(&NSNumber::new_f64(1.0)));
+            }
+            anim.setDuration(BAR_TIME[i]);
+            anim.setAutoreverses(true);
+            anim.setRepeatCount(f32::INFINITY);
+            anim.setTimeOffset(BAR_PHASE[i] * BAR_TIME[i] * 2.0);
+            anim.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(0.45, 0.0, 0.55, 1.0)));
+            anim.setPreferredFrameRateRange(CAFrameRateRange::new(15.0, 30.0, 30.0));
+            transaction(false, 0.0, || unsafe { bar.setValue_forKeyPath(Some(&NSNumber::new_f64(1.0)), ns_string!("transform.scale.y")) });
+            bar.addAnimation_forKey(&anim, Some(ns_string!("bars")));
+        } else if !motion {
+            if moving {
+                bar.removeAnimationForKey(ns_string!("bars"));
+            }
+            transaction(false, 0.0, || unsafe { bar.setValue_forKeyPath(Some(&NSNumber::new_f64(BAR_STILL[i])), ns_string!("transform.scale.y")) });
+        }
+    }
+}
+
 /// A `w`×`h` rectangle with each corner as round as `corners` says.
 fn rounded_rect(w: f64, h: f64, corners: Corners) -> CFRetained<CGMutablePath> {
     let [tl, tr, br, bl] = corners;
@@ -1049,6 +1215,7 @@ fn kind_tag(kind: &Kind) -> &'static str {
         Kind::Toggle { .. } => "toggle",
         Kind::Scroll { .. } => "scroll",
         Kind::Skeleton => "skeleton",
+        Kind::Bars { .. } => "bars",
     }
 }
 

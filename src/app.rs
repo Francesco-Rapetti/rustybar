@@ -33,8 +33,9 @@ use crate::gfx::Weight;
 use crate::runtime::{self, Timer};
 use crate::surface::{Backdrop, Mouse, SurfaceId, Window};
 use crate::theme::Theme;
-use crate::ui::{Action, Align, HitKind, Kind, Layout, Node, Surface};
-use crate::widgets::{self, Cx, Effect, Event, Rx, Widget};
+use crate::gfx::Rgba;
+use crate::ui::{Action, Align, HitKind, Kind, Layout, Node, Notch, Surface};
+use crate::widgets::{self, Cx, Effect, Event, Island, Rx, Widget};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
@@ -71,15 +72,42 @@ pub struct Bar {
     tree: Node,
     /// The pill hidden under a peek, as it would show.
     peek_pill: Option<Node>,
+    /// The widget drawn as an extension of the notch, where it went at the last render.
+    pub island: Option<IslandPlace>,
+    /// The room it had beside it on each side at the last render (see `steady_spare`).
+    island_spare: [f64; 2],
+}
+
+/// Where the bar put the widget drawn as an extension of the notch (see `Rx::island`).
+#[derive(Clone, Debug)]
+pub struct IslandPlace {
+    pub widget: String,
+    /// Its body, from the outer end of its left side to that of its right one, without the curves
+    /// at the top, in bar coordinates.
+    x0: f64,
+    x1: f64,
+    /// The middle of the notch.
+    middle: f64,
+    /// What it was drawn with.
+    room: Island,
 }
 
 pub struct Popup {
     pub widget: String,
     pub display: u32,
-    pub window: Window,
-    pub surface: Surface,
+    /// Its window; none for an island's, which is the island grown (see `Peek`).
+    view: Option<(Window, Surface)>,
     pub anchor: CGRect,
     pub side: Side,
+}
+
+/// How far an island grew (see `Rx::island`): with its peek under the mouse, into its popup on a
+/// click, or with its notice by itself. A pill's peek is always the first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    Peek,
+    Popup,
+    Notice,
 }
 
 /// A widget's pill grown down under the mouse, with what its `peek` shows: a window of its own
@@ -106,6 +134,24 @@ pub struct Peek {
     /// frames after the layers, so the card grows inside it instead of ahead of it. Going back,
     /// it shrinks behind the card.
     grown_glass: bool,
+    stage: Stage,
+    /// An island's: then its window has room for all it grows to (see `island_room`), and what
+    /// the mouse is on is its shape, `shape` (window coordinates, top-left origin). The rest is the
+    /// bar's, as the window is over it from its top, at `room` (bar coordinates).
+    island: bool,
+    shape: CGRect,
+    room: CGRect,
+}
+
+impl Peek {
+    /// What the mouse is on when it's on the peek, in screen coordinates (Cocoa).
+    fn on_screen(&self) -> CGRect {
+        if !self.island {
+            return self.frame;
+        }
+        let (f, s) = (self.frame, self.shape);
+        CGRect::new(CGPoint::new(f.origin.x + s.origin.x, f.origin.y + f.size.height - s.origin.y - s.size.height), s.size)
+    }
 }
 
 /// How long the mouse rests on a pill before it grows, so that one crossed on the way somewhere
@@ -114,6 +160,22 @@ const PEEK_DELAY: f64 = 0.1;
 const PEEK_LEAVE: f64 = 0.2;
 /// The time the layers take to move and resize (see `Surface::render`).
 const PEEK_ANIMATION: f64 = 0.32;
+
+/// An island's curves at the top, and its round corners at the bottom: at rest, as the notch's,
+/// grown and as a popup.
+const ISLAND_EAR: f64 = 6.0;
+const ISLAND_RADIUS: f64 = 10.0;
+const ISLAND_PEEK_RADIUS: f64 = 20.0;
+const ISLAND_POPUP_RADIUS: f64 = 24.0;
+/// The springs (stiffness, damping) it grows and goes back with: growing, a little past its size
+/// and back, as the Dynamic Island; going back, without, as smaller than at rest would cut it.
+const GROW: (f64, f64) = (320.0, 26.0);
+const SHRINK: (f64, f64) = (360.0, 36.0);
+/// How far past its size the spring may take an island growing, at most.
+const OVERSHOOT: f64 = 16.0;
+/// How long a notice shows.
+const NOTICE: f64 = 3.0;
+const BLACK: Rgba = Rgba(0.0, 0.0, 0.0, 1.0);
 
 pub struct App {
     pub mtm: MainThreadMarker,
@@ -332,11 +394,11 @@ impl App {
         for bar in &mut self.bars {
             bar.surface.highlight = self.theme.highlight;
         }
-        if let Some(popup) = &mut self.popup {
-            popup.surface.highlight = self.theme.highlight;
-            popup.surface.glass_fill = Some(self.theme.surface);
+        if let Some((_, surface)) = self.popup.as_mut().and_then(|p| p.view.as_mut()) {
+            surface.highlight = self.theme.highlight;
+            surface.glass_fill = Some(self.theme.surface);
         }
-        if let Some(peek) = &mut self.peek {
+        if let Some(peek) = self.peek.as_mut().filter(|p| !p.island) {
             peek.surface.highlight = self.theme.highlight;
         }
         if let Some(lua) = &self.lua {
@@ -392,6 +454,7 @@ impl App {
                     let display = self.mouse_display();
                     self.toggle_popup(widget, display);
                 }
+                Effect::Notice => self.notice(widget),
             }
         }
     }
@@ -471,16 +534,18 @@ impl App {
     /// The node of a widget in the bar of `d`: its own, its last known one (dimmed) until it's
     /// ready, a skeleton the very first time, or its error.
     fn item(&mut self, i: usize, d: &DisplayInfo, form: Form) -> Option<Node> {
-        self.item_wider(i, d, form, 0.0)
+        self.item_wider(i, d, form, 0.0, None)
     }
 
-    /// `item`, `spare` points wider at most (see `Rx::spare`). The cache keeps only the node as
-    /// wide as its form, the one the bar measures at start.
-    fn item_wider(&mut self, i: usize, d: &DisplayInfo, form: Form, spare: f64) -> Option<Node> {
+    /// `item`, `spare` points wider at most (see `Rx::spare`), or as an island in `island` (see
+    /// `Rx::island`). The cache keeps only the node as wide as its form, the one the bar measures
+    /// at start, and no island.
+    fn item_wider(&mut self, i: usize, d: &DisplayInfo, form: Form, spare: f64, island: Option<Island>) -> Option<Node> {
         let popup_open = self.popup.as_ref().is_some_and(|p| p.widget == self.slots[i].name);
         let slot = &self.slots[i];
         let mut rx = Rx::new(&slot.name, &self.theme, d, form, popup_open);
         rx.spare = spare;
+        rx.island = island;
         if let Some(err) = &slot.failed {
             return Some(error_pill(&rx, err));
         }
@@ -500,7 +565,7 @@ impl App {
             Ok(Some(mut node)) => {
                 node.key = Some(slot.name.clone());
                 let name = slot.name.clone();
-                if spare == 0.0 {
+                if spare == 0.0 && island.is_none() {
                     self.cache.put(&name, variant, &node);
                 }
                 Some(node)
@@ -521,7 +586,9 @@ impl App {
     /// group goes beside it, at the inner end of the left side if that has room for it, else of the
     /// right one, else in its compact form the same way, else nowhere (see `place_center`). The
     /// room left beside the center group, there or in the middle, goes to the text it had to cut
-    /// (see `widen`).
+    /// (see `widen`). The first widget of the center group may draw itself as an extension of the
+    /// notch there (see `Rx::island`): then it goes around the notch, the sides make room for the
+    /// least it takes, and it takes what they leave beside it.
     fn bar_tree(&mut self, b: usize) -> Node {
         let d = self.bars[b].display.clone();
         let height = self.config.bar.height;
@@ -531,11 +598,28 @@ impl App {
         let layout = Layout { scale: d.scale };
         let mut forms: HashMap<String, Form> = HashMap::new();
 
-        let centered: Vec<(usize, Form)> = (0..self.slots.len())
+        let mut centered: Vec<(usize, Form)> = (0..self.slots.len())
             .filter(|&i| self.slots[i].side == Side::Center)
             .map(|i| (i, self.config_form(&self.slots[i].name, &d)))
             .filter(|(_, form)| *form != Form::Hidden)
             .collect();
+        // The island, at the least it takes
+        let island_room = d.notch.map(|(l, r)| Island {
+            notch: r - l,
+            height: d.notch_height.min(height).max(1.0),
+            ear: ISLAND_EAR,
+            radius: ISLAND_RADIUS,
+            left: 0.0,
+            right: 0.0,
+        });
+        let mut island: Option<(usize, Form, Node)> = None;
+        if let (Some(room), Some(&(i, form))) = (island_room, centered.first())
+            && let Some(node) = self.item_wider(i, &d, form, 0.0, Some(room)).filter(is_island)
+        {
+            island = Some((i, form, node));
+            centered.remove(0);
+        }
+        let least = island.as_ref().map(|(_, _, n)| wings(&layout, n));
         let draw_center = |app: &mut App, compact: bool| -> Vec<Node> {
             centered.iter().filter_map(|&(i, form)| app.item(i, &d, if compact { Form::Compact } else { form })).collect()
         };
@@ -553,7 +637,10 @@ impl App {
             None => None,
         };
         let room = match middle {
-            Some((l, r)) => Room::Split { left: l - margin - gap, right: width - margin - r - gap },
+            Some((l, r)) => {
+                let (il, ir) = least.unwrap_or((0.0, 0.0));
+                Room::Split { left: l - il - margin - gap, right: width - margin - r - ir - gap }
+            }
             None => Room::Shared(width - 2.0 * margin - gap),
         };
 
@@ -630,6 +717,28 @@ impl App {
         let mut center_form = |name: &str, form: Form| forms.insert(name.to_string(), form);
         let width_of = |nodes: &[Node]| nodes.iter().map(|n| layout.intrinsic(n, None).0).sum::<f64>() + gap * nodes.len().saturating_sub(1) as f64;
         let used = groups.each_ref().map(|g| width_of(g));
+        // The island takes the room the sides leave beside it; the rest of the group what it leaves
+        let mut island_node = None;
+        self.bars[b].island = None;
+        let room = match (room, island, island_room, d.notch) {
+            (Room::Split { left, right }, Some((i, form, least_node)), Some(room), Some((nl, nr))) => {
+                let prev = self.bars[b].island_spare;
+                let spare = [steady_spare(prev[0], left - used[0]), steady_spare(prev[1], right - used[1])];
+                self.bars[b].island_spare = spare;
+                let room = Island { left: spare[0], right: spare[1], ..room };
+                let node = match spare[0] >= 1.0 || spare[1] >= 1.0 {
+                    true => self.item_wider(i, &d, form, 0.0, Some(room)).filter(is_island).unwrap_or(least_node),
+                    false => least_node,
+                };
+                let ((il, ir), (l0, r0)) = (wings(&layout, &node), least.unwrap_or_default());
+                let name = self.slots[i].name.clone();
+                center_form(&name, form);
+                self.bars[b].island = Some(IslandPlace { widget: name, x0: nl - il + room.ear, x1: nr + ir - room.ear, middle: (nl + nr) / 2.0, room });
+                island_node = Some((nl - il, node));
+                Room::Split { left: left - (il - l0), right: right - (ir - r0) }
+            }
+            (room, ..) => room,
+        };
         if d.notch.is_some() && !center.is_empty() {
             let Room::Split { left, right } = room else { unreachable!("a notch splits the bar") };
             let prev = self.bars[b].center;
@@ -679,7 +788,7 @@ impl App {
         // A pill grown under the mouse is in its own window: here it keeps its place, unseen
         self.bars[b].peek_pill = None;
         if let Some(peek) = self.peek.as_ref().filter(|p| p.hides_pill && p.display == d.id) {
-            for node in groups.iter_mut().flatten().chain(center.iter_mut()) {
+            for node in groups.iter_mut().flatten().chain(center.iter_mut()).chain(island_node.iter_mut().map(|(_, n)| n)) {
                 if node.key.as_deref() == Some(peek.widget.as_str()) {
                     self.bars[b].peek_pill = Some(node.clone());
                     node.style.opacity = 0.0;
@@ -702,6 +811,10 @@ impl App {
             };
             root.children.push(group.at(x, ((height - h) / 2.0).round()));
         }
+        // Against the top of the bar, around the notch
+        if let Some((x, node)) = island_node {
+            root.children.push(Node::row(vec![node]).key("island").at(x, 0.0));
+        }
         root
     }
 
@@ -718,7 +831,7 @@ impl App {
         for node in nodes {
             let slot = centered.iter().find(|(i, _)| node.key.as_deref() == Some(self.slots[*i].name.as_str())).copied();
             let drawn = match slot {
-                Some((i, form)) if spare >= 1.0 => self.item_wider(i, &d, if compact { Form::Compact } else { form }, spare),
+                Some((i, form)) if spare >= 1.0 => self.item_wider(i, &d, if compact { Form::Compact } else { form }, spare, None),
                 _ => None,
             };
             match drawn {
@@ -841,7 +954,7 @@ impl App {
                     surface.animate = false;
                     let window = Window::new(self.mtm, SurfaceId::Bar(d.id), frame, level, &surface.root, Backdrop::None, 0.0);
                     window.show();
-                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new(), center: None, spare: 0.0, tree: Node::default(), peek_pill: None });
+                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new(), center: None, spare: 0.0, tree: Node::default(), peek_pill: None, island: None, island_spare: [0.0; 2] });
                     changed = true;
                 }
             }
@@ -955,7 +1068,7 @@ impl App {
     fn surface_mut(&mut self, id: SurfaceId) -> Option<&mut Surface> {
         match id {
             SurfaceId::Bar(d) => self.bars.iter_mut().find(|b| b.display.id == d).map(|b| &mut b.surface),
-            SurfaceId::Popup => self.popup.as_mut().map(|p| &mut p.surface),
+            SurfaceId::Popup => self.popup.as_mut().and_then(|p| p.view.as_mut()).map(|(_, s)| s),
             SurfaceId::Peek => self.peek.as_mut().map(|p| &mut p.surface),
         }
     }
@@ -982,14 +1095,36 @@ impl App {
             SurfaceId::Popup => self.popup.as_ref().map(|p| p.display),
             SurfaceId::Peek => self.peek.as_ref().map(|p| p.display),
         };
+        // An island's window is as wide as the bar, over it: outside its shape the mouse is on the
+        // bar, at the same coordinates, or below it. A click below closes its popup
+        if let SurfaceId::Peek = id
+            && let Some(peek) = self.peek.as_mut().filter(|p| p.island && p.surface.dragging.is_none())
+            && (!crate::ui::contains(peek.shape, p) || matches!(kind, Mouse::Exited))
+        {
+            peek.surface.set_hover(None, None);
+            peek.surface.set_slider_hover(None);
+            let (d, popup) = (peek.display, peek.stage == Stage::Popup && peek.open);
+            let on_bar = CGPoint::new(p.x + peek.room.origin.x, p.y);
+            match kind {
+                Mouse::Down if popup && p.y >= self.config.bar.height => self.close_popup(),
+                _ if p.y < self.config.bar.height || matches!(kind, Mouse::Exited) => self.on_mouse(SurfaceId::Bar(d), kind, on_bar),
+                Mouse::Moved => self.on_mouse(SurfaceId::Bar(d), Mouse::Exited, on_bar),
+                _ => {}
+            }
+            return;
+        }
         match (id, kind) {
             (SurfaceId::Bar(d), Mouse::Moved) => self.bar_hover(d, Some(p)),
             (SurfaceId::Bar(d), Mouse::Exited) => self.bar_hover(d, None),
-            // Back in it in time: it stays
+            // Back in it in time: it stays. On a notice, the mouse wants the peek
             (SurfaceId::Peek, Mouse::Moved) => {
                 self.leave_ticket += 1;
-                if let Some(peek) = &mut self.peek {
+                let notice = self.peek.as_mut().map(|peek| {
                     peek.leaving = false;
+                    (peek.open && peek.stage == Stage::Notice).then(|| (peek.widget.clone(), peek.display))
+                });
+                if let Some(Some((widget, d))) = notice {
+                    self.grow(&widget, d, Stage::Peek);
                 }
             }
             (SurfaceId::Peek, Mouse::Exited) => self.left_peek(),
@@ -1093,6 +1228,18 @@ impl App {
 
     pub fn open_popup(&mut self, widget: &str, display: u32) {
         self.close_popup();
+        // An island's popup is the island grown further, from where it is
+        if self.bars.iter().find(|b| b.display.id == display).and_then(|b| b.island.as_ref()).is_some_and(|i| i.widget == widget) {
+            self.popup = Some(Popup { widget: widget.to_string(), display, view: None, anchor: CGRect::ZERO, side: Side::Center });
+            self.with_slot(widget, |w, cx| w.event(&Event::PopupOpened, cx));
+            self.grow(widget, display, Stage::Popup);
+            if !self.peek.as_ref().is_some_and(|p| p.widget == widget && p.open && p.stage == Stage::Popup) {
+                self.popup = None;
+                self.with_slot(widget, |w, cx| w.event(&Event::PopupClosed, cx));
+            }
+            self.dirty = true;
+            return;
+        }
         // The popup has all the peek had: the pill goes back, under it
         if self.peek.as_ref().is_some_and(|p| p.widget == widget) {
             self.collapse_peek();
@@ -1130,24 +1277,24 @@ impl App {
         let mut window = Window::new(self.mtm, SurfaceId::Popup, frame, level, &surface.root, backdrop, t.popup_radius);
         window.set_dark(t.glass_dark);
         window.panel.setAlphaValue(0.0);
-        self.popup = Some(Popup { widget: widget.to_string(), display: d.id, window, surface, anchor, side });
+        self.popup = Some(Popup { widget: widget.to_string(), display: d.id, view: Some((window, surface)), anchor, side });
         let name = widget.to_string();
         self.with_slot(&name, |w, cx| w.event(&Event::PopupOpened, cx));
         if !self.render_popup(false) {
             self.popup = None;
             return;
         }
-        let Some(popup) = &self.popup else { return };
-        popup.window.show();
+        let Some((window, surface)) = self.popup.as_ref().and_then(|p| p.view.as_ref()) else { return };
+        window.show();
         let animate = self.animations();
-        let panel = popup.window.panel.clone();
+        let panel = window.panel.clone();
         let fade = RcBlock::new(move |ctx: NonNull<NSAnimationContext>| {
             unsafe { ctx.as_ref() }.setDuration(if animate { 0.16 } else { 0.0 });
             panel.animator().setAlphaValue(1.0);
         });
         NSAnimationContext::runAnimationGroup(&fade);
         if animate {
-            let root = &popup.surface.root;
+            let root = &surface.root;
             for (key, from) in [("transform.scale", 0.96), ("transform.translation.y", -8.0)] {
                 let anim = CASpringAnimation::animationWithKeyPath(Some(&objc2_foundation::NSString::from_str(key)));
                 anim.setStiffness(380.0);
@@ -1160,7 +1307,7 @@ impl App {
                 root.addAnimation_forKey(&anim, Some(&objc2_foundation::NSString::from_str(key)));
             }
         }
-        popup.surface.root.setOpacity(1.0);
+        surface.root.setOpacity(1.0);
         self.dirty = true;
     }
 
@@ -1168,6 +1315,10 @@ impl App {
     /// no widgets.
     fn render_popup(&mut self, animate: bool) -> bool {
         let Some(popup) = &self.popup else { return false };
+        // An island's is its peek's
+        if popup.view.is_none() {
+            return true;
+        }
         let (name, anchor, side) = (popup.widget.clone(), popup.anchor, popup.side);
         let Some(bar) = self.bars.iter().find(|b| b.display.id == popup.display) else { return false };
         let d = bar.display.clone();
@@ -1222,12 +1373,12 @@ impl App {
         let x = x.clamp(min_x, max_x.max(min_x));
         let top = a.origin.y - gap;
         let frame = CGRect::new(CGPoint::new(x, top - h), CGSize::new(w, h));
-        let popup = self.popup.as_mut().unwrap();
-        popup.window.set_frame(frame);
-        popup.window.set_corner_radius(self.theme.popup_radius);
-        popup.surface.animate = animate;
-        popup.surface.motion = animate;
-        popup.surface.render(&tree, &laid);
+        let Some((window, surface)) = self.popup.as_mut().and_then(|p| p.view.as_mut()) else { return false };
+        window.set_frame(frame);
+        window.set_corner_radius(self.theme.popup_radius);
+        surface.animate = animate;
+        surface.motion = animate;
+        surface.render(&tree, &laid);
         true
     }
 
@@ -1235,14 +1386,24 @@ impl App {
         let Some(popup) = self.popup.take() else { return };
         let name = popup.widget.clone();
         self.with_slot(&name, |w, cx| w.event(&Event::PopupClosed, cx));
+        // An island's goes back to its peek if the mouse is on it, else to the island
+        let Some((window, _)) = popup.view else {
+            if self.mouse_in_peek() {
+                self.grow(&name, popup.display, Stage::Peek);
+            } else {
+                self.collapse_peek();
+            }
+            self.dirty = true;
+            return;
+        };
         let animate = self.animations();
-        let panel = popup.window.panel.clone();
+        let panel = window.panel.clone();
         let fade = RcBlock::new(move |ctx: NonNull<NSAnimationContext>| {
             unsafe { ctx.as_ref() }.setDuration(if animate { 0.12 } else { 0.0 });
             panel.animator().setAlphaValue(0.0);
         });
         NSAnimationContext::runAnimationGroup(&fade);
-        self.closing.push(popup.window);
+        self.closing.push(window);
         runtime::after(0.2, |app| {
             if !app.closing.is_empty() {
                 app.closing.remove(0);
@@ -1262,13 +1423,14 @@ impl App {
     /// The mouse moved on the bar of `display` to `p`, or left it (none). A pill whose widget has
     /// a peek grows once the mouse has rested on it a moment, or at once when it's going back; a
     /// grown one the mouse isn't on goes back in a moment (see `left_peek`), so that a mouse that
-    /// slips out of it over the bar and back finds it as it was.
+    /// slips out of it over the bar and back finds it as it was. An island's popup and notice
+    /// don't go with the mouse.
     fn bar_hover(&mut self, display: u32, p: Option<CGPoint>) {
         // The bar under a grown pill doesn't count
         if self.mouse_in_peek() {
             return;
         }
-        if self.peek.as_ref().is_some_and(|peek| peek.open && !peek.leaving) {
+        if self.peek.as_ref().is_some_and(|peek| peek.open && !peek.leaving && peek.stage == Stage::Peek) {
             self.left_peek();
         }
         let pill = p.and_then(|p| {
@@ -1284,8 +1446,8 @@ impl App {
         self.hovered_pill = pill.clone();
         self.peek_ticket += 1;
         let Some((display, name)) = pill else { return };
-        // Back on one going back: the mouse wants it
-        if self.peek.as_ref().is_some_and(|peek| !peek.open && peek.widget == name && peek.display == display) {
+        // Back on one going back, or on a notice: the mouse wants it
+        if self.peek.as_ref().is_some_and(|peek| peek.widget == name && peek.display == display && (!peek.open || peek.stage == Stage::Notice)) {
             self.open_peek(&name, display);
             return;
         }
@@ -1298,7 +1460,7 @@ impl App {
     }
 
     /// The mouse left the grown pill: it goes back, unless the mouse is in it again in a moment,
-    /// or drags a slider of it.
+    /// or drags a slider of it, or it's grown into its popup meanwhile.
     fn left_peek(&mut self) {
         self.leave_ticket += 1;
         let ticket = self.leave_ticket;
@@ -1309,11 +1471,9 @@ impl App {
             if app.leave_ticket != ticket {
                 return;
             }
-            if let Some(peek) = &mut app.peek {
-                peek.leaving = false;
-            }
-            let dragging = app.peek.as_ref().is_some_and(|p| p.surface.dragging.is_some());
-            if !dragging && !app.mouse_in_peek() {
+            let Some(peek) = &mut app.peek else { return };
+            peek.leaving = false;
+            if peek.stage == Stage::Peek && peek.surface.dragging.is_none() && !app.mouse_in_peek() {
                 app.collapse_peek();
             }
         });
@@ -1321,13 +1481,15 @@ impl App {
 
     /// The mouse is on the grown pill.
     fn mouse_in_peek(&self) -> bool {
-        self.peek.as_ref().is_some_and(|p| p.open && crate::ui::contains(p.frame, NSEvent::mouseLocation()))
+        self.peek.as_ref().is_some_and(|p| p.open && crate::ui::contains(p.on_screen(), NSEvent::mouseLocation()))
     }
 
     /// `rustybar msg peek <widget>`: grows its pill on the screen of the mouse, or brings it back.
     /// One grown this way stays until the mouse leaves it, or moves on the bar.
     pub fn toggle_peek(&mut self, widget: &str) {
-        if self.peek.as_ref().is_some_and(|p| p.widget == widget && p.open) {
+        if self.popup.as_ref().is_some_and(|p| p.widget == widget && p.view.is_none()) {
+            self.close_popup();
+        } else if self.peek.as_ref().is_some_and(|p| p.widget == widget && p.open) {
             self.collapse_peek();
         } else {
             let display = self.mouse_display();
@@ -1335,11 +1497,18 @@ impl App {
         }
     }
 
-    /// Grows the pill of `widget` on `display` with its peek, if it has one and its popup isn't
-    /// open: drawn first as the pill is, at once, then grown at the next render, animated, while
-    /// the pill in the bar hides under it. One on its way back grows again.
+    /// Grows the pill of `widget` on `display` with its peek (see `grow`).
     fn open_peek(&mut self, widget: &str, display: u32) {
-        if self.popup.as_ref().is_some_and(|p| p.widget == widget) {
+        self.grow(widget, display, Stage::Peek);
+    }
+
+    /// Grows the pill of `widget` on `display` to `stage`, if it has something to show there:
+    /// drawn first as the pill is, at once, then grown at the next render, animated, while the
+    /// pill in the bar hides under it. One on its way back, or grown to another stage, grows from
+    /// where it is. Only an island has a popup and a notice to grow to; a peek waits while its
+    /// popup is open.
+    fn grow(&mut self, widget: &str, display: u32, stage: Stage) {
+        if stage != Stage::Popup && self.popup.as_ref().is_some_and(|p| p.widget == widget) {
             return;
         }
         // One shrinking grows again from where it is; one already handed back to the pill (see
@@ -1349,29 +1518,57 @@ impl App {
             && peek.display == display
             && peek.hides_pill
         {
-            if !peek.open {
+            if !peek.open || peek.stage != stage {
+                let opened = !peek.open;
                 peek.open = true;
+                peek.stage = stage;
                 peek.leaving = false;
                 peek.grown_glass = true;
                 peek.serial += 1;
                 peek.window.set_ignores_mouse(false);
                 self.hovered_pill = None;
                 self.dirty = true;
-                self.with_slot(widget, |w, cx| w.event(&Event::PeekOpened, cx));
+                if opened {
+                    self.with_slot(widget, |w, cx| w.event(&Event::PeekOpened, cx));
+                }
             }
             return;
         }
+        let island = self.bars.iter().find(|b| b.display.id == display).and_then(|b| b.island.as_ref()).is_some_and(|i| i.widget == widget);
+        if !island && stage != Stage::Peek {
+            return;
+        }
         // Another pill's peek gives way only to one with something to show
-        let Some((_, frame)) = self.peek_tree(widget, display, false) else { return };
+        if self.peek_tree(widget, display, Some(stage), None).is_none() {
+            return;
+        }
+        let Some((_, frame, shape, room)) = self.peek_tree(widget, display, None, None) else { return };
         self.drop_peek();
         let level = self.bar_level();
         let Some(bar) = self.bars.iter_mut().find(|b| b.display.id == display) else { return };
-        // The bar's highlight goes with its pill: the peek has its own
+        // The bar's highlight goes with its pill: the peek has its own, on the notch's black for
+        // an island
         bar.surface.set_hover(None, None);
-        let mut surface = Surface::new(bar.display.scale, self.theme.highlight);
+        let highlight = if island { Rgba(1.0, 1.0, 1.0, 0.12) } else { self.theme.highlight };
+        let mut surface = Surface::new(bar.display.scale, highlight);
         surface.animate = false;
         let window = Window::new(self.mtm, SurfaceId::Peek, frame, level, &surface.root, Backdrop::None, 0.0);
-        self.peek = Some(Peek { widget: widget.to_string(), display, window, surface, open: false, hides_pill: true, frame, serial: 0, leaving: false, grown_glass: true });
+        self.peek = Some(Peek {
+            widget: widget.to_string(),
+            display,
+            window,
+            surface,
+            open: false,
+            hides_pill: true,
+            frame,
+            serial: 0,
+            leaving: false,
+            grown_glass: true,
+            stage,
+            island,
+            shape,
+            room,
+        });
         if !self.render_peek(false) {
             self.peek = None;
             return;
@@ -1382,14 +1579,17 @@ impl App {
         self.instant = true;
         self.hovered_pill = None;
         self.dirty = true;
-        // The top under the mouse has the highlight the pill had
+        // The top under the mouse has the highlight the pill had. Not with the mouse off an
+        // island (a `msg peek`), which would be the mouse leaving it
         let m = NSEvent::mouseLocation();
-        self.on_mouse(SurfaceId::Peek, Mouse::Moved, CGPoint::new(m.x - frame.origin.x, frame.origin.y + frame.size.height - m.y));
+        if stage == Stage::Peek && (!island || self.mouse_in_peek()) {
+            self.on_mouse(SurfaceId::Peek, Mouse::Moved, CGPoint::new(m.x - frame.origin.x, frame.origin.y + frame.size.height - m.y));
+        }
         self.with_slot(widget, |w, cx| w.event(&Event::PeekOpened, cx));
     }
 
     /// The grown pill shrinks back to the pill; then the pill in the bar shows again under it,
-    /// and then it goes. The mouse goes through it meanwhile.
+    /// and then it goes. The mouse goes through it meanwhile. An island's popup goes with it.
     fn collapse_peek(&mut self) {
         let animate = self.animations();
         let Some(peek) = &mut self.peek else { return };
@@ -1403,9 +1603,18 @@ impl App {
         peek.surface.set_hover(None, None);
         peek.surface.set_slider_hover(None);
         let (widget, serial) = (peek.widget.clone(), peek.serial);
+        let wait = match (animate, peek.island) {
+            (false, _) => 0.0,
+            (true, true) => crate::ui::settling(SHRINK.0, SHRINK.1),
+            (true, false) => PEEK_ANIMATION + 0.02,
+        };
         self.dirty = true;
+        if self.popup.as_ref().is_some_and(|p| p.widget == widget && p.view.is_none()) {
+            self.popup = None;
+            self.with_slot(&widget, |w, cx| w.event(&Event::PopupClosed, cx));
+        }
         self.with_slot(&widget, |w, cx| w.event(&Event::PeekClosed, cx));
-        runtime::after(if animate { PEEK_ANIMATION + 0.02 } else { 0.0 }, move |app| {
+        runtime::after(wait, move |app| {
             let Some(peek) = app.peek.as_mut().filter(|p| !p.open && p.serial == serial) else { return };
             // The pill shows and the peek hides in the same render, so in the same frame (see
             // `render_peek`): never a frame without either, nor with both, as two glasses one
@@ -1427,23 +1636,52 @@ impl App {
     }
 
     /// The peek goes at once, without shrinking first: a reload, a change of screens, another
-    /// pill's, or nothing to show anymore.
+    /// pill's, or nothing to show anymore. An island's popup goes with it.
     fn drop_peek(&mut self) {
         let Some(peek) = self.peek.take() else { return };
         if peek.hides_pill {
             self.instant = true;
             self.dirty = true;
         }
+        if self.popup.as_ref().is_some_and(|p| p.widget == peek.widget && p.view.is_none()) {
+            self.popup = None;
+            self.with_slot(&peek.widget, |w, cx| w.event(&Event::PopupClosed, cx));
+        }
         if peek.open {
             self.with_slot(&peek.widget, |w, cx| w.event(&Event::PeekClosed, cx));
         }
+    }
+
+    /// Shows the notice of `widget` for a moment (see `Widget::notice`): its island grows by
+    /// itself, on the screen of the mouse if it's an island there, and goes back. Not while
+    /// anything else of it is open, nor with the mouse on it.
+    pub fn notice(&mut self, widget: &str) {
+        if self.popup.as_ref().is_some_and(|p| p.widget == widget) || self.peek.as_ref().is_some_and(|p| p.widget == widget && p.open) {
+            return;
+        }
+        let mouse = self.mouse_display();
+        let mut displays: Vec<u32> = self.bars.iter().filter(|b| b.island.as_ref().is_some_and(|i| i.widget == widget)).map(|b| b.display.id).collect();
+        displays.sort_by_key(|d| *d != mouse);
+        let Some(&display) = displays.first() else { return };
+        if self.hovered_pill.as_ref().is_some_and(|(d, w)| *d == display && w == widget) {
+            return;
+        }
+        self.grow(widget, display, Stage::Notice);
+        let Some(serial) = self.peek.as_ref().filter(|p| p.widget == widget && p.open && p.stage == Stage::Notice).map(|p| p.serial) else { return };
+        runtime::after(NOTICE, move |app| {
+            if app.peek.as_ref().is_some_and(|p| p.open && p.stage == Stage::Notice && p.serial == serial) {
+                app.collapse_peek();
+            }
+        });
     }
 
     /// Draws the peek as it is now, grown or going back, and fits its window to it. False when
     /// it has nothing to show anymore.
     fn render_peek(&mut self, animate: bool) -> bool {
         let Some(peek) = &self.peek else { return false };
-        let Some((mut tree, frame)) = self.peek_tree(&peek.widget, peek.display, peek.open) else { return false };
+        // An island's window keeps its room: it may still be shrinking inside
+        let room = peek.island.then_some(peek.room);
+        let Some((mut tree, frame, shape, room)) = self.peek_tree(&peek.widget, peek.display, peek.open.then_some(peek.stage), room) else { return false };
         // Handed back to the pill in the bar, which shows in this same render: hidden at once,
         // and its glass taken away, as a glass at alpha 0 still shows for a few frames
         let handed_back = !peek.open && !peek.hides_pill;
@@ -1460,8 +1698,11 @@ impl App {
             peek.window.set_frame(frame);
             peek.frame = frame;
         }
+        peek.shape = shape;
+        peek.room = room;
         peek.surface.animate = animate;
         peek.surface.motion = animate;
+        peek.surface.spring = peek.island.then_some(if peek.open { GROW } else { SHRINK });
         peek.surface.render(&tree, &laid);
         peek.window.set_dark(t.glass_dark);
         let mut glass = peek.surface.glass.clone();
@@ -1474,22 +1715,39 @@ impl App {
         true
     }
 
-    /// The peek of `widget` on `display`, and the frame of its window (Cocoa coordinates): the
-    /// pill as the bar has it, where it is, grown down when `open` to what the widget's `peek`
-    /// shows, and wider if that is, as its popup lines up (see `side` below). The
+    /// The peek of `widget` on `display` grown to `grown` (as the pill it starts from with none),
+    /// the frame of its window (Cocoa coordinates), what in it is the peek (see `Peek::shape`) and
+    /// where the window is over the bar (see `Peek::room`). An island's, in `room` if it has one
+    /// already, or a pill's.
+    fn peek_tree(&self, widget: &str, display: u32, grown: Option<Stage>, room: Option<CGRect>) -> Option<(Node, CGRect, CGRect, CGRect)> {
+        let bar = self.bars.iter().find(|b| b.display.id == display)?;
+        if bar.island.as_ref().is_some_and(|i| i.widget == widget) {
+            return self.island_tree(widget, display, grown, room);
+        }
+        let (tree, frame) = self.pill_tree(widget, display, grown.is_some())?;
+        Some((tree, frame, CGRect::new(CGPoint::new(0.0, 0.0), frame.size), CGRect::ZERO))
+    }
+
+    /// The pill as the bar has it, the island, or none if it isn't in the bar.
+    fn drawn(bar: &Bar, widget: &str) -> Option<Node> {
+        bar.peek_pill
+            .clone()
+            .filter(|n| n.key.as_deref() == Some(widget))
+            .or_else(|| bar.tree.children.iter().flat_map(|g| &g.children).find(|n| n.key.as_deref() == Some(widget)).cloned())
+    }
+
+    /// The peek of a pill, `widget` on `display`, and the frame of its window (Cocoa
+    /// coordinates): the pill as the bar has it, where it is, grown down when `open` to what the
+    /// widget's `peek` shows, and wider if that is, as its popup lines up (see `side` below). The
     /// pill's look (glass, background, border) goes to a card that grows and clips what's in
     /// it; its content stays where it is. The window has the grown size from the start, so that
     /// only the layers and the glass move. None when the widget has nothing to show, or its pill
     /// isn't in the bar.
-    fn peek_tree(&self, widget: &str, display: u32, open: bool) -> Option<(Node, CGRect)> {
+    fn pill_tree(&self, widget: &str, display: u32, open: bool) -> Option<(Node, CGRect)> {
         let bar = self.bars.iter().find(|b| b.display.id == display)?;
         let form = bar.forms.get(widget).copied().filter(|f| *f != Form::Hidden)?;
         let item = bar.items.get(widget).copied()?;
-        let pill = bar
-            .peek_pill
-            .clone()
-            .filter(|n| n.key.as_deref() == Some(widget))
-            .or_else(|| bar.tree.children.iter().flat_map(|g| &g.children).find(|n| n.key.as_deref() == Some(widget)).cloned())?;
+        let pill = Self::drawn(bar, widget)?;
         let slot = self.slots.iter().find(|s| s.name == widget && s.failed.is_none())?;
         if !slot.widget.ready() {
             return None;
@@ -1550,6 +1808,111 @@ impl App {
         Some((tree, frame))
     }
 
+    /// How far the island of `widget` on `display` reaches grown to `grown` (as it is in the bar
+    /// with none): its body from `x0` to `x1` (bar coordinates, without the curves at the top) and
+    /// `h` high, and what the widget shows there (its peek, popup or notice), centered on the
+    /// notch under the island. None when the widget has nothing to show there, or isn't an island.
+    fn island_stage(&self, widget: &str, display: u32, grown: Option<Stage>) -> Option<(f64, f64, f64, Option<Node>)> {
+        let bar = self.bars.iter().find(|b| b.display.id == display)?;
+        let place = bar.island.as_ref().filter(|i| i.widget == widget)?;
+        let item = bar.items.get(widget).copied()?;
+        let slot = self.slots.iter().find(|s| s.name == widget && s.failed.is_none())?;
+        if !slot.widget.ready() {
+            return None;
+        }
+        let d = &bar.display;
+        let form = bar.forms.get(widget).copied().unwrap_or(Form::Full);
+        let mut rx = Rx::new(&slot.name, &self.theme, d, form, grown == Some(Stage::Popup));
+        rx.island = Some(place.room);
+        let (mut x0, mut x1, mut h) = (place.x0, place.x1, item.size.height);
+        let Some(stage) = grown else { return Some((x0, x1, h, None)) };
+        let w = &slot.widget;
+        let content = catch_unwind(AssertUnwindSafe(|| match stage {
+            Stage::Peek => w.peek(&rx),
+            Stage::Popup => w.popup(&rx),
+            Stage::Notice => w.notice(&rx),
+        }));
+        let mut content = content.ok().flatten()?;
+        content.normalize();
+        let (cw, ch) = Layout { scale: d.scale }.intrinsic(&content, None);
+        let (ear, margin) = (place.room.ear, self.config.bar.margin);
+        let half = (cw / 2.0).ceil();
+        x0 = x0.min(place.middle - half).max(margin + ear);
+        x1 = x1.max(place.middle + half).min(d.frame.size.width - margin - ear);
+        h += ch.ceil();
+        Some((x0, x1, h, Some(content)))
+    }
+
+    /// Where an island's window goes over the bar (bar coordinates) to have room for its shape
+    /// from `x0` to `x1`, `h` high, and for the spring to take it a little past that.
+    fn island_reach(bar: &Bar, ear: f64, x0: f64, x1: f64, h: f64) -> CGRect {
+        let (left, right) = ((x0 - ear - OVERSHOOT).max(0.0).floor(), (x1 + ear + OVERSHOOT).min(bar.display.frame.size.width).ceil());
+        CGRect::new(CGPoint::new(left, 0.0), CGSize::new(right - left, (h + OVERSHOOT).max(bar.window.panel.frame().size.height).ceil()))
+    }
+
+    /// The window of the island of `widget` on `display`: room for all it grows to, its peek, its
+    /// popup and its notice, from the start. A window that resizes shows its layers as they end
+    /// up at once, without the spring.
+    fn island_room(&self, widget: &str, display: u32) -> Option<CGRect> {
+        let bar = self.bars.iter().find(|b| b.display.id == display)?;
+        let ear = bar.island.as_ref()?.room.ear;
+        [None, Some(Stage::Peek), Some(Stage::Popup), Some(Stage::Notice)]
+            .into_iter()
+            .filter_map(|stage| self.island_stage(widget, display, stage))
+            .map(|(x0, x1, h, _)| Self::island_reach(bar, ear, x0, x1, h))
+            .reduce(union)
+    }
+
+    /// The island of `widget` on `display` grown to `grown`, or at rest, in its window: over the
+    /// bar from its top, at `room` if it has one already (see `island_room`), wider or taller if
+    /// it needs more. In it the notch's shape: at rest the island's; grown, down to what the
+    /// widget shows there, and over all of the island, round at the bottom. What the island shows
+    /// stays where it is in the bar and what's under it shows as the shape grows, which is all
+    /// that moves. The window's frame (Cocoa coordinates), the shape in it (top-left origin) and
+    /// its room come with it. None when the widget has nothing to show there, or isn't an island.
+    fn island_tree(&self, widget: &str, display: u32, grown: Option<Stage>, room: Option<CGRect>) -> Option<(Node, CGRect, CGRect, CGRect)> {
+        let bar = self.bars.iter().find(|b| b.display.id == display)?;
+        let place = bar.island.as_ref().filter(|i| i.widget == widget)?;
+        let item = bar.items.get(widget).copied()?;
+        let node = Self::drawn(bar, widget)?;
+        let (x0, x1, h, content) = self.island_stage(widget, display, grown)?;
+        let ear = place.room.ear;
+        let reach = Self::island_reach(bar, ear, x0, x1, h);
+        let room = union(room.or_else(|| self.island_room(widget, display)).unwrap_or(reach), reach);
+        let bar_frame = bar.window.panel.frame();
+        let top = bar_frame.origin.y + bar_frame.size.height;
+        let frame = CGRect::new(CGPoint::new(bar_frame.origin.x + room.origin.x, top - room.size.height), room.size);
+
+        let radius = match grown {
+            None => place.room.radius,
+            Some(Stage::Popup) => ISLAND_POPUP_RADIUS,
+            Some(_) => ISLAND_PEEK_RADIUS,
+        };
+        // In bar coordinates, as wide as the bar, where the window shows a part of it
+        let width = bar.display.frame.size.width;
+        let mut shape = Node::default().key("island").size(width, room.size.height).at(-room.origin.x, 0.0).background(BLACK).radius(radius);
+        shape.style.notch = Some(Notch { ear, area: Some([x0 - ear, x1 - x0 + 2.0 * ear, h]) });
+        let mut top = node;
+        top.key = Some("top".into());
+        top.style.notch = None;
+        top.style.background = None;
+        top.style.opacity = 1.0;
+        top.style.width = Some(item.size.width);
+        top.style.height = Some(item.size.height);
+        shape.children.push(top.at(item.origin.x, item.origin.y));
+        // One key for what every stage shows, so that what two of them have in common (the
+        // progress, the controls) moves from one to the other instead of fading
+        if let Some(mut c) = content {
+            c.key = Some("stage".into());
+            c.style.width = Some(x1 - x0);
+            shape.children.push(c.at(x0, item.origin.y + item.size.height));
+        }
+        let mut tree = Node::default().key("peek").size(room.size.width, room.size.height).push(shape);
+        tree.normalize();
+        let on = CGRect::new(CGPoint::new(x0 - ear - room.origin.x, 0.0), CGSize::new(x1 - x0 + 2.0 * ear, h));
+        Some((tree, frame, on, room))
+    }
+
     pub fn quit(&mut self) {
         self.cache.save();
         objc2_app_kit::NSApplication::sharedApplication(self.mtm).terminate(None);
@@ -1603,9 +1966,20 @@ impl App {
                 };
                 out.push_str(&format!("  {:<14} {:<16} {}\n", b.display.name, "center", place));
             }
+            // The widget drawn as an extension of the notch, and its wings
+            if let (Some(i), Some((nl, nr))) = (&b.island, b.display.notch) {
+                let (left, right) = (nl - i.x0 + i.room.ear, i.x1 + i.room.ear - nr);
+                out.push_str(&format!("  {:<14} {:<16} {} ({left:.0} + {right:.0} pt beside the notch)\n", b.display.name, "island", i.widget));
+            }
         }
         if let Some(p) = &self.peek {
-            out.push_str(&format!("peek: {} ({})\n", p.widget, if p.open { "grown" } else { "going back" }));
+            let stage = match (p.open, p.stage) {
+                (false, _) => "going back",
+                (true, Stage::Peek) => "grown",
+                (true, Stage::Popup) => "grown into its popup",
+                (true, Stage::Notice) => "grown with its notice",
+            };
+            out.push_str(&format!("peek: {} ({stage})\n", p.widget));
         }
         out.push_str(&format!("displays: {}\n", self.bars.iter().map(|b| format!("{} ({}x{}{})", b.display.name, b.display.frame.size.width, b.display.frame.size.height, if b.display.notch.is_some() { ", notch" } else { "" })).collect::<Vec<_>>().join(", ")));
         out
@@ -1637,6 +2011,25 @@ fn place_center(used: [f64; 2], room: [f64; 2], full_w: f64, compact_w: Option<f
             need <= room[s] - if k < last { fit::SLACK } else { 0.0 }
         })
         .map(|(_, &(side, form, _))| (side, form))
+}
+
+/// A node drawn as an island (see `Rx::island`).
+/// The smallest rectangle with both.
+fn union(a: CGRect, b: CGRect) -> CGRect {
+    let (x0, y0) = (a.origin.x.min(b.origin.x), a.origin.y.min(b.origin.y));
+    let (x1, y1) = ((a.origin.x + a.size.width).max(b.origin.x + b.size.width), (a.origin.y + a.size.height).max(b.origin.y + b.size.height));
+    CGRect::new(CGPoint::new(x0, y0), CGSize::new(x1 - x0, y1 - y0))
+}
+
+fn is_island(node: &Node) -> bool {
+    node.style.notch.is_some() && node.children.iter().any(|c| c.key.as_deref() == Some("notch"))
+}
+
+/// How far an island goes out of the notch on the left and on the right, its curves included.
+fn wings(layout: &Layout, node: &Node) -> (f64, f64) {
+    let side = |key: &str| node.children.iter().find(|c| c.key.as_deref() == Some(key)).map_or(0.0, |c| layout.intrinsic(c, None).0);
+    let ear = node.style.notch.map_or(0.0, |n| n.ear);
+    (ear + side("left"), ear + side("right"))
 }
 
 /// The room beside the center group (see `App::widen`): `spare` when it's less than at the last

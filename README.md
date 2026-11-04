@@ -18,7 +18,7 @@ processes a minute.
 | `apple` | The Apple logo | The Apple menu: About This Mac, Force Quit, Sleep, Restart, Shut Down, Lock Screen, Log Out, and last Dotfiles Settings (see [Settings window](#settings-window)) |
 | `aerospace` | [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspaces with the icons of their windows in on-screen order, the focused one under a sliding highlight, the binding mode | — (clicks switch workspace, focus a window, leave the mode) |
 | `front_app` | The app in front | — |
-| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then); hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress and ⏮ ⏯ ⏭. In the center by default | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track |
+| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then); hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track |
 | `system` | CPU, GPU and memory, colored by load and memory pressure | A dashboard: CPU and GPU with the last minute as a graph; memory split into app, wired and compressed; each disk with its used, available and purgeable space (a click opens it in the Finder); the apps that use the most CPU, GPU or memory; Activity Monitor and Storage settings |
 | `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
@@ -267,10 +267,27 @@ in the window server, so RustyBar does nothing meanwhile; with Reduce Motion (or
 
 With the mouse on the pill for a moment, the pill grows down into a card with quick controls: where
 the track is, with the time gone and left (drag to seek), and previous, play/pause and next, as the
-app takes them. Its top stays the pill as it was, and a click there opens the popup; when the mouse
+app takes them, with shuffle and repeat for Music and Spotify. Its top stays the pill as it was, and a click there opens the popup; when the mouse
 leaves, it shrinks back. Next to the notch it grows away from the pills beside it. It's a window of
 its own over the pill, which the bar hides meanwhile, so the bar doesn't change size; it ticks once
 a second only while grown. `hover = false` turns it off.
+
+On a screen with a notch, as the first widget of the center group, it's an extension of the notch
+(`notch = true`, the default): black as the notch and as tall, curving into the top of the screen
+as the notch does. Left of the notch the cover, the title and the artist; right of it bars that
+move to the music in the cover's liveliest color, or the pause sign, with the cover dimmed. The
+cover and the bars always have their room (the sides of the bar give way first); the title and the
+artist take what the sides leave, and the title scrolls if it's cut. Under the mouse it grows down
+with the quick controls, and a click grows it further into the player, black with the cover's
+color, which stays open as a popup does: a click outside or on its top closes it. When the track
+changes it grows by itself for 3 seconds with the cover bigger, the title, the artist and the
+album: not for the first track after the bar starts, and not with the mouse on it. It moves on a
+spring, a little past its size and back, as the Dynamic Island does; with Reduce Motion it doesn't
+move. With nothing playing there's no island. At rest the bar draws it; grown, it's a window of its
+own over the bar around the notch, as big as the player from the start (a window that resizes
+shows its layers as they end up, without the spring). In that window the mouse outside the island
+is on the bar under it, and a click below the bar only closes the player. `rustybar msg notice
+now_playing` shows the notice.
 
 The position in Music, the covers, shuffle, repeat, the volume and the controls go through Apple
 events to the app, with the Automation permission: macOS asks for it the first time the popup
@@ -299,6 +316,7 @@ the widget has Music and Spotify as before.
 ```toml
 [widgets.now_playing]
 paused = true          # a paused track stays in the bar, dimmed
+notch = true           # on a screen with a notch, black around it as an extension of it
 hover = true           # with the mouse on it, the pill grows down with quick controls
 other_apps = false     # any app, through a perl process always running
 cover_colors = true    # the popup in the colors of the cover
@@ -437,6 +455,7 @@ rustybar msg query                   the widgets, their state, where they are an
 rustybar msg trigger <event> k=v…    send an event to every widget (Lua: event(self, name, args))
 rustybar msg popup <widget>          open or close a popup
 rustybar msg peek <widget>           grow a pill with its quick controls, as under the mouse, or back
+rustybar msg notice <widget>         grow an island with its notice for a moment (the next track)
 rustybar msg settings [page]         open the settings window, on a page
 rustybar settings [page]             the same, without the bar
 rustybar msg quit

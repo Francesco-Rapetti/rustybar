@@ -36,9 +36,26 @@ pub enum Event {
     Trigger { name: String, args: HashMap<String, String> },
     PopupOpened,
     PopupClosed,
-    /// The pill grew down with its peek under the mouse (see `Widget::peek`), and went back.
+    /// The pill grew down with its peek under the mouse (see `Widget::peek`), or by itself with
+    /// its notice (see `Widget::notice`), and went back.
     PeekOpened,
     PeekClosed,
+}
+
+/// The room of a widget that may draw itself as an extension of the notch: one of the center
+/// group, on a screen with a notch (see `Rx::island`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Island {
+    /// How wide the notch is, and how tall the island: the notch, or the bar if it's lower.
+    pub notch: f64,
+    pub height: f64,
+    /// The curves at the top, and the round corners at the bottom.
+    pub ear: f64,
+    pub radius: f64,
+    /// How many points wider than its least each side of it may be: the room the bar has left
+    /// there. 0 when the bar measures the least it takes.
+    pub left: f64,
+    pub right: f64,
 }
 
 /// What a widget needs to draw itself.
@@ -56,12 +73,34 @@ pub struct Rx<'a> {
     /// How much wider than this form the widget may be: the room the bar has left beside it, for
     /// the widgets of the center group (0 for the others). Text cut to fit can take it.
     pub spare: f64,
+    /// On a screen with a notch, for the first widget of the center group: it may draw itself as
+    /// an extension of the notch, with `island`, and the bar puts it around the notch. Its peek,
+    /// popup and notice then grow out of it, on the notch's black.
+    pub island: Option<Island>,
 }
 
 impl<'a> Rx<'a> {
     pub fn new(name: &'a str, theme: &'a Theme, display: &'a DisplayInfo, form: Form, popup_open: bool) -> Self {
         let compact = form == Form::Compact;
-        Rx { name, theme, display, compact, slim: compact || form == Form::Slim, popup_open, spare: 0.0 }
+        Rx { name, theme, display, compact, slim: compact || form == Form::Slim, popup_open, spare: 0.0, island: None }
+    }
+
+    /// The widget as an extension of the notch, with `left` beside it on the left and `right` on
+    /// the right (see `island`): black, as tall as the notch, round at the bottom and curving into
+    /// the edge of the screen at the top. A pill with both, when it has no notch to extend.
+    pub fn island(&self, left: Vec<Node>, right: Vec<Node>) -> Node {
+        let Some(i) = self.island else {
+            let mut children = left;
+            children.extend(right);
+            return self.pill(children);
+        };
+        Node::row(vec![Node::row(left).key("left"), Node::default().width(i.notch).key("notch"), Node::row(right).key("right")])
+            .key(self.name)
+            .height(i.height)
+            .padding(0.0, i.ear, 0.0, i.ear)
+            .background(crate::gfx::Rgba(0.0, 0.0, 0.0, 1.0))
+            .radius(i.radius)
+            .notch(i.ear)
     }
 
     /// An action sent back to this widget with `name`.
@@ -173,6 +212,7 @@ pub enum Effect {
     Redraw,
     ClosePopup,
     TogglePopup,
+    Notice,
 }
 
 impl Cx<'_> {
@@ -189,6 +229,12 @@ impl Cx<'_> {
     /// more than one pill, whose click picks what the popup shows first.
     pub fn toggle_popup(&mut self) {
         self.effects.push(Effect::TogglePopup);
+    }
+
+    /// Shows the widget's notice for a moment (see `Widget::notice`), if it's an island and
+    /// nothing else of it is open.
+    pub fn notice(&mut self) {
+        self.effects.push(Effect::Notice);
     }
 
     /// Calls `f` on this widget every `secs` seconds, until a reload.
@@ -264,6 +310,12 @@ pub trait Widget: Any {
     /// to show it (and sideways, to its width), its top staying as it is in the bar. Quick
     /// controls; the popup is still a click away, on that top.
     fn peek(&self, _rx: &Rx) -> Option<Node> {
+        None
+    }
+
+    /// What its island shows for a moment, grown down by itself, when the widget calls
+    /// `Cx::notice`: something new (the next track). Only for a widget drawn as an island.
+    fn notice(&self, _rx: &Rx) -> Option<Node> {
         None
     }
 

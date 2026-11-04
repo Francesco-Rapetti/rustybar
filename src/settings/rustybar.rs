@@ -516,10 +516,19 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
             f.group(Some(t("Opzioni", "Options")));
             f.toggle_at(t("Anche in pausa", "Also when paused"), Some(t("Nella barra resta, attenuato, la traccia in pausa", "The paused track stays in the bar, dimmed")), &spot.k("paused"), true);
             f.toggle_at(
+                t("Attaccato al notch", "Around the notch"),
+                Some(t(
+                    "Sugli schermi col notch, nero come il notch e attorno a lui: si allunga in giù col mouse, al clic e quando cambia la traccia",
+                    "On screens with a notch, black as the notch and around it: it grows down under the mouse, on a click and when the track changes",
+                )),
+                &spot.k("notch"),
+                true,
+            );
+            f.toggle_at(
                 t("Controlli sotto il mouse", "Controls under the mouse"),
                 Some(t(
-                    "Col mouse sopra, la pillola si allunga in giù con l'avanzamento e ⏮ ⏯ ⏭",
-                    "With the mouse on it, the pill grows down with the progress and ⏮ ⏯ ⏭",
+                    "Col mouse sopra, la pillola si allunga in giù con l'avanzamento, ⏮ ⏯ ⏭ e, per Music e Spotify, casuale e ripeti",
+                    "With the mouse on it, the pill grows down with the progress, ⏮ ⏯ ⏭ and, for Music and Spotify, shuffle and repeat",
                 )),
                 &spot.k("hover"),
                 true,
@@ -539,7 +548,7 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
                 &spot.k("cover_colors"),
                 true,
             );
-            &["paused", "hover", "other_apps", "cover_colors"]
+            &["paused", "notch", "hover", "other_apps", "cover_colors"]
         }
         "front_app" | "battery" | "network" | "docker" => {
             f.group(Some(t("Opzioni", "Options")));

@@ -493,6 +493,28 @@ impl Theme {
         luminance(self.text) > luminance(self.base)
     }
 
+    /// The colors of a widget drawn as an extension of the notch: on black, as the notch is,
+    /// whatever the theme, with light text; `accent` (and the color of what goes on it) for what's
+    /// on, or the theme's own. No glass: the notch has none.
+    pub fn notch(&self, accent: Option<(Rgba, Rgba)>) -> Theme {
+        let white = |a: f64| Rgba(1.0, 1.0, 1.0, a);
+        let mut t = self.clone();
+        t.base = Rgba(0.0, 0.0, 0.0, 1.0);
+        t.text = white(0.95);
+        t.subtext = white(0.6);
+        t.overlay = white(0.4);
+        t.surface = white(0.14);
+        t.highlight = white(0.12);
+        (t.primary, t.on_primary) = accent.unwrap_or((self.primary, self.on_primary));
+        t.glass = false;
+        t.glass_dark = None;
+        t.popup_blur = false;
+        for (name, color) in [("base", t.base), ("surface", t.surface), ("highlight", t.highlight), ("overlay", t.overlay), ("subtext", t.subtext), ("text", t.text), ("primary", t.primary), ("on_primary", t.on_primary)] {
+            t.palette.insert(name.into(), color);
+        }
+        t
+    }
+
     /// The background of a dashboard tile: a lit one takes a little of its color.
     pub fn tile(&self, color: Rgba, lit: bool) -> Rgba {
         if lit { self.surface.faded(0.55).mix(color.faded(0.55), 0.22) } else { self.surface.faded(0.55) }

@@ -15,6 +15,8 @@ pub struct DisplayInfo {
     pub scale: f64,
     /// The notch, from its left to its right edge in points from the screen's left edge.
     pub notch: Option<(f64, f64)>,
+    /// How tall the notch is (0 without one): the menu bar's row beside it.
+    pub notch_height: f64,
     /// At least `large_width` wide.
     pub large: bool,
 }
@@ -45,6 +47,7 @@ pub fn displays(mtm: MainThreadMarker, large_width: f64) -> Vec<DisplayInfo> {
                 frame,
                 scale: screen.backingScaleFactor(),
                 notch,
+                notch_height: if notch.is_some() { screen.safeAreaInsets().top } else { 0.0 },
                 large: frame.size.width >= large_width,
             }
         })

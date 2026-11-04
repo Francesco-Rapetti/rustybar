@@ -104,8 +104,7 @@ impl Palette {
             t.overlay = tone(d, 0.56, tinge(0.4, 0.04));
             t.subtext = tone(d, 0.80, tinge(0.3, 0.03));
             t.text = tone(d, 0.96, tinge(0.15, 0.015));
-            t.primary = tone(a, 0.82, accent(0.16));
-            t.on_primary = tone(a, 0.25, (a.c * 0.5).min(0.06));
+            (t.primary, t.on_primary) = self.dark_accent();
         } else {
             t.base = tone(d, 0.95, tinge(0.3, 0.03));
             t.surface = tone(d, 0.89, tinge(0.35, 0.04));
@@ -129,6 +128,15 @@ impl Palette {
             t.palette.insert(name.into(), color);
         }
         t
+    }
+
+    /// The accent at the lightness of a dark theme, and the color of what goes on it: for the
+    /// controls of a dark popup, or of the island on the notch's black.
+    pub fn dark_accent(&self) -> (Rgba, Rgba) {
+        let a = self.accent;
+        let tone = |l: f64, c: f64| rgb(Lch { l, c, h: a.h });
+        let accent = if a.c >= COLORFUL { a.c.clamp(0.09, 0.16) } else { a.c };
+        (tone(0.82, accent), tone(0.25, (a.c * 0.5).min(0.06)))
     }
 }
 
