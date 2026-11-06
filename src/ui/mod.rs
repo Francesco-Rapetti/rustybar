@@ -5,5 +5,5 @@ mod node;
 mod render;
 
 pub use layout::Layout;
-pub use node::{Action, Align, Dir, Justify, Kind, Node, Notch};
+pub use node::{Action, Align, Along, Dir, Justify, Kind, Node, Notch, Trace};
 pub use render::{Glass, HitKind, Surface, contains, ease, settling, slider_value};

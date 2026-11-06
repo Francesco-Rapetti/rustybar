@@ -29,7 +29,7 @@ use crate::config::{self, Config};
 use crate::gfx::{FontSpec, Rgba, Weight};
 use crate::runtime;
 use crate::theme::Theme;
-use crate::ui::{Action, Align, Dir, Justify, Kind, Node};
+use crate::ui::{Action, Align, Along, Dir, Justify, Kind, Node, Trace};
 use crate::widgets::{Cx, Event, Rx, Widget};
 
 const PRELUDE: &str = include_str!("prelude.lua");
@@ -466,6 +466,18 @@ impl Convert<'_> {
         }
         if t.get::<Option<bool>>("marquee").ok().flatten() == Some(true) {
             s.marquee = true;
+        }
+        // A line along the edge as far as `value`, going on by `rate` a second from now
+        if let Ok(Some(tr)) = t.get::<Option<Table>>("trace") {
+            s.trace = Some(Trace {
+                value: self.num(&tr, "value").unwrap_or(0.0).clamp(0.0, 1.0),
+                at: crate::time::now(),
+                rate: self.num(&tr, "rate").unwrap_or(0.0).max(0.0),
+                along: if self.string(&tr, "along").as_deref() == Some("around") { Along::Around } else { Along::Bottom },
+                width: self.num(&tr, "width").unwrap_or(2.0),
+                color: self.color(&tr, "color").unwrap_or(theme.primary),
+                track: self.color(&tr, "track"),
+            });
         }
         if let Some(v) = self.num(t, "radius") {
             s.radius = v;

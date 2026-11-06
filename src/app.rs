@@ -1791,6 +1791,10 @@ impl App {
         row.style.opacity = 1.0;
         row.style.width = Some(pill_w);
         row.style.height = Some(pill_h);
+        // A line along the bottom of the pill would cross the card grown: it fades as it grows
+        if open {
+            row.style.trace = None;
+        }
         let (card_x, card_w, card_h) = if open { (0.0, w, h) } else { (px, pill_w, pill_h) };
         let mut card = Node::default().key("card").size(card_w, card_h).at(card_x, 0.0).radius(look.radius).opacity(look.opacity).clip();
         // Grown, it stays the pill it was: the same glass and veil
