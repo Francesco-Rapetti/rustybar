@@ -408,6 +408,13 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   dati finti sulla barra di prova, con clic veri: ✕ di Slack e del crash, `Ignora tutte` con e
   senza Homebrew (popup chiuso, widget via dalla barra). Da provare dal vero: un badge vero che
   torna, e che resta ignorato dopo un reload.
+- `claude` in una pill sola (slim o compatto): l'account i cui numeri sono saliti per ultimi
+  (quello in uso: sessione o settimana più alte, o una finestra nuova cominciata con qualcosa
+  dentro; non i numeri vecchi di una lettura fallita né un altro login), ricordato nei default
+  (`claude.latest`, per config dir) così resta dopo un reload; la sessione più impegnata finché
+  nessuno sale, o se quell'account non ha numeri. Provato coi dati finti (`latest` in
+  `claude.json`, e senza) e, coi dati veri sulla barra di prova, col valore scritto a mano nei
+  default (poi tolto). Da provare dal vero: il passaggio da un account all'altro usandoli.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

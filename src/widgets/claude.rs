@@ -7,8 +7,9 @@
 //!   dir (`CLAUDE_CONFIG_DIR`) and color. With more than one, each has its own pill, the others on
 //!   the left, with the time the session resets (`42% · 31% · 17:07`) and a popup of its own;
 //!   slim (when the bar has no room for them: after the volume sliders of `audio`, see
-//!   `slim_first`) or compact, one pill, the account with the busiest session, whose popup has
-//!   them all, each under its name in its color.
+//!   `slim_first`) or compact, one pill, the account whose numbers went up last (the one in use;
+//!   remembered in the defaults, so across reloads; the busiest session until one does, or when
+//!   that account has no numbers), whose popup has them all, each under its name in its color.
 //! - Popup: for each account a header with its spark, the name (or the email), the plan (`Max`),
 //!   the email and the organization (not the personal one, named after the email), how old the
 //!   numbers are (`3 min fa`, yellow when the last
@@ -33,6 +34,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use objc2::AnyThread;
+use objc2::rc::Retained;
+use objc2_foundation::{NSString, NSUserDefaults, ns_string};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -100,13 +104,49 @@ impl Default for Setup {
     }
 }
 
-/// Made-up data (see `mock`): the accounts, when the config has none, and what they read; the
-/// resets are in minutes from now, `at` in minutes ago.
+impl Setup {
+    /// What the defaults remember it by: its config dir, which stays when the accounts change.
+    fn id(&self) -> &str {
+        self.dir.as_deref().unwrap_or("~/.claude")
+    }
+}
+
+/// Made-up data (see `mock`): the accounts, when the config has none, what they read and the one
+/// whose numbers went up last; the resets are in minutes from now, `at` in minutes ago.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct Mock {
     accounts: Vec<Setup>,
     data: Vec<Account>,
+    latest: Option<usize>,
+}
+
+fn defaults() -> Option<Retained<NSUserDefaults>> {
+    NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(ns_string!("rustybar")))
+}
+
+/// The defaults key of the account whose numbers went up last, by `Setup::id`.
+const LATEST: &str = "claude.latest";
+
+/// Whether the account was used between two readings: the session or the week went up, or one
+/// started (a window starts with a message, so it has no reset before, and a later one after it
+/// ran out). Not when the numbers are those of the reading before (stale) or of another login.
+fn used(old: &Account, new: &Account) -> bool {
+    if new.stale || !new.logged_in || old.email != new.email {
+        return false;
+    }
+    let up = |old: &Option<Window>, new: &Option<Window>| {
+        let (Some(o), Some(n)) = (old, new) else { return false };
+        n.percent > o.percent
+            || match (o.reset, n.reset) {
+                (None, Some(_)) => true,
+                // A new window has fewer percent than the old one; the slack is for a reset the
+                // server moves by a few seconds
+                (Some(was), Some(is)) => is > was + 60.0 && n.percent > 0.0,
+                _ => false,
+            }
+    };
+    up(&old.session, &new.session) || up(&old.week, &new.week)
 }
 
 /// Where the installers put `claude`, also outside the PATH: nvm's folders.
@@ -277,6 +317,8 @@ pub struct Claude {
     confirm_logout: Option<usize>,
     /// The account whose pill opened the popup, when each has its own.
     focus: Option<usize>,
+    /// The account whose numbers went up last, the one the single pill shows.
+    latest: Option<usize>,
     /// Changes when the popup opens and closes, which stops the ticks of the one before.
     ticking: u64,
     path: Option<String>,
@@ -316,7 +358,12 @@ impl Claude {
                 .collect();
         }
         let n = accounts.len();
+        let latest = match &mock {
+            Some(m) => m.latest,
+            None => defaults().and_then(|d| d.stringForKey(ns_string!(LATEST))).and_then(|id| accounts.iter().position(|a| a.id() == id.to_string())),
+        };
         Claude {
+            latest: latest.filter(|i| *i < n),
             accounts,
             data,
             fetched: vec![None; n],
@@ -358,6 +405,9 @@ impl Claude {
                     Some((path, account)) => {
                         w.path = Some(path);
                         w.missing = false;
+                        if w.data[i].as_ref().is_some_and(|old| used(old, &account)) {
+                            w.remember(i);
+                        }
                         w.data[i] = Some(account);
                     }
                     None => {
@@ -408,10 +458,30 @@ impl Claude {
         cx.redraw();
     }
 
+    /// The account whose numbers went up last, in the defaults too (not with the made-up data).
+    fn remember(&mut self, i: usize) {
+        if self.latest == Some(i) {
+            return;
+        }
+        self.latest = Some(i);
+        if !self.mock
+            && let Some(d) = defaults()
+        {
+            let id = NSString::from_str(self.accounts[i].id());
+            unsafe { d.setObject_forKey(Some(&id), ns_string!(LATEST)) };
+        }
+    }
+
     /// The account with the busiest session, the first at a tie and without numbers.
     fn busiest(&self) -> usize {
         let session = |i: usize| self.data[i].as_ref().and_then(|a| a.session.as_ref()).map(|s| s.percent);
         (0..self.accounts.len()).fold(0, |best, i| if session(i) > session(best) { i } else { best })
+    }
+
+    /// The account of the single pill: the one whose numbers went up last, also while it's still
+    /// being read; the busiest when none has yet, or when that one has no numbers (logged out).
+    fn single(&self) -> usize {
+        self.latest.filter(|&i| self.data[i].as_ref().is_none_or(|a| a.session.is_some())).unwrap_or_else(|| self.busiest())
     }
 
     /// The spark of the Claude app in the account's color, `✻` without the app.
@@ -575,7 +645,7 @@ impl Widget for Claude {
     fn bar(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
         if !self.pills(rx) {
-            return Some(self.pill(rx, self.busiest(), false, rx.toggle_popup()).key(rx.name));
+            return Some(self.pill(rx, self.single(), false, rx.toggle_popup()).key(rx.name));
         }
         // The others on the left of the one of ~/.claude
         let order = (1..self.accounts.len()).chain([0]);
@@ -696,6 +766,30 @@ mod tests {
         assert_eq!(details(&account("", "alex@example.org", "alex@example.org's Organization")), "");
         assert_eq!(details(&account("", "alex@example.org", "Example Inc.")), "Example Inc.");
         assert_eq!(details(&account("", "", "")), "");
+    }
+
+    #[test]
+    fn used_when_the_numbers_go_up() {
+        let window = |percent: f64, reset: Option<f64>| Some(Window { percent, reset });
+        let account = |session, week| Account { logged_in: true, email: "alex@example.com".into(), session, week, ..Default::default() };
+        let old = account(window(42.0, Some(1000.0)), window(31.0, Some(9000.0)));
+        assert!(!used(&old, &old.clone()));
+        assert!(used(&old, &account(window(43.0, Some(1000.0)), window(31.0, Some(9000.0)))));
+        assert!(used(&old, &account(window(42.0, Some(1000.0)), window(32.0, Some(9000.0)))));
+        // The session ran out: going down isn't use, a new one with something in it is
+        assert!(!used(&old, &account(window(0.0, None), window(31.0, Some(9000.0)))));
+        assert!(used(&old, &account(window(3.0, Some(19_000.0)), window(31.0, Some(9000.0)))));
+        assert!(used(&account(window(0.0, None), window(31.0, Some(9000.0))), &account(window(0.0, Some(19_000.0)), window(31.0, Some(9000.0)))));
+        // The same reset a few seconds off
+        assert!(!used(&old, &account(window(42.0, Some(1010.0)), window(31.0, Some(9000.0)))));
+        // Stale numbers, another login, logged out
+        let mut stale = account(window(50.0, Some(1000.0)), window(31.0, Some(9000.0)));
+        stale.stale = true;
+        assert!(!used(&old, &stale));
+        let mut other = account(window(50.0, Some(1000.0)), window(31.0, Some(9000.0)));
+        other.email = "alex@work.example".into();
+        assert!(!used(&old, &other));
+        assert!(!used(&old, &Account::default()));
     }
 
     #[test]
