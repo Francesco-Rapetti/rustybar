@@ -249,7 +249,8 @@ accounts = [{ dir = "~/.claude-work", color = "sky" }]
 ```
 
 With more than one account, each has its own pill and popup; when the bar has no room for them
-(after the volume sliders, see `slim_first`) one pill shows the busiest and its popup has them all.
+(after the volume sliders, see `slim_first`) one pill shows the account whose usage went up last
+(the one in use; the busiest until one does) and its popup has them all.
 
 ### Now Playing
 

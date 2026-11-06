@@ -3,6 +3,7 @@
     {"dir": "~/.claude-work", "color": "#89b4fa"},
     {"dir": "~/.claude-personal", "color": "#a6e3a1"}
   ],
+  "latest": 0,
   "data": [
     {"logged_in": true, "name": "Alex Doe", "email": "alex@example.com", "org": "alex@example.com's Organization", "plan": "max", "at": 2,
      "session": {"percent": 42, "reset": 177}, "week": {"percent": 31, "reset": 4630}},
