@@ -1,12 +1,13 @@
 //! Keeps the two sides of a bar apart. When the widgets on the left and those on the right don't
 //! fit in the room the screen gives them, between its edges and the notch (or each other), first
-//! the widgets of `slim_first` leave out what the bar can do without, in that order (the volume
-//! sliders of `audio`, then the pills of the single Claude accounts); then the ones farthest from
-//! their edge give way first: they switch to their compact form one at a time, and when every one
-//! is compact they move, one at a time, the outermost last, to the popup of a `⋯` pill that takes
-//! their place (see `App::bar_tree`), so that every widget stays at hand. A side takes its bigger
-//! forms back only with some room to spare, so that a widget whose width changes doesn't flip back
-//! and forth at the limit.
+//! the center group between them turns compact, when that keeps one of them in a bigger form (see
+//! `App::bar_tree`); then the widgets of `slim_first` leave out what the bar can do without, in
+//! that order (the volume sliders of `audio`, then the pills of the single Claude accounts); then
+//! the ones farthest from their edge give way first: they switch to their compact form one at a
+//! time, and when every one is compact they move, one at a time, the outermost last, to the popup
+//! of a `⋯` pill that takes their place (see `App::bar_tree`), so that every widget stays at hand.
+//! A side takes its bigger forms back only with some room to spare, so that a widget whose width
+//! changes doesn't flip back and forth at the limit.
 
 /// How a widget is drawn in a bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

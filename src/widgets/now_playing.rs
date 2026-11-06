@@ -1,5 +1,6 @@
 //! What Music or Spotify is playing. In the bar: the cover, the title and the artist (the title
-//! only, when compact), dimmed with a pause sign while paused, and a line along the bottom that
+//! only when compact, the first in the bar to give way: see `App::bar_tree`), dimmed with a pause
+//! sign while paused, and a line along the bottom that
 //! goes as far as the track has (see `progress`); hidden when nothing plays, or while paused with
 //! `paused = false`. The popup is a player: the cover, the title, artist and album, a
 //! bar to seek with the time gone and left, shuffle, previous, play/pause, next and repeat, the
@@ -35,7 +36,8 @@
 //! On a screen with a notch, as the first of the center group, it's an extension of the notch with
 //! `notch` (on by default; see `Rx::island`): black as the notch and as tall, curving into the top
 //! of the screen as it does. Left of it the cover, the title and the artist, which take the room
-//! the bar leaves there; right of it bars that move to the music in the cover's liveliest color, or
+//! the bar leaves there (the cover alone when compact, the first in the bar to give way); right of
+//! it bars that move to the music in the cover's liveliest color, or
 //! the pause sign, in a ring of where the track is. Under the mouse it grows down with the peek, on
 //! a click into the player, in the cover's colors on the notch's black, and by itself for a moment
 //! when the track changes, with the cover bigger (see `notice`): not for the first one, nor with
@@ -642,7 +644,9 @@ impl NowPlaying {
     /// The bar's player as an extension of the notch (see the top): left of it the cover, the
     /// title and the artist, as in the pill; right of it bars that move to the music, in the
     /// cover's liveliest color, or the pause sign, the cover dimmed. The cover and the bars always
-    /// have their room; the title and the artist take what the bar leaves beside them.
+    /// have their room; the title and the artist take what the bar leaves beside them. Compact,
+    /// the first thing in the bar to give way when it has no room (see `App::bar_tree`), the
+    /// cover alone: the peek has the title.
     fn island_bar(&self, rx: &Rx, p: &Player, island: Island) -> Node {
         let theme = self.notch_theme(rx.theme, p);
         let rx = &Rx { theme: &theme, ..*rx };
@@ -651,13 +655,13 @@ impl NowPlaying {
         let size = island_cover(island);
         // The cover as far from the island's edge as from its top and bottom
         let inset = ((island.height - size) / 2.0).round();
-        let (title_w, artist_w) = island_text(th, p, island.left);
-        let mut left = vec![
-            self.cover(rx, p, size, 6.0).opacity(if playing { 1.0 } else { 0.6 }).key("cover"),
-            Node::text(&p.title, th.font(), if playing { th.text } else { th.subtext }).max_width(title_w).marquee(playing).key("title"),
-        ];
-        if artist_w > 0.0 {
-            left.push(Node::text(&p.artist, th.font(), th.subtext).max_width(artist_w).key("artist"));
+        let mut left = vec![self.cover(rx, p, size, 6.0).opacity(if playing { 1.0 } else { 0.6 }).key("cover")];
+        if !rx.compact {
+            let (title_w, artist_w) = island_text(th, p, island.left);
+            left.push(Node::text(&p.title, th.font(), if playing { th.text } else { th.subtext }).max_width(title_w).marquee(playing).key("title"));
+            if artist_w > 0.0 {
+                left.push(Node::text(&p.artist, th.font(), th.subtext).max_width(artist_w).key("artist"));
+            }
         }
         let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
         // Smaller in the ring of where the track is, so as not to touch it
@@ -841,10 +845,10 @@ impl Widget for NowPlaying {
         let rx = own.as_ref().unwrap_or(rx);
         let th = rx.theme;
         let mut rows = Vec::new();
-        // What the island had no room for: the title, if it's cut there, and the artist
+        // What the island had no room for: the title, if it's cut there or compact, and the artist
         if let Some(i) = island {
             let (title_w, artist_w) = island_text(th, p, i.left);
-            let cut = title_w < crate::gfx::measure_text(&p.title, &th.font()).width.ceil();
+            let cut = rx.compact || title_w < crate::gfx::measure_text(&p.title, &th.font()).width.ceil();
             if cut || (artist_w == 0.0 && !p.artist.is_empty()) {
                 let max = ISLAND_WIDTH - 24.0;
                 let mut lines = vec![Node::text(&p.title, th.font_with(Weight::Semibold, th.font_size), th.text).max_width(max).marquee(p.state == State::Playing).key("title")];
@@ -2088,6 +2092,13 @@ mod tests {
         let wing = drawn(&w, whole - ISLAND_TEXT).children[0].children[0].clone();
         assert_eq!((keys(&wing), wing.children[1].style.max_width), (vec!["cover".to_string(), "title".to_string()], Some(whole)));
         assert_eq!(keys(&drawn(&w, 2000.0).children[0].children[0]), ["cover", "title", "artist"]);
+        // Compact: the cover alone, whatever the room, and the title in the peek
+        let mut rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Compact, false);
+        rx.island = Some(Island { left: 2000.0, ..island });
+        let n = w.bar(&rx).expect("an island");
+        assert_eq!(keys(&n.children[0].children[0]), ["cover"]);
+        assert_eq!(keys(&n.children[2].children[0].children[0]), ["bars"]);
+        assert_eq!(keys(&w.peek(&rx).expect("a peek")), ["track", "controls"]);
         // Paused: the pause sign, and a peek with the title the island cuts
         w.players[0].state = State::Paused;
         assert_eq!(keys(&drawn(&w, 0.0).children[2].children[0].children[0]), ["paused"]);

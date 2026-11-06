@@ -175,7 +175,12 @@ label and fill colors, translucent as macOS has them). `[theme.colors]` override
 adds new names.
 
 The left and right sides never overlap, nor go under the notch. When they don't fit on a screen,
-first the widgets of `slim_first` (in `[displays]`) leave out what the bar can do without, in that order: by default
+first what's between them turns compact, if that keeps a widget of the sides in a bigger form:
+the center group in the middle (`now_playing` without the artist, and a shorter title), or the
+island of `now_playing` around the notch (the cover alone on the left of it). Then it takes no
+more room than that. When the sides give way all the same, it keeps its own form and takes the
+room they leave. Next the widgets of
+`slim_first` (in `[displays]`) leave out what the bar can do without, in that order: by default
 the volume sliders of `audio` go, then `claude` shows one pill for all its accounts. Then the
 widgets farthest from their edge give way, one at a time: first they switch to their compact
 form (icons, short times; AeroSpace keeps the icons of the focused workspace only), then they move
@@ -284,8 +289,10 @@ On a screen with a notch, as the first widget of the center group, it's an exten
 as the notch does. Left of the notch the cover, the title and the artist; right of it bars that
 move to the music in the cover's liveliest color, or the pause sign, with the cover dimmed, in a
 ring that fills as the track goes on (as the line under the pill does). The
-cover and the bars always have their room (the sides of the bar give way first); the title and the
-artist take what the sides leave, and the title scrolls if it's cut. Under the mouse it grows down
+cover and the bars always have their room; the title and the artist take what the sides leave, and
+the title scrolls if it's cut. When that keeps a widget on the left of the notch in a bigger form,
+the island is the first to give way: it keeps only the cover there, and the title and the artist
+are in the quick controls. Under the mouse it grows down
 with the quick controls, and a click grows it further into the player, black with the cover's
 color, which stays open as a popup does: a click outside or on its top closes it. When the track
 changes it grows by itself for 3 seconds with the cover bigger, the title, the artist and the
