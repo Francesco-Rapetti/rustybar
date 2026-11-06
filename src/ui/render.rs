@@ -11,11 +11,11 @@ use objc2_core_graphics::CGMutablePath;
 use objc2_foundation::{NSArray, NSNumber, NSObjectNSKeyValueCoding, ns_string};
 use objc2_quartz_core::{
     CAAnimation, CABasicAnimation, CAFrameRateRange, CAGradientLayer, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
-    CAShapeLayer, CASpringAnimation, CATransaction, kCACornerCurveContinuous, kCAGravityCenter, kCAGravityLeft,
+    CACurrentMediaTime, CAShapeLayer, CASpringAnimation, CATransaction, kCACornerCurveContinuous, kCAGravityCenter, kCAGravityLeft, kCALineCapRound,
 };
 
 use super::layout::Laid;
-use super::node::{Action, Kind, Node, Notch};
+use super::node::{Action, Along, Kind, Node, Notch, Trace};
 use crate::gfx::{self, FontSpec, Rgba};
 
 /// An interactive region of a surface, in its coordinates (top-left origin).
@@ -62,7 +62,22 @@ struct Entry {
     marquee: Option<Marquee>,
     /// The mask of a node shaped as the notch (see `Notch`), with what its path was made of.
     notch: Option<(Retained<CAShapeLayer>, [f64; 7])>,
+    /// The line along its edge (see `Trace`).
+    trace: Option<Traced>,
 }
+
+/// The layers of a `Trace`: the line, over the rest of it; what their path was made of.
+struct Traced {
+    line: Retained<CAShapeLayer>,
+    track: Retained<CAShapeLayer>,
+    shape: [f64; 6],
+    /// Where the line's animation started from, when (`CACurrentMediaTime`) and at what rate.
+    going: (f64, f64, f64),
+}
+
+/// How many seconds of its rate a trace may be off where it should be before it starts again from
+/// there: renders in between leave it going.
+const TRACE_SLACK: f64 = 1.0;
 
 /// The layers of a text that scrolls: the strip with the text and a copy of it after a gap, which
 /// moves, and the mask that fades the text where the box cuts it.
@@ -338,6 +353,7 @@ impl Surface {
                     corners: None,
                     marquee: None,
                     notch: None,
+                    trace: None,
                 },
             );
         }
@@ -397,6 +413,10 @@ impl Surface {
                 layer.setBorderColor(Some(&c.cg()));
             }
             None => layer.setBorderWidth(0.0),
+        }
+        match &s.trace {
+            Some(t) => set_trace(entry, &layer, t, s.radius, s.border.map_or(0.0, |(w, _)| w), laid.w, laid.h, scale, self.animate),
+            None => hide_trace(entry),
         }
 
         // What the layer itself draws
@@ -1029,16 +1049,181 @@ pub fn settling(stiffness: f64, damping: f64) -> f64 {
     anim.settlingDuration()
 }
 
+/// Draws `t` along the edge of the node's layer, `w`×`h` with `radius` (see `Trace`), inside its
+/// `border`, which Core Animation draws over what's in the layer: a line whose
+/// end Core Animation takes on to the end at the trace's rate, from where it should be now, at a
+/// frame rate that moves it half a pixel at a time. A render while it goes leaves it going, unless
+/// it's more than `TRACE_SLACK` off; one that stops it leaves it where it should be, and one that
+/// moves it while it's still (a seek in a pause) takes it there with the transaction's ease.
+#[allow(clippy::too_many_arguments)]
+fn set_trace(entry: &mut Entry, layer: &CALayer, t: &Trace, radius: f64, border: f64, w: f64, h: f64, scale: f64, animate: bool) {
+    let value = trace_value(t, crate::time::now());
+    let created = entry.trace.is_none();
+    let traced = entry.trace.get_or_insert_with(|| {
+        let make = || {
+            let l = CAShapeLayer::new();
+            l.setContentsScale(scale);
+            l.setFillColor(None);
+            l.setLineCap(unsafe { kCALineCapRound });
+            // Over the children, which come after it
+            l.setZPosition(1.0);
+            layer.addSublayer(&l);
+            l
+        };
+        transaction(false, 0.0, || {
+            let (track, line) = (make(), make());
+            line.setStrokeEnd(0.0);
+            Traced { line, track, shape: [0.0; 6], going: (0.0, 0.0, 0.0) }
+        })
+    });
+    let (line, track) = (&traced.line, &traced.track);
+    let shape = [w, h, radius, border, t.width, t.along as u8 as f64];
+    let colors = || {
+        line.setStrokeColor(Some(&t.color.cg()));
+        track.setStrokeColor(Some(&t.track.unwrap_or(Rgba(0.0, 0.0, 0.0, 0.0)).cg()));
+        for l in [line, track] {
+            l.setOpacity(1.0);
+        }
+    };
+    if traced.shape != shape {
+        // A new one at once; one that changes as its node does
+        let path = trace_path(t.along, w, h, radius, border + t.width / 2.0);
+        let set = || {
+            for l in [line, track] {
+                l.setFrame(rect(0.0, 0.0, w, h));
+                l.setLineWidth(t.width);
+                l.setPath(Some(&path));
+            }
+        };
+        if created { transaction(false, 0.0, set) } else { set() }
+        traced.shape = shape;
+    }
+    if created { transaction(false, 0.0, colors) } else { colors() }
+
+    // Where it is on screen: by the clock of Core Animation, which stops as it does while the
+    // Mac sleeps
+    let running = unsafe { line.animationForKey(ns_string!("trace")) }.is_some();
+    let (from, start, rate) = traced.going;
+    let shown = if running { (from + (CACurrentMediaTime() - start) * rate).min(1.0) } else { line.strokeEnd() };
+    let moving = t.rate > 0.0 && value < 1.0;
+    if moving {
+        if running && (shown - value).abs() <= (TRACE_SLACK * t.rate).max(0.002) {
+            return;
+        }
+        let length = trace_length(t.along, w, h, radius, border + t.width / 2.0);
+        let fps = (length * t.rate * scale * 2.0).ceil().clamp(1.0, 30.0) as f32;
+        let anim = CABasicAnimation::animationWithKeyPath(Some(ns_string!("strokeEnd")));
+        unsafe {
+            anim.setFromValue(Some(&NSNumber::new_f64(value)));
+            anim.setToValue(Some(&NSNumber::new_f64(1.0)));
+        }
+        let linear = CAMediaTimingFunction::functionWithControlPoints(0.0, 0.0, 1.0, 1.0);
+        anim.setDuration((1.0 - value) / t.rate);
+        anim.setTimingFunction(Some(&linear));
+        anim.setPreferredFrameRateRange(CAFrameRateRange::new(1.0, fps, fps));
+        transaction(false, 0.0, || line.setStrokeEnd(1.0));
+        // In place of the one going, if there's one. In a transaction of its own, as the ease of
+        // the render's would be its own instead
+        CATransaction::begin();
+        CATransaction::setAnimationTimingFunction(Some(&linear));
+        line.addAnimation_forKey(&anim, Some(ns_string!("trace")));
+        CATransaction::commit();
+        traced.going = (value, CACurrentMediaTime(), t.rate);
+        return;
+    }
+    if running {
+        line.removeAnimationForKey(ns_string!("trace"));
+    }
+    if (line.strokeEnd() - value).abs() < 1e-6 {
+        return;
+    }
+    transaction(false, 0.0, || line.setStrokeEnd(value));
+    if animate && !created && (shown - value).abs() > 0.002 {
+        let anim = CABasicAnimation::animationWithKeyPath(Some(ns_string!("strokeEnd")));
+        unsafe {
+            anim.setFromValue(Some(&NSNumber::new_f64(shown)));
+            anim.setToValue(Some(&NSNumber::new_f64(value)));
+        }
+        anim.setDuration(0.32);
+        anim.setTimingFunction(Some(&ease()));
+        line.addAnimation_forKey(&anim, Some(ns_string!("glide")));
+    }
+}
+
+/// The trace goes as the node does: gone with it.
+fn hide_trace(entry: &mut Entry) {
+    if let Some(traced) = &entry.trace {
+        for l in [&traced.line, &traced.track] {
+            if l.opacity() != 0.0 {
+                l.setOpacity(0.0);
+            }
+        }
+    }
+}
+
+/// Where `t` should be at `now`.
+fn trace_value(t: &Trace, now: f64) -> f64 {
+    (t.value + (now - t.at).max(0.0) * t.rate).clamp(0.0, 1.0)
+}
+
+/// The path of a `Trace` along a `w`×`h` rounded rectangle with `radius`, `inset` inside its edge
+/// (half the line, and the border).
+fn trace_path(along: Along, w: f64, h: f64, radius: f64, inset: f64) -> CFRetained<CGMutablePath> {
+    let (i, w, h, r) = inside(w, h, radius, inset);
+    let (left, top, right, bottom) = (i, i, i + w, i + h);
+    let path = CGMutablePath::new();
+    let p = Some(&*path);
+    let m = std::ptr::null();
+    unsafe {
+        match along {
+            Along::Bottom => {
+                CGMutablePath::move_to_point(p, m, left + r, bottom);
+                CGMutablePath::add_line_to_point(p, m, right - r, bottom);
+            }
+            Along::Around => {
+                let middle = left + w / 2.0;
+                CGMutablePath::move_to_point(p, m, middle, top);
+                CGMutablePath::add_arc_to_point(p, m, right, top, right, bottom, r);
+                CGMutablePath::add_arc_to_point(p, m, right, bottom, left, bottom, r);
+                CGMutablePath::add_arc_to_point(p, m, left, bottom, left, top, r);
+                CGMutablePath::add_arc_to_point(p, m, left, top, right, top, r);
+                CGMutablePath::add_line_to_point(p, m, middle, top);
+            }
+        }
+    }
+    path
+}
+
+/// How long `trace_path` is, in points.
+fn trace_length(along: Along, w: f64, h: f64, radius: f64, inset: f64) -> f64 {
+    let (_, w, h, r) = inside(w, h, radius, inset);
+    let (across, down) = (w - 2.0 * r, h - 2.0 * r);
+    match along {
+        Along::Bottom => across,
+        Along::Around => 2.0 * (across + down) + 2.0 * std::f64::consts::PI * r,
+    }
+}
+
+/// The rounded rectangle `inset` inside one `w`×`h` with `radius`: where it starts, its size and
+/// its radius.
+fn inside(w: f64, h: f64, radius: f64, inset: f64) -> (f64, f64, f64, f64) {
+    let (w, h) = ((w - 2.0 * inset).max(0.0), (h - 2.0 * inset).max(0.0));
+    (inset, w, h, (radius - inset).clamp(0.0, w.min(h) / 2.0))
+}
+
 /// The bars of `Kind::Bars`, `w`×`h`: each rises to the top and falls to its lowest by itself, out
 /// of step with the others, at 30 frames a second at most; with `motion` off they stand still at
 /// heights of their own.
 fn layout_bars(entry: &mut Entry, layer: &CALayer, color: Rgba, w: f64, h: f64, motion: bool, scale: f64) {
     const NAMES: [&str; BARS] = ["bar0", "bar1", "bar2", "bar3"];
-    let x0 = ((w - BARS_WIDTH) / 2.0).max(0.0);
+    // Narrower in a node given less room than they take, as they'd be from further away
+    let k = (w / BARS_WIDTH).min(1.0);
+    let (bar_w, gap) = (BAR_W * k, BAR_GAP * k);
+    let x0 = ((w - BARS_WIDTH * k) / 2.0).max(0.0);
     for (i, name) in NAMES.iter().enumerate() {
         let bar = part(entry, name, layer, scale);
-        bar.setFrame(rect(x0 + i as f64 * (BAR_W + BAR_GAP), 0.0, BAR_W, h));
-        bar.setCornerRadius(BAR_W / 2.0);
+        bar.setFrame(rect(x0 + i as f64 * (bar_w + gap), 0.0, bar_w, h));
+        bar.setCornerRadius(bar_w / 2.0);
         bar.setBackgroundColor(Some(&color.cg()));
         let moving = unsafe { bar.animationForKey(ns_string!("bars")) }.is_some();
         if motion && !moving {
@@ -1310,6 +1495,53 @@ mod tests {
         // The mouse leaves: nothing over the selection
         surface.set_hover(None, None);
         assert_eq!(shown(&surface, &b.0), None);
+    }
+
+    #[test]
+    fn a_trace_goes_on_by_itself() {
+        let trace = |value: f64, rate: f64| Trace { value, at: crate::time::now(), rate, along: Along::Bottom, width: 2.0, color: Rgba(0.8, 0.65, 0.97, 1.0), track: None };
+        let mut surface = Surface::new(2.0, Rgba(0.3, 0.3, 0.4, 1.0));
+        surface.animate = false;
+        let render = |s: &mut Surface, t: Trace| {
+            let node = Node::row(vec![]).size(200.0, 28.0).radius(14.0).trace(t).key("pill");
+            let laid = super::super::layout::Layout { scale: 2.0 }.run(&node, None);
+            s.render(&node, &laid);
+        };
+        let going = |s: &Surface| {
+            let line = &s.entries.values().find_map(|e| e.trace.as_ref()).expect("a trace").line;
+            (unsafe { line.animationForKey(ns_string!("trace")) }, line.strokeEnd())
+        };
+        // Playing: Core Animation takes it to the end, in as long as the rest of the track
+        render(&mut surface, trace(0.25, 0.01));
+        let (first, end) = going(&surface);
+        let first = first.expect("going on");
+        assert!((first.duration() - 75.0).abs() < 0.1, "{}", first.duration());
+        assert_eq!(end, 1.0);
+        // A render as it goes, with where it should be by then, leaves it going
+        render(&mut surface, trace(0.2502, 0.01));
+        assert!(going(&surface).0.is_some_and(|a| std::ptr::eq(Retained::as_ptr(&a), Retained::as_ptr(&first))));
+        // A seek starts it again from there
+        render(&mut surface, trace(0.6, 0.01));
+        let (seeked, _) = going(&surface);
+        assert!(seeked.is_some_and(|a| !std::ptr::eq(Retained::as_ptr(&a), Retained::as_ptr(&first)) && (a.duration() - 40.0).abs() < 0.1));
+        // A pause: still, where it is
+        render(&mut surface, trace(0.6, 0.0));
+        let (none, end) = going(&surface);
+        assert!(none.is_none());
+        assert!((end - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn traces_go_along_the_edge() {
+        // A pill 200×28 with a line of 2: the straight part of its bottom, from 14 to 186
+        assert!((trace_length(Along::Bottom, 200.0, 28.0, 14.0, 1.0) - 172.0).abs() < 1e-9);
+        // A ring of 26 with a line of 1.5: a circle of 24.5 across
+        let ring = trace_length(Along::Around, 26.0, 26.0, 13.0, 0.75);
+        assert!((ring - std::f64::consts::PI * 24.5).abs() < 1e-9);
+        let t = Trace { value: 0.5, at: 100.0, rate: 0.01, along: Along::Around, width: 1.5, color: Rgba(1.0, 1.0, 1.0, 1.0), track: None };
+        assert_eq!(trace_value(&t, 110.0), 0.6);
+        assert_eq!(trace_value(&t, 200.0), 1.0);
+        assert_eq!(trace_value(&t, 90.0), 0.5);
     }
 
     #[test]

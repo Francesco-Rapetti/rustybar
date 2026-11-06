@@ -95,7 +95,7 @@ pub enum Kind {
     Skeleton,
     /// Thin bars that rise and fall by themselves, as an equalizer does: something plays. Core
     /// Animation moves them in the window server; they stand still when the Mac asks for less
-    /// motion.
+    /// motion. Narrower in a node less wide than they are.
     Bars {
         color: Rgba,
     },
@@ -162,6 +162,37 @@ pub struct Style {
     /// Drawn as an extension of the notch (see `Notch`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notch: Option<Notch>,
+    /// A line along its edge that goes as far as something has got (see `Trace`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace: Option<Trace>,
+}
+
+/// How far something has got (a track that plays), as a line along the edge of a node, over its
+/// children: `value` (0..1) at `at` (seconds, as `time::now`), going on by `rate` a second up to
+/// the end. Core Animation draws it going on in the window server, so a widget only says when the
+/// rate or the value changes (a pause, a seek): renders in between don't start it again, unless
+/// it's more than a moment off where it should be (the Mac slept, say). With `track`, the rest of
+/// the line too.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Trace {
+    pub value: f64,
+    pub at: f64,
+    pub rate: f64,
+    pub along: Along,
+    pub width: f64,
+    pub color: Rgba,
+    pub track: Option<Rgba>,
+}
+
+/// Where a `Trace` goes on the node's rounded outline.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum Along {
+    /// The straight part of its bottom edge, from left to right, where the corners don't bend
+    /// it: a line under a pill.
+    #[default]
+    Bottom,
+    /// All of it, from the middle of the top round to it again, clockwise: a ring.
+    Around,
 }
 
 /// The shape of a node that extends the notch: square at the top, where it meets the edge of the
@@ -200,6 +231,7 @@ impl Default for Style {
             marquee: false,
             clip: false,
             notch: None,
+            trace: None,
         }
     }
 }
@@ -369,6 +401,12 @@ impl Node {
     /// Drawn as an extension of the notch, with ears of `ear` points (see `Notch`).
     pub fn notch(mut self, ear: f64) -> Node {
         self.style.notch = Some(Notch { ear, area: None });
+        self
+    }
+
+    /// A line along its edge that goes as far as something has got (see `Trace`).
+    pub fn trace(mut self, trace: Trace) -> Node {
+        self.style.trace = Some(trace);
         self
     }
 

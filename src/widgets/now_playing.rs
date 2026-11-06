@@ -1,6 +1,7 @@
 //! What Music or Spotify is playing. In the bar: the cover, the title and the artist (the title
-//! only, when compact), dimmed with a pause sign while paused; hidden when nothing plays, or while
-//! paused with `paused = false`. The popup is a player: the cover, the title, artist and album, a
+//! only, when compact), dimmed with a pause sign while paused, and a line along the bottom that
+//! goes as far as the track has (see `progress`); hidden when nothing plays, or while paused with
+//! `paused = false`. The popup is a player: the cover, the title, artist and album, a
 //! bar to seek with the time gone and left, shuffle, previous, play/pause, next and repeat, the
 //! app's own volume, favorite (Music) and the app; a switch between the two when both have
 //! something.
@@ -34,10 +35,11 @@
 //! On a screen with a notch, as the first of the center group, it's an extension of the notch with
 //! `notch` (on by default; see `Rx::island`): black as the notch and as tall, curving into the top
 //! of the screen as it does. Left of it the cover, the title and the artist, which take the room
-//! the bar leaves there; right of it bars that move to the music in the cover's liveliest color,
-//! or the pause sign. Under the mouse it grows down with the peek, on a click into the player, in
-//! the cover's colors on the notch's black, and by itself for a moment when the track changes,
-//! with the cover bigger (see `notice`): not for the first one, nor with the mouse on it.
+//! the bar leaves there; right of it bars that move to the music in the cover's liveliest color, or
+//! the pause sign, in a ring of where the track is. Under the mouse it grows down with the peek, on
+//! a click into the player, in the cover's colors on the notch's black, and by itself for a moment
+//! when the track changes, with the cover bigger (see `notice`): not for the first one, nor with
+//! the mouse on it.
 //!
 //! With made-up data (see `mock`), the players of `now_playing.json`, whose `artwork` is relative
 //! to its folder (the `other` one with `other_apps` only); the controls change them in memory only,
@@ -64,12 +66,12 @@ use serde::Deserialize;
 
 use super::{Cx, Event, Island, Rx, Widget};
 use crate::config::Options;
-use crate::gfx::Weight;
+use crate::gfx::{Rgba, Weight};
 use crate::i18n::t;
 use crate::palette::Palette;
 use crate::theme::Theme;
 use crate::time;
-use crate::ui::{Align, Justify, Kind, Node};
+use crate::ui::{Align, Along, Justify, Kind, Node, Trace};
 
 const WIDTH: f64 = 300.0;
 /// In the island: the least the title takes, and how wide the peek and the notice are at least.
@@ -658,11 +660,18 @@ impl NowPlaying {
             left.push(Node::text(&p.artist, th.font(), th.subtext).max_width(artist_w).key("artist"));
         }
         let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
+        // Smaller in the ring of where the track is, so as not to touch it
+        let ring = p.duration > 0.0;
         let sign = match playing {
+            true if ring => Node::new(Kind::Bars { color: th.primary }).size(13.0, 10.0).key("bars"),
             true => Node::new(Kind::Bars { color: th.primary }).key("bars"),
-            false => Node::symbol("pause.fill", 12.0, Weight::Bold, th.subtext).key("paused"),
+            false => Node::symbol("pause.fill", if ring { 10.0 } else { 12.0 }, Weight::Bold, th.subtext).key("paused"),
         };
-        let right = Node::row(vec![Node::row(vec![sign]).size(size, size).justify(Justify::Center).align(Align::Center).key("sign")])
+        let mut sign = Node::row(vec![sign]).size(size, size).radius(size / 2.0).justify(Justify::Center).align(Align::Center).key("sign");
+        if let Some(t) = progress(th, p, Along::Around, Some(th.surface)) {
+            sign = sign.trace(t);
+        }
+        let right = Node::row(vec![sign])
             .align(Align::Center)
             .height(island.height)
             .padding(0.0, inset, 0.0, 8.0)
@@ -721,6 +730,22 @@ fn island_text(th: &Theme, p: &Player, room: f64) -> (f64, f64) {
     let artist = if p.artist.is_empty() { 0.0 } else { width(&p.artist) };
     let artist_w = if artist > 0.0 && spare - 8.0 >= artist.min(ISLAND_TEXT) { artist.min(spare - 8.0) } else { 0.0 };
     (least + more, artist_w)
+}
+
+/// Where `p` is in its track, as a line `along` the edge of a node that goes on while it plays
+/// (see `Trace`), over `track` if given: in the accent, or dimmed in a pause. None without a
+/// length (a stream).
+fn progress(th: &Theme, p: &Player, along: Along, track: Option<Rgba>) -> Option<Trace> {
+    let playing = p.state == State::Playing;
+    (p.duration > 0.0).then(|| Trace {
+        value: (p.position / p.duration).clamp(0.0, 1.0),
+        at: p.at,
+        rate: if playing { 1.0 / p.duration } else { 0.0 },
+        along,
+        width: if along == Along::Bottom { 2.0 } else { 1.5 },
+        color: if playing { th.primary } else { th.overlay },
+        track,
+    })
 }
 
 /// `secs` as 3:07, or 1:02:03.
@@ -791,7 +816,11 @@ impl Widget for NowPlaying {
         }
         // The cover as far from the pill's edge as from its top and bottom
         let inset = ((th.pill_height - size) / 2.0).max(2.0);
-        let pill = rx.pill(children).padding(0.0, th.pill_padding, 0.0, inset).click(rx.toggle_popup());
+        let mut pill = rx.pill(children).padding(0.0, th.pill_padding, 0.0, inset).click(rx.toggle_popup());
+        // Where the track is, along the bottom of the pill
+        if let Some(t) = progress(th, p, Along::Bottom, None) {
+            pill = pill.trace(t);
+        }
         // Under the mouse it grows (see `peek`): no highlight too, on it or on the grown one's top
         Some(if self.hover { pill.hover(crate::gfx::Rgba(0.0, 0.0, 0.0, 0.0)) } else { pill })
     }
@@ -2070,6 +2099,41 @@ mod tests {
         w.notch = false;
         assert!(drawn(&w, 0.0).style.notch.is_none());
         assert!(w.notice(&rx).is_none());
+    }
+
+    #[test]
+    fn where_the_track_is_shows_at_rest() {
+        let theme = crate::theme::Theme::from_config(&crate::config::ThemeConfig::default());
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1512.0, 982.0));
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: Some((646.0, 866.0)), notch_height: 38.0, large: false };
+        let mut w = NowPlaying::new(&Options::default());
+        w.players = [
+            Player { app: App::Music, state: State::Playing, title: "A".into(), duration: 200.0, position: 50.0, at: 1000.0, pid: Some(1), ..Default::default() },
+            Player::new(App::Spotify),
+            Player::new(App::Other),
+        ];
+        let pill = |w: &NowPlaying| w.bar(&Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false)).expect("a pill").style.trace;
+        let ring = |w: &NowPlaying| {
+            let mut rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false);
+            rx.island = Some(Island { notch: 220.0, height: 38.0, ear: 6.0, radius: 10.0, left: 0.0, right: 0.0 });
+            let n = w.bar(&rx).expect("an island");
+            n.children[2].children[0].children[0].style.trace
+        };
+        // Along the bottom of the pill, going on by a second of the track a second
+        let t = pill(&w).expect("a line");
+        assert_eq!((t.along, t.value, t.at, t.rate, t.color), (Along::Bottom, 0.25, 1000.0, 1.0 / 200.0, theme.primary));
+        // Around the bars of the island, over the rest of the ring
+        let t = ring(&w).expect("a ring");
+        assert_eq!((t.along, t.value, t.rate), (Along::Around, 0.25, 1.0 / 200.0));
+        assert!(t.track.is_some());
+        // Paused: still, and dimmed
+        w.players[0].state = State::Paused;
+        let t = pill(&w).expect("a line");
+        assert_eq!((t.rate, t.color), (0.0, theme.overlay));
+        assert_eq!(ring(&w).expect("a ring").rate, 0.0);
+        // A stream has no length: nothing
+        w.players[0].duration = 0.0;
+        assert!(pill(&w).is_none() && ring(&w).is_none());
     }
 
     #[test]

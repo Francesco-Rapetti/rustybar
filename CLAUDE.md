@@ -369,6 +369,22 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   0 processi nuovi (il primo minuto dopo l'avvio 1,5%). Da provare con l'utente: il mouse vero
   (crescita, clic sulla cima, clic fuori, passaggio alla barra sotto), il notice a un cambio di
   traccia vero, le barre col colore di una copertina vera.
+- Avanzamento a riposo di `now_playing` (opzione D dei mockup, scelta dall'utente): sulla pill una
+  linea dritta sulla parte piatta del bordo in basso (non segue la curva: l'utente la vuole dritta),
+  nell'accento del tema, `overlay` in pausa; sull'isola un anello attorno alle barre (più piccole,
+  13×10, `Kind::Bars` si stringe in un nodo più stretto) nel colore della copertina, su una traccia
+  `surface`. È `Style::trace` (`Trace`: `value` a `at`, `rate` al secondo, `Along::Bottom` o
+  `Around`; in Lua `trace = {…}`): un `CAShapeLayer` sopra i figli con `strokeEnd` animato da Core
+  Animation fino alla fine della traccia, lineare, a pochi fps (mezzo pixel per fotogramma); un
+  render lo rifà solo a pausa, seek, traccia nuova o se è indietro di più di 1 s secondo l'orologio
+  di CA (`CACurrentMediaTime`, che si ferma col Mac in stop come l'animazione). Imparato: la
+  transazione del render impone il suo ease alle animazioni esplicite aggiunte dentro (la linea
+  andava ~4× troppo veloce all'inizio); va aggiunta in una transazione sua, lineare. Nella pill
+  cresciuta (peek) la linea sparisce: c'è la barra del peek. Niente per uno stream (durata 0).
+  Provato coi dati finti sulla barra di prova (pill in riproduzione e in pausa, misurata la
+  velocità; peek), l'isola con un notch finto temporaneo (lo schermo col notch non c'era):
+  ~12 MB, 0,07% CPU, 0 processi. Da provare col notch vero e coi player veri (pausa, seek, cambio
+  di traccia, risveglio).
 - `events` a plancia: in cima l'evento della barra (`featured`: quello in corso che finisce prima,
   finché non comincia il prossimo, se no il prossimo) in un riquadro col colore del conto alla
   rovescia, con orari, calendario (pallino del suo colore) e luogo, invitati che hanno accettato,

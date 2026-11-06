@@ -18,7 +18,7 @@ processes a minute.
 | `apple` | The Apple logo | The Apple menu: About This Mac, Force Quit, Sleep, Restart, Shut Down, Lock Screen, Log Out, and last Dotfiles Settings (see [Settings window](#settings-window)) |
 | `aerospace` | [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspaces with the icons of their windows in on-screen order, the focused one under a sliding highlight, the binding mode | — (clicks switch workspace, focus a window, leave the mode) |
 | `front_app` | The app in front | — |
-| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then); hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track |
+| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then), with a line along the bottom for where the track is; hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music in a ring of where the track is | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track |
 | `system` | CPU, GPU and memory, colored by load and memory pressure | A dashboard: CPU and GPU with the last minute as a graph; memory split into app, wired and compressed; each disk with its used, available and purgeable space (a click opens it in the Finder); the apps that use the most CPU, GPU or memory; Activity Monitor and Storage settings |
 | `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
@@ -265,6 +265,12 @@ the track plays, as in Spotify: all of it, a pause of 3 seconds, and again. Core
 in the window server, so RustyBar does nothing meanwhile; with Reduce Motion (or
 `animations = false`) it's cut instead.
 
+At rest the pill shows where the track is with a line along the straight part of its bottom edge,
+in the theme's accent, gray while paused. Core Animation takes it on to the end of the track in the
+window server, a few frames a second (half a pixel at a time), so RustyBar does nothing meanwhile:
+it starts it again only on a pause, a seek or another track. A stream, which has no length, has no
+line. When the pill grows under the mouse the line fades, as the card has its own bar.
+
 With the mouse on the pill for a moment, the pill grows down into a card with quick controls: where
 the track is, with the time gone and left (drag to seek), and previous, play/pause and next, as the
 app takes them, with shuffle and repeat for Music and Spotify. Its top stays the pill as it was, and a click there opens the popup; when the mouse
@@ -275,7 +281,8 @@ a second only while grown. `hover = false` turns it off.
 On a screen with a notch, as the first widget of the center group, it's an extension of the notch
 (`notch = true`, the default): black as the notch and as tall, curving into the top of the screen
 as the notch does. Left of the notch the cover, the title and the artist; right of it bars that
-move to the music in the cover's liveliest color, or the pause sign, with the cover dimmed. The
+move to the music in the cover's liveliest color, or the pause sign, with the cover dimmed, in a
+ring that fills as the track goes on (as the line under the pill does). The
 cover and the bars always have their room (the sides of the bar give way first); the title and the
 artist take what the sides leave, and the title scrolls if it's cut. Under the mouse it grows down
 with the quick controls, and a click grows it further into the player, black with the cover's
@@ -384,7 +391,10 @@ rb.widget {
 - **Options**: `gap`, `pad`, `width`, `height`, `min_width`, `max_width`, `grow`, `radius`,
   `background`, `border`, `opacity`, `align`, `justify`, `key`, `hover`, `selected` (a sliding
   highlight behind the child with that key), `marquee = true` (a text that doesn't fit scrolls
-  instead of being cut), colors by palette name (`"primary"`, `"green@0.5"`) or hex. A slider shows its percentage inside, unless `percent = false`, and its knob while the
+  instead of being cut), `trace = { value = 0.3, rate = 1 / 214 }` (a line along the bottom edge
+  as far as `value`, which Core Animation takes on by `rate` a second without a render; `along =
+  "around"` for all the edge, a ring on a round box, plus `width`, `color` and `track`, the color
+  of the rest of it), colors by palette name (`"primary"`, `"green@0.5"`) or hex. A slider shows its percentage inside, unless `percent = false`, and its knob while the
   mouse is over it; with `labels = { "Low", "High" }` it stops at that many steps and shows the
   label of its step instead (`value` and `on_change` go from 0 for the first to 1 for the last).
 - **Actions**: `on_click` (and `on_change` for sliders, `on_edge` for scrolls) takes a function, a
