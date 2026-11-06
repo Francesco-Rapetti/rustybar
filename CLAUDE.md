@@ -369,6 +369,25 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   0 processi nuovi (il primo minuto dopo l'avvio 1,5%). Da provare con l'utente: il mouse vero
   (crescita, clic sulla cima, clic fuori, passaggio alla barra sotto), il notice a un cambio di
   traccia vero, le barre col colore di una copertina vera.
+- `now_playing` è il primo a compattarsi (l'ha chiesto l'utente: `aerospace` era compatto e
+  l'isola no), ma solo se serve: ciò che sta fra i lati, l'isola o il gruppo al centro senza
+  notch, è compatto quando così un lato a cui lascia più posto cede meno (`fit` fatto due volte,
+  livelli confrontati per lato: l'isola compatta aiuta solo il lato dove si stringe un'ala),
+  prima degli `slim_first`; da compatto non prende altro spazio (niente `spare` né `widen`).
+  Se i lati cedono lo stesso (con le finestre vere `aerospace` intero non ci sta neanche senza
+  isola), resta intero e prende lo spazio che avanza: l'ha chiesto l'utente dopo averlo visto
+  compatto per niente sulla barra vera. Torna intero solo con `SLACK` di scarto: da compatto la
+  forma intera si misura con ogni lato più stretto di `SLACK` (`Bar::center_compact`). Isola
+  compatta scelta dall'utente fra tre mockup: solo la copertina a sinistra (46 pt invece di 89 al
+  minimo), barre a destra; titolo e artista nel peek. Il gruppo accanto al notch senza isola
+  (`place_center`) è com'era: prende già solo lo spazio che avanza. Provato coi dati finti sulla
+  barra di prova col notch (margini 250–360: isola compatta con `aerospace` intero, poi
+  `aerospace` compatto e isola di nuovo intera; peek col titolo), senza notch con un ritocco
+  temporaneo di `display.rs` (tolto), e al limite con una pill Lua che cambia di 10 pt ogni
+  secondo (forme ferme da tutti e due i lati; un reload riparte da capo, `center_compact`
+  compreso). Coi dati finti ~17 MB, 0,02% CPU, 0 processi. Sulla barra vera dal 6/11/2026:
+  `aerospace` compatto, isola intera con 387 pt a sinistra; 27 MB in 2 processi, 0,35% CPU dopo
+  qualche minuto.
 - Avanzamento a riposo di `now_playing` (opzione D dei mockup, scelta dall'utente): sulla pill una
   linea dritta sulla parte piatta del bordo in basso (non segue la curva: l'utente la vuole dritta),
   nell'accento del tema, `overlay` in pausa; sull'isola un anello attorno alle barre (più piccole,

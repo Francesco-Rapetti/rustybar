@@ -68,6 +68,9 @@ pub struct Bar {
     pub center: Option<(Side, Form)>,
     /// The room the center group had beside it at the last render (see `spare`).
     pub spare: f64,
+    /// Whether the center group, or the island, was compact at the last render, to give the sides
+    /// room (see `bar_tree`).
+    center_compact: bool,
     /// What it drew at the last render, for a peek to start from the pill as it is.
     tree: Node,
     /// The pill hidden under a peek, as it would show.
@@ -377,6 +380,7 @@ impl App {
         for bar in &mut self.bars {
             bar.surface.highlight = self.theme.highlight;
             bar.fit.clear();
+            bar.center_compact = false;
         }
         self.reconcile_displays();
         self.create_widgets();
@@ -588,7 +592,10 @@ impl App {
     /// room left beside the center group, there or in the middle, goes to the text it had to cut
     /// (see `widen`). The first widget of the center group may draw itself as an extension of the
     /// notch there (see `Rx::island`): then it goes around the notch, the sides make room for the
-    /// least it takes, and it takes what they leave beside it.
+    /// least it takes, and it takes what they leave beside it. What's between the sides, the
+    /// island or the group in the middle, is the first to give way: compact, and no wider, when
+    /// that keeps a widget of the sides in a bigger form; when they give way all the same, it
+    /// keeps its own form and takes the room they leave.
     fn bar_tree(&mut self, b: usize) -> Node {
         let d = self.bars[b].display.clone();
         let height = self.config.bar.height;
@@ -623,26 +630,46 @@ impl App {
         let draw_center = |app: &mut App, compact: bool| -> Vec<Node> {
             centered.iter().filter_map(|&(i, form)| app.item(i, &d, if compact { Form::Compact } else { form })).collect()
         };
+        let width_of = |nodes: &[Node]| nodes.iter().map(|n| layout.intrinsic(n, None).0).sum::<f64>() + gap * nodes.len().saturating_sub(1) as f64;
         let mut center = draw_center(self, false);
-        let center_w = center.iter().map(|n| layout.intrinsic(n, None).0).sum::<f64>() + gap * center.len().saturating_sub(1) as f64;
+        let center_w = width_of(&center);
 
-        // The room of the sides: up to the notch, or to the center group, with a gap; or all the
-        // bar between the margins when there's nothing in the middle
-        let middle = match d.notch {
-            Some(notch) => Some(notch),
-            None if center_w > 0.0 => {
-                let x = ((width - center_w) / 2.0).round();
-                Some((x, x + center_w))
+        // The room of the sides: up to the notch and the island's wings, or to the center group,
+        // with a gap; or all the bar between the margins when there's nothing in the middle
+        let room_of = |center_w: f64, wings: Option<(f64, f64)>| {
+            let middle = d.notch.or_else(|| (center_w > 0.0).then(|| ((width - center_w) / 2.0).round()).map(|x| (x, x + center_w)));
+            match middle {
+                Some((l, r)) => {
+                    let (il, ir) = wings.unwrap_or_default();
+                    Room::Split { left: l - il - margin - gap, right: width - margin - r - ir - gap }
+                }
+                None => Room::Shared(width - 2.0 * margin - gap),
             }
-            None => None,
         };
-        let room = match middle {
-            Some((l, r)) => {
-                let (il, ir) = least.unwrap_or((0.0, 0.0));
-                Room::Split { left: l - il - margin - gap, right: width - margin - r - ir - gap }
+        let room = room_of(center_w, least);
+        // The compact form of what's between the sides, when it leaves them more room: the
+        // island's, or the group's in the middle. With the room the sides have then, and which of
+        // them it leaves more to (see below)
+        let mut compact_island = None;
+        let mut compact_center = None;
+        let mut smaller: Option<(Room, [bool; 2])> = None;
+        if let Some(&(i, form, _)) = island.as_ref()
+            && form != Form::Compact
+            && let Some(node) = self.item_wider(i, &d, Form::Compact, 0.0, island_room).filter(is_island)
+        {
+            let ((l, r), (cl, cr)) = (least.unwrap_or_default(), wings(&layout, &node));
+            if cl < l || cr < r {
+                smaller = Some((room_of(center_w, Some((cl, cr))), [cl < l, cr < r]));
+                compact_island = Some(((cl, cr), node));
             }
-            None => Room::Shared(width - 2.0 * margin - gap),
-        };
+        } else if d.notch.is_none() && centered.iter().any(|(_, form)| *form != Form::Compact) {
+            let nodes = draw_center(self, true);
+            let w = width_of(&nodes);
+            if w < center_w {
+                smaller = Some((room_of(w, None), [true, true]));
+                compact_center = Some(nodes);
+            }
+        }
 
         let mut slots = Vec::new();
         let mut items = Vec::new();
@@ -669,7 +696,8 @@ impl App {
                 .clone()
         };
         let prev = std::mem::take(&mut self.bars[b].fit);
-        let (levels, chosen) = fit::fit(&items, room, &prev, |forms| {
+        let was_compact = self.bars[b].center_compact;
+        let mut measure = |forms: &[Form]| {
             let mut sides = [(0.0, 0usize), (0.0, 0usize)];
             if let Some(w) = error_w {
                 sides[0] = (w, 1);
@@ -692,7 +720,30 @@ impl App {
             }
             let side = |(w, n): (f64, usize)| w + gap * n.saturating_sub(1) as f64;
             (side(sides[0]), side(sides[1]))
-        });
+        };
+        // What's between the sides is the first to give way: compact when that keeps a widget of a
+        // side it leaves more room to in a bigger form. When they give way all the same, it keeps
+        // its own form and takes the room they leave. Back to its own form only with room to
+        // spare: measured then as if it were wider by that
+        let mut fitted = fit::fit(&items, room, &prev, &mut measure);
+        let mut compact = false;
+        if let Some((smaller, more)) = smaller {
+            let own = match (was_compact, room) {
+                (true, Room::Split { left, right }) => fit::fit(&items, Room::Split { left: left - fit::SLACK, right: right - fit::SLACK }, &prev, &mut measure).0,
+                _ => fitted.0.clone(),
+            };
+            let small = fit::fit(&items, smaller, &prev, &mut measure);
+            if (0..2).any(|s| more[s] && small.0[s] < own[s]) {
+                compact = true;
+                fitted = small;
+            }
+        }
+        let room = match smaller {
+            Some((smaller, _)) if compact => smaller,
+            _ => room,
+        };
+        let (levels, chosen) = fitted;
+        self.bars[b].center_compact = compact;
 
         let mut groups = [Vec::new(), Vec::new()];
         groups[0].extend(error);
@@ -715,22 +766,28 @@ impl App {
         // Beside the notch, the center group takes what room the sides leave. Then, there or in
         // the middle, what's left beside it goes to the text it had to cut (see `Rx::spare`)
         let mut center_form = |name: &str, form: Form| forms.insert(name.to_string(), form);
-        let width_of = |nodes: &[Node]| nodes.iter().map(|n| layout.intrinsic(n, None).0).sum::<f64>() + gap * nodes.len().saturating_sub(1) as f64;
         let used = groups.each_ref().map(|g| width_of(g));
-        // The island takes the room the sides leave beside it; the rest of the group what it leaves
+        // The island takes the room the sides leave beside it, unless compact; the rest of the
+        // group what it leaves
         let mut island_node = None;
         self.bars[b].island = None;
         let room = match (room, island, island_room, d.notch) {
-            (Room::Split { left, right }, Some((i, form, least_node)), Some(room), Some((nl, nr))) => {
-                let prev = self.bars[b].island_spare;
-                let spare = [steady_spare(prev[0], left - used[0]), steady_spare(prev[1], right - used[1])];
-                self.bars[b].island_spare = spare;
-                let room = Island { left: spare[0], right: spare[1], ..room };
-                let node = match spare[0] >= 1.0 || spare[1] >= 1.0 {
-                    true => self.item_wider(i, &d, form, 0.0, Some(room)).filter(is_island).unwrap_or(least_node),
-                    false => least_node,
+            (Room::Split { left, right }, Some((i, form, least_node)), Some(at), Some((nl, nr))) => {
+                let (form, node, (l0, r0), spare) = match compact_island.filter(|_| compact) {
+                    Some((wings, node)) => (Form::Compact, node, wings, [0.0; 2]),
+                    None => {
+                        let prev = self.bars[b].island_spare;
+                        let spare = [steady_spare(prev[0], left - used[0]), steady_spare(prev[1], right - used[1])];
+                        let node = match spare[0] >= 1.0 || spare[1] >= 1.0 {
+                            true => self.item_wider(i, &d, form, 0.0, Some(Island { left: spare[0], right: spare[1], ..at })).filter(is_island).unwrap_or(least_node),
+                            false => least_node,
+                        };
+                        (form, node, least.unwrap_or_default(), spare)
+                    }
                 };
-                let ((il, ir), (l0, r0)) = (wings(&layout, &node), least.unwrap_or_default());
+                self.bars[b].island_spare = spare;
+                let room = Island { left: spare[0], right: spare[1], ..at };
+                let (il, ir) = wings(&layout, &node);
                 let name = self.slots[i].name.clone();
                 center_form(&name, form);
                 self.bars[b].island = Some(IslandPlace { widget: name, x0: nl - il + room.ear, x1: nr + ir - room.ear, middle: (nl + nr) / 2.0, room });
@@ -777,12 +834,20 @@ impl App {
         } else {
             self.bars[b].center = None;
             for &(i, form) in &centered {
-                center_form(&self.slots[i].name, form);
+                center_form(&self.slots[i].name, if compact { Form::Compact } else { form });
             }
-            // In the middle: on both sides as far as the wider side lets it
-            if !center.is_empty() {
-                let spare = width - 2.0 * (margin + used[0].max(used[1]) + gap) - center_w;
-                center = self.widen(b, &centered, center, false, spare);
+            match compact_center.filter(|_| compact) {
+                // Compact, it takes no more room
+                Some(nodes) => {
+                    center = nodes;
+                    self.bars[b].spare = 0.0;
+                }
+                // In the middle: on both sides as far as the wider side lets it
+                None if !center.is_empty() => {
+                    let spare = width - 2.0 * (margin + used[0].max(used[1]) + gap) - center_w;
+                    center = self.widen(b, &centered, center, false, spare);
+                }
+                None => {}
             }
         }
         // A pill grown under the mouse is in its own window: here it keeps its place, unseen
@@ -954,7 +1019,7 @@ impl App {
                     surface.animate = false;
                     let window = Window::new(self.mtm, SurfaceId::Bar(d.id), frame, level, &surface.root, Backdrop::None, 0.0);
                     window.show();
-                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new(), center: None, spare: 0.0, tree: Node::default(), peek_pill: None, island: None, island_spare: [0.0; 2] });
+                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new(), center: None, spare: 0.0, center_compact: false, tree: Node::default(), peek_pill: None, island: None, island_spare: [0.0; 2] });
                     changed = true;
                 }
             }
