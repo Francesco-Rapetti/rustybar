@@ -7,6 +7,9 @@
 //! they change; every badged app, listed or not, gets a dot on its windows in `aerospace`. Without
 //! the permission a yellow `!` shows instead, and the popup has a row that asks for it again (macOS
 //! asks by itself only once).
+//! A ✕ on a badge or the crashes dismisses them without opening anything, as `Dismiss All` does
+//! for all of them: a badge comes back when it goes up (Slack's dot that becomes a number too),
+//! the crashes with a new one.
 //! Homebrew is asked every hour and on wake. Options: `apps` (bundle ids or Dock names),
 //! `brewfile` (the packages to follow) or `brew = true` (all of them).
 
@@ -18,7 +21,7 @@ use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::NSRunningApplication;
-use objc2_foundation::{NSArray, NSBundle, NSString, NSURL, NSUserDefaults, ns_string};
+use objc2_foundation::{NSArray, NSBundle, NSDictionary, NSString, NSURL, NSUserDefaults, ns_string};
 use serde::Deserialize;
 
 use super::{Cx, Event, Rx, Widget};
@@ -86,6 +89,10 @@ pub struct Notifications {
     brew: Option<Brew>,
     /// None: no Accessibility permission.
     badges: Option<Vec<Badge>>,
+    /// The badges dismissed from the popup, by bundle, with the label they have now: hidden until
+    /// it goes up, forgotten when the badge goes away. In the defaults, so that a reload or a
+    /// restart doesn't bring them back (not with the made-up data).
+    dismissed: HashMap<String, String>,
     /// The badged apps last told to the workspaces.
     told: Option<Vec<String>>,
     /// The times of the crash reports not seen yet, newest last.
@@ -103,14 +110,45 @@ enum Brew {
     File(PathBuf),
 }
 
-/// The count of a badge: its digits (`99+` is 99), or 1 for one without (a dot).
-fn count(label: &str) -> u64 {
+/// The number of a badge: its digits (`99+` is 99), none for one without (a dot).
+fn level(label: &str) -> Option<u64> {
     let digits: String = label.chars().filter(|c| c.is_ascii_digit()).collect();
-    digits.parse().unwrap_or(1)
+    digits.parse().ok()
+}
+
+/// The count of a badge: its number, or 1 for a dot.
+fn count(label: &str) -> u64 {
+    level(label).unwrap_or(1)
+}
+
+/// A dismissed badge that's back: it went up since (a dot is less than any number).
+fn went_up(now: &str, dismissed: &str) -> bool {
+    level(now) > level(dismissed)
 }
 
 fn defaults() -> Option<Retained<NSUserDefaults>> {
     NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(ns_string!("rustybar")))
+}
+
+/// The defaults key of the dismissed badges: bundle → label.
+const DISMISSED: &str = "badges.dismissed";
+
+fn load_dismissed() -> HashMap<String, String> {
+    defaults().and_then(|d| d.dictionaryForKey(ns_string!(DISMISSED))).map(|d| from_dictionary(&d)).unwrap_or_default()
+}
+
+fn to_dictionary(map: &HashMap<String, String>) -> Retained<NSDictionary<NSString, AnyObject>> {
+    let keys: Vec<Retained<NSString>> = map.keys().map(|k| NSString::from_str(k)).collect();
+    let values: Vec<Retained<NSString>> = map.values().map(|v| NSString::from_str(v)).collect();
+    let keys: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
+    let values: Vec<&AnyObject> = values.iter().map(|v| &**v as &AnyObject).collect();
+    NSDictionary::from_slices(&keys, &values)
+}
+
+/// Strings to strings: anything else in the defaults is left out.
+fn from_dictionary(dictionary: &NSDictionary<NSString, AnyObject>) -> HashMap<String, String> {
+    let (keys, values) = dictionary.to_vecs();
+    keys.iter().zip(values).filter_map(|(k, v)| Some((k.to_string(), v.downcast::<NSString>().ok()?.to_string()))).collect()
 }
 
 fn now() -> f64 {
@@ -129,6 +167,7 @@ impl Notifications {
             apps: options.strings("apps"),
             brew,
             badges: mock.as_ref().map(|m| m.badges.clone()),
+            dismissed: if mock.is_some() { HashMap::new() } else { load_dismissed() },
             told: None,
             crashes: mock.as_ref().map(|m| m.crashes.clone()).unwrap_or_default(),
             outdated: mock.as_ref().map(|m| m.outdated.clone()).unwrap_or_default(),
@@ -138,10 +177,71 @@ impl Notifications {
         }
     }
 
-    /// The listed apps with a badge, in the order of `apps`.
+    /// The listed apps with a badge not dismissed, in the order of `apps`.
     fn app_badges(&self) -> Vec<&Badge> {
         let Some(badges) = &self.badges else { return Vec::new() };
-        self.apps.iter().flat_map(|app| badges.iter().filter(move |b| b.bundle == *app || b.name == *app)).collect()
+        self.apps.iter().flat_map(|app| badges.iter().filter(move |b| (b.bundle == *app || b.name == *app) && self.shown(b))).collect()
+    }
+
+    fn shown(&self, badge: &Badge) -> bool {
+        self.dismissed.get(&badge.bundle).is_none_or(|label| went_up(&badge.label, label))
+    }
+
+    /// Hides a badge until it goes up.
+    fn dismiss(&mut self, bundle: &str) {
+        let Some(badge) = self.badges.iter().flatten().find(|b| b.bundle == bundle) else { return };
+        self.dismissed.insert(badge.bundle.clone(), badge.label.clone());
+    }
+
+    /// The crashes as seen, as when one is opened.
+    fn dismiss_crashes(&mut self) {
+        if self.mock.is_none()
+            && let Some(d) = defaults()
+        {
+            d.setDouble_forKey(now(), ns_string!("crashes.seen"));
+        }
+        self.crashes.clear();
+    }
+
+    /// The dismissed badges after the Dock changed: one that went up is shown again, one that went
+    /// down stays dismissed at its new label (so that it comes back if it goes up again), one that
+    /// went away is forgotten.
+    fn settle(&mut self) {
+        let Some(badges) = &self.badges else { return };
+        let before = self.dismissed.clone();
+        self.dismissed.retain(|bundle, label| match badges.iter().find(|b| b.bundle == *bundle) {
+            Some(b) if !went_up(&b.label, label) => {
+                label.clone_from(&b.label);
+                true
+            }
+            _ => false,
+        });
+        if self.dismissed != before {
+            self.save_dismissed();
+        }
+    }
+
+    fn save_dismissed(&self) {
+        if self.mock.is_some() {
+            return;
+        }
+        let Some(d) = defaults() else { return };
+        if self.dismissed.is_empty() {
+            d.removeObjectForKey(ns_string!(DISMISSED));
+            return;
+        }
+        unsafe { d.setObject_forKey(Some(&to_dictionary(&self.dismissed)), ns_string!(DISMISSED)) };
+    }
+
+    /// After a dismissal: the workspaces lose the dots of the dismissed apps, and a popup with
+    /// nothing left closes before the badges leave the bar.
+    fn dismissed_some(&mut self, cx: &mut Cx) {
+        self.save_dismissed();
+        self.tell_workspaces();
+        if !self.needs_access() && self.unread() == 0 && self.updates() == 0 {
+            cx.close_popup();
+        }
+        cx.redraw();
     }
 
     fn unread(&self) -> u64 {
@@ -178,6 +278,7 @@ impl Notifications {
                     last = Some(now.clone());
                     handle.send(move |w, cx| {
                         (w.badges, w.crashes) = now;
+                        w.settle();
                         w.tell_workspaces();
                         cx.redraw();
                     });
@@ -187,9 +288,9 @@ impl Notifications {
         });
     }
 
-    /// The badged apps, for the dots on their windows.
+    /// The badged apps, for the dots on their windows: not those dismissed.
     fn tell_workspaces(&mut self) {
-        let bundles: Vec<String> = self.badges.iter().flatten().map(|b| b.bundle.clone()).collect();
+        let bundles: Vec<String> = self.badges.iter().flatten().filter(|b| self.shown(b)).map(|b| b.bundle.clone()).collect();
         if self.told.as_ref() == Some(&bundles) {
             return;
         }
@@ -303,42 +404,76 @@ impl Widget for Notifications {
         let measure = |s: &str| crate::gfx::measure_text(s, &bold).width;
         let mut rows = vec![Node::default().height(4.0).key("top")];
 
-        // Apps and crashes: an icon, a name, a value in a column
-        let mut apps: Vec<(String, String, String, String)> = Vec::new();
+        // Apps and crashes: an icon, a name, a value in a column, a ✕ that dismisses them. A click
+        // anywhere else on the row opens them.
+        struct Item {
+            bundle: String,
+            name: String,
+            value: String,
+            open: String,
+            dismiss: String,
+        }
+        let mut apps: Vec<Item> = Vec::new();
         if let Some(&last) = self.crashes.last() {
             let n = self.crashes.len();
             let name = if n == 1 { t("Crash di RustyBar", "RustyBar Crashed").to_string() } else { t(&format!("{n} crash di RustyBar"), &format!("RustyBar Crashed {n} Times")).to_string() };
-            apps.push(("com.apple.Console".into(), name, when(last), "crash".into()));
+            apps.push(Item { bundle: "com.apple.Console".into(), name, value: when(last), open: "crash".into(), dismiss: "dismiss-crash".into() });
         }
-        for (i, b) in self.app_badges().into_iter().enumerate() {
-            apps.push((b.bundle.clone(), b.name.clone(), b.label.clone(), format!("app:{i}")));
+        for b in self.app_badges() {
+            apps.push(Item { bundle: b.bundle.clone(), name: b.name.clone(), value: b.label.clone(), open: format!("app:{}", b.bundle), dismiss: format!("dismiss:{}", b.bundle) });
         }
         let access = self.needs_access();
         let for_badges = t("per i badge del Dock", "for Dock badges");
         let packages = &self.outdated.packages;
         let updating = t("aggiornamento…", "updating…");
-        let values = apps.iter().map(|a| measure(&a.2)).chain(packages.iter().map(|p| measure(&versions(p)))).chain((!packages.is_empty()).then(|| measure(updating))).chain(access.then(|| measure(for_badges)));
+        let values = apps.iter().map(|a| measure(&a.value)).chain(packages.iter().map(|p| measure(&versions(p)))).chain((!packages.is_empty()).then(|| measure(updating))).chain(access.then(|| measure(for_badges)));
         let value_width = values.fold(0.0, f64::max);
         let value = |text: String, color| Node::row(vec![Node::text(text, bold.clone(), color)]).min_width(value_width).key("value");
-        let app_row = |icon: Node, name: &str, v: String, action: &str| {
-            Node::row(vec![icon.key("icon"), Node::text(name, bold.clone(), th.text).key("name"), Node::spacer(), value(v, th.subtext)])
+        // The ✕ inside the row's corner, concentric with it; the same room on the rows without
+        // one, so that the values stay in a column
+        const CLOSE: f64 = 20.0;
+        let inset = (24.0 - CLOSE) / 2.0;
+        let close = |action: Option<&str>| match action {
+            Some(action) => Node::row(vec![Node::symbol("xmark", 9.0, Weight::Bold, th.subtext)])
+                .size(CLOSE, CLOSE)
+                .justify(Justify::Center)
+                .radius((th.row_radius - inset).max(0.0))
+                .click(rx.action(action))
+                .key("close"),
+            None => Node::default().size(CLOSE, CLOSE).key("close"),
+        };
+        let app_row = |icon: Node, name: &str, v: String, open: &str, dismiss: Option<&str>| {
+            Node::row(vec![icon.key("icon"), Node::text(name, bold.clone(), th.text).key("name"), Node::spacer(), value(v, th.subtext), close(dismiss)])
                 .gap(8.0)
-                .padding(0.0, 8.0, 0.0, 8.0)
+                .padding(0.0, inset, 0.0, 8.0)
                 .height(24.0)
                 .radius(th.row_radius)
-                .click(rx.action(action))
-                .key(action)
+                .click(rx.action(open))
+                .key(open)
         };
+        let listed = access || !apps.is_empty();
         if access {
             let icon = Node::row(vec![Node::symbol("accessibility", 14.0, Weight::Semibold, th.yellow)]).width(16.0).justify(Justify::Center);
-            rows.push(app_row(icon, t("Concedi l'Accessibilità", "Allow Accessibility"), for_badges.into(), "accessibility"));
+            rows.push(app_row(icon, t("Concedi l'Accessibilità", "Allow Accessibility"), for_badges.into(), "accessibility", None));
         }
-        for (bundle, name, v, action) in &apps {
-            rows.push(app_row(Node::app_icon(bundle, 16.0), name, v.clone(), action));
+        for a in &apps {
+            rows.push(app_row(Node::app_icon(&a.bundle, 16.0), &a.name, a.value.clone(), &a.open, Some(&a.dismiss)));
         }
-        if (access || !apps.is_empty()) && self.updates() > 0 {
+        if apps.len() > 1 {
+            rows.push(
+                Node::row(vec![Node::text(t("Ignora tutte", "Dismiss All"), bold.clone(), th.primary)])
+                    .padding(0.0, 8.0, 0.0, 8.0)
+                    .height(24.0)
+                    .radius(th.row_radius)
+                    .click(rx.action("dismiss-all"))
+                    .key("dismiss-all"),
+            );
+        }
+        if listed && self.updates() > 0 {
             rows.push(Node::default().height(8.0).key("gap"));
         }
+        // The packages' values in the same column as those above, which have the ✕ after them
+        let trail = if listed { inset + CLOSE + 8.0 } else { 8.0 };
 
         // Homebrew: dimmed while a job runs, whose rows say so
         let dim = |color| if busy { th.overlay } else { color };
@@ -361,7 +496,7 @@ impl Widget for Notifications {
             let key = format!("upgrade:{}", p.name);
             let mut row = Node::row(vec![Node::text(p.short(), bold.clone(), dim(th.text)).key("name"), Node::spacer(), v])
                 .gap(16.0)
-                .padding(0.0, 8.0, 0.0, 8.0)
+                .padding(0.0, trail, 0.0, 8.0)
                 .height(24.0)
                 .radius(th.row_radius)
                 .key(key.clone());
@@ -388,15 +523,26 @@ impl Widget for Notifications {
         match name {
             "crash" => {
                 cx.close_popup();
-                if let Some(d) = defaults() {
-                    d.setDouble_forKey(now(), ns_string!("crashes.seen"));
-                }
                 // The newest report, in Console
-                if let Some(path) = newest_report() {
+                if self.mock.is_none()
+                    && let Some(path) = newest_report()
+                {
                     runtime::fire("/usr/bin/open", &["-a", "Console", &path]);
                 }
-                self.crashes.clear();
+                self.dismiss_crashes();
                 cx.redraw();
+            }
+            "dismiss-crash" => {
+                self.dismiss_crashes();
+                self.dismissed_some(cx);
+            }
+            "dismiss-all" => {
+                self.dismiss_crashes();
+                let bundles: Vec<String> = self.app_badges().iter().map(|b| b.bundle.clone()).collect();
+                for bundle in bundles {
+                    self.dismiss(&bundle);
+                }
+                self.dismissed_some(cx);
             }
             "accessibility" if self.mock.is_none() => {
                 cx.close_popup();
@@ -409,11 +555,14 @@ impl Widget for Notifications {
                 self.start_job(Job::Upgrade(names), cx);
             }
             _ => {
-                if let Some(i) = name.strip_prefix("app:").and_then(|i| i.parse::<usize>().ok()) {
-                    if let Some(bundle) = self.app_badges().get(i).map(|b| b.bundle.clone()) {
-                        cx.close_popup();
-                        runtime::open_app(&bundle);
+                if let Some(bundle) = name.strip_prefix("app:") {
+                    cx.close_popup();
+                    if self.mock.is_none() {
+                        runtime::open_app(bundle);
                     }
+                } else if let Some(bundle) = name.strip_prefix("dismiss:") {
+                    self.dismiss(bundle);
+                    self.dismissed_some(cx);
                 } else if let Some(package) = name.strip_prefix("upgrade:") {
                     self.start_job(Job::Upgrade(vec![package.to_string()]), cx);
                 }
@@ -721,5 +870,46 @@ mod tests {
         let c = parse_outdated("nikitabobko/tap/aerospace (0.20.2-Beta,abc) != 0.21.3-Beta,def", true).unwrap();
         assert_eq!(versions(&c), "0.20.2-Beta → 0.21.3-Beta");
         assert!(parse_outdated("==> Downloading", false).is_none());
+    }
+
+    #[test]
+    fn dismissed_badges() {
+        let badge = |label: &str| Badge { bundle: "com.example.chat".into(), name: "Chat".into(), label: label.into() };
+        // With the made-up data, so that nothing goes in the defaults
+        let mut w = Notifications {
+            apps: vec!["com.example.chat".into()],
+            brew: None,
+            badges: Some(vec![badge("3")]),
+            dismissed: HashMap::new(),
+            told: None,
+            crashes: Vec::new(),
+            outdated: Outdated::default(),
+            job: None,
+            checking: false,
+            mock: Some(Mock::default()),
+        };
+        let with = |w: &mut Notifications, label: Option<&str>| {
+            w.badges = Some(label.map(badge).into_iter().collect());
+            w.settle();
+            w.unread()
+        };
+        w.dismiss("com.example.chat");
+        assert_eq!(w.unread(), 0);
+        // Down, then up from there
+        assert_eq!(with(&mut w, Some("2")), 0);
+        assert_eq!(with(&mut w, Some("3")), 3);
+        // A dot, then a number
+        w.dismiss("com.example.chat");
+        assert_eq!(with(&mut w, Some("•")), 0);
+        assert_eq!(with(&mut w, Some("•")), 0);
+        assert_eq!(with(&mut w, Some("1")), 1);
+        // Gone, then back even lower
+        w.dismiss("com.example.chat");
+        assert_eq!(with(&mut w, None), 0);
+        assert!(w.dismissed.is_empty());
+        assert_eq!(with(&mut w, Some("1")), 1);
+        // As they go in the defaults and come back
+        let map = HashMap::from([("com.example.chat".to_string(), "•".to_string()), ("com.example.mail".to_string(), "99+".to_string())]);
+        assert_eq!(from_dictionary(&to_dictionary(&map)), map);
     }
 }

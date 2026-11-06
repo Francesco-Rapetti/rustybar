@@ -70,9 +70,10 @@ def background(w, h):
     return im
 
 pos = query()
-x0, _, w0, _ = next(iter(pos.values()))
-# The bar of the main display: the window that spans it, with the first widget in it
-bar_win = next(w for w in windows() if w[1] <= x0 and x0 + w0 <= w[1] + w[3] and w[4] <= 60)
+x0, y0, w0, _ = next(iter(pos.values()))
+# The bar of the main display: the window that spans it, with the first widget in it (also in y:
+# a display under the main one can span the same x)
+bar_win = next(w for w in windows() if w[1] <= x0 and x0 + w0 <= w[1] + w[3] and w[2] <= y0 < w[2] + w[4] and w[4] <= 60)
 bars = {w[0] for w in windows() if w[4] == bar_win[4]}
 bar = grab(bar_win)
 _, bx, by, bw, _ = bar_win
