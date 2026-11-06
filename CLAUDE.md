@@ -397,6 +397,17 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   finti (it/en, prossimo e in corso, titoli lunghi, chip su due righe): ~16 MB, ~0,1% CPU, 0
   processi, popup aperto o chiuso. Da provare dal vero con l'utente: colori dei calendari veri,
   i clic (riquadro, Partecipa, righe, chip).
+- `notifications`, ignorare senza aprire: una ✕ in fondo a ogni riga di app e di crash (il resto
+  della riga apre, come prima) e `Ignora tutte` sotto quando le righe sono almeno due. Un badge
+  ignorato resta nascosto (dal conto verde, dal popup e dai pallini di `aerospace`) finché non sale:
+  il widget tiene l'etichetta che aveva e, a ogni cambio del Dock, la abbassa se scende e la
+  dimentica se il badge sparisce o sale (il pallino di Slack conta meno di ogni numero). Nei default
+  (`badges.dismissed`, bundle → etichetta), non coi dati finti; i crash come all'apertura
+  (`crashes.seen`). Popup rimasto vuoto: si chiude. Azioni per bundle, non per indice (`app:<bundle>`,
+  `dismiss:<bundle>`); coi dati finti apertura dell'app e di Console non fanno niente. Provato coi
+  dati finti sulla barra di prova, con clic veri: ✕ di Slack e del crash, `Ignora tutte` con e
+  senza Homebrew (popup chiuso, widget via dalla barra). Da provare dal vero: un badge vero che
+  torna, e che resta ignorato dopo un reload.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a
