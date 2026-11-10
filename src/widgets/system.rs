@@ -2,7 +2,8 @@
 //! CPU and GPU turn yellow from 75% and red from 90%; the memory has the color of its pressure, as
 //! in Activity Monitor: macOS keeps the memory nearly full with caches and compressed pages, so the
 //! percentage alone says little. The GPU hides when macOS doesn't report it, CPU and GPU in the
-//! compact form.
+//! compact form, which is also the slim one (by default after the volume sliders of `audio` and
+//! before the pills of the single Claude accounts, see `slim_first`).
 //!
 //! The popup is a dashboard of tiles:
 //!
@@ -579,7 +580,7 @@ impl Widget for System {
             Node::row(vec![Node::symbol(icon, th.icon_size, Weight::Semibold, color), label]).gap(4.0).key(key)
         };
         let mut items = Vec::new();
-        if !rx.compact {
+        if !rx.slim {
             if let Some(cpu) = v.cpu {
                 items.push(stat("cpu", "cpu", cpu, self.level(rx, cpu, th.text), true));
             }

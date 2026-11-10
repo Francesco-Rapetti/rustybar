@@ -181,11 +181,15 @@ island of `now_playing` around the notch (the cover alone on the left of it). Th
 more room than that. When the sides give way all the same, it keeps its own form and takes the
 room they leave. Next the widgets of
 `slim_first` (in `[displays]`) leave out what the bar can do without, in that order: by default
-the volume sliders of `audio` go, then `claude` shows one pill for all its accounts. Then the
-widgets farthest from their edge give way, one at a time: first they switch to their compact
-form (icons, short times; AeroSpace keeps the icons of the focused workspace only), then they move
-to the popup of a `⋯` pill at the inner end of their side, where a click opens each one's popup as
-in the bar. They take their place back when there's room again. In `[displays]`,
+the volume sliders of `audio` go, then `system` shows the memory alone, then `claude` shows one
+pill for all its accounts. Then the widgets farthest from their edge give way, one at a time:
+first they switch to their compact form (icons, short times; AeroSpace keeps the icons of the
+focused workspace only), then they move to the popup of a `⋯` pill at the inner end of their
+side, where a click opens each one's popup as in the bar. That order says what matters less, so
+nothing gives way that needn't: when a widget has to give way all the same, those that went
+before it take their bigger form back if the room it leaves is enough (when `claude` goes to one
+pill anyway, `system` shows CPU and GPU again if they fit). They take their place back when
+there's room again. In `[displays]`,
 `compact_on_notch = true` makes every widget compact on screens with a notch, `always_compact` lists
 widgets compact on every screen, and `hide_on_notch` widgets that go in the `⋯` popup there.
 
@@ -254,7 +258,7 @@ accounts = [{ dir = "~/.claude-work", color = "sky" }]
 ```
 
 With more than one account, each has its own pill and popup; when the bar has no room for them
-(after the volume sliders, see `slim_first`) one pill shows the account whose usage went up last
+(after the volume sliders and the CPU and GPU of `system`, see `slim_first`) one pill shows the account whose usage went up last
 (the one in use; the busiest until one does) and its popup has them all.
 
 ### Now Playing

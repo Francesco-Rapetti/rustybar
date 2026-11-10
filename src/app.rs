@@ -60,7 +60,7 @@ pub struct Bar {
     /// The frame of each widget's pill, in bar coordinates.
     pub items: HashMap<String, CGRect>,
     /// How far the sides gave way at the last render, for the next (see `fit`).
-    pub fit: Vec<usize>,
+    pub fit: Vec<fit::Given>,
     /// The form each widget took at the last render.
     pub forms: HashMap<String, Form>,
     /// On a screen with a notch, where the center group went at the last render: beside the left

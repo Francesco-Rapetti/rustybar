@@ -2,12 +2,20 @@
 //! fit in the room the screen gives them, between its edges and the notch (or each other), first
 //! the center group between them turns compact, when that keeps one of them in a bigger form (see
 //! `App::bar_tree`); then the widgets of `slim_first` leave out what the bar can do without, in
-//! that order (the volume sliders of `audio`, then the pills of the single Claude accounts); then
-//! the ones farthest from their edge give way first: they switch to their compact form one at a
-//! time, and when every one is compact they move, one at a time, the outermost last, to the popup
-//! of a `⋯` pill that takes their place (see `App::bar_tree`), so that every widget stays at hand.
-//! A side takes its bigger forms back only with some room to spare, so that a widget whose width
-//! changes doesn't flip back and forth at the limit.
+//! that order (the volume sliders of `audio`, the CPU and GPU of `system`, then the pills of the
+//! single Claude accounts); then the ones farthest from their edge give way first: they switch to
+//! their compact form one at a time, and when every one is compact they move, one at a time, the
+//! outermost last, to the popup of a `⋯` pill that takes their place (see `App::bar_tree`), so
+//! that every widget stays at hand.
+//!
+//! That order says what matters less, not what must give way: once a widget that matters more had
+//! to give way all the same, those before it take their bigger form back if the room it left is
+//! enough, the one that matters most first. So `system` gives way before `claude`, but when
+//! `claude` has to go slim anyway and `system` fits beside it, `system` stays whole. A side takes
+//! its bigger forms back only with some room to spare, so that a widget whose width changes
+//! doesn't flip back and forth at the limit.
+
+use std::cmp::Ordering;
 
 /// How a widget is drawn in a bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +61,43 @@ struct Step {
     form: Form,
 }
 
+/// How far a lane gave way: its first `level` steps, but for those in `spared`, which it took
+/// back once a later one, which matters more, had to be taken all the same (the last first).
+/// Ordered by how much the lane gave: the step that matters most among those taken decides, then
+/// the next one, so a lane that keeps a widget that matters more in a bigger form gave less.
+#[derive(Clone, Debug, Default)]
+pub struct Given {
+    level: usize,
+    spared: Vec<usize>,
+}
+
+impl Given {
+    /// The steps taken, the one that matters most first.
+    fn taken(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.level).rev().filter(|j| !self.spared.contains(j))
+    }
+}
+
+impl Ord for Given {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.taken().cmp(other.taken())
+    }
+}
+
+impl PartialOrd for Given {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Given {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Given {}
+
 /// The order in which the widgets of `lane` give way: first those that have one switch to their
 /// slim form, in their order; then all of them to their compact one, then they go, the farthest
 /// from their edge first and, at the same distance, the right side first.
@@ -67,11 +112,13 @@ fn steps(items: &[Item], lane: impl Fn(&Item) -> bool) -> Vec<Step> {
     slim.chain(compact).chain(hide).collect()
 }
 
-fn forms(items: &[Item], lanes: &[Vec<Step>], levels: &[usize]) -> Vec<Form> {
+fn forms(items: &[Item], lanes: &[Vec<Step>], given: &[Given]) -> Vec<Form> {
     let mut forms: Vec<Form> = items.iter().map(|i| i.form).collect();
-    for (steps, &level) in lanes.iter().zip(levels) {
-        for s in &steps[..level] {
-            forms[s.item] = s.form;
+    for (steps, given) in lanes.iter().zip(given) {
+        for (j, s) in steps[..given.level].iter().enumerate() {
+            if !given.spared.contains(&j) {
+                forms[s.item] = s.form;
+            }
         }
     }
     forms
@@ -79,8 +126,8 @@ fn forms(items: &[Item], lanes: &[Vec<Step>], levels: &[usize]) -> Vec<Form> {
 
 /// Picks the form of every item. `prev` is what the last call returned for this bar (empty the
 /// first time); `measure` gives the width of the left and right sides with the given forms, `⋯`
-/// pills included. Returns the levels to pass as `prev` next time, and the forms.
-pub fn fit(items: &[Item], room: Room, prev: &[usize], mut measure: impl FnMut(&[Form]) -> (f64, f64)) -> (Vec<usize>, Vec<Form>) {
+/// pills included. Returns how far each lane gave way, to pass as `prev` next time, and the forms.
+pub fn fit(items: &[Item], room: Room, prev: &[Given], mut measure: impl FnMut(&[Form]) -> (f64, f64)) -> (Vec<Given>, Vec<Form>) {
     // A lane is a set of widgets that share their room: both sides, or each on its own
     let lanes: Vec<Vec<Step>> = match room {
         Room::Shared(_) => vec![steps(items, |_| true)],
@@ -91,36 +138,57 @@ pub fn fit(items: &[Item], room: Room, prev: &[usize], mut measure: impl FnMut(&
         Room::Split { left, .. } if lane == 0 => l <= left - slack,
         Room::Split { right, .. } => r <= right - slack,
     };
-    let mut levels: Vec<usize> = if prev.len() == lanes.len() { prev.to_vec() } else { vec![0; lanes.len()] };
+    let mut given: Vec<Given> = if prev.len() == lanes.len() { prev.to_vec() } else { vec![Given::default(); lanes.len()] };
     for lane in 0..lanes.len() {
         let max = lanes[lane].len();
-        let mut fits_at = |levels: &mut Vec<usize>, level: usize, slack: f64| {
-            levels[lane] = level;
-            fits(lane, measure(&forms(items, &lanes, levels)), slack)
+        // First how many steps it takes, each of them taken
+        let spared = std::mem::take(&mut given[lane].spared);
+        let mut fits_at = |given: &mut Vec<Given>, level: usize, slack: f64| {
+            given[lane].level = level;
+            fits(lane, measure(&forms(items, &lanes, given)), slack)
         };
-        let mut level = levels[lane].min(max);
-        if fits_at(&mut levels, level, 0.0) {
+        let mut level = given[lane].level.min(max);
+        if fits_at(&mut given, level, 0.0) {
             // Bigger forms back, while they leave some room
-            while level > 0 && fits_at(&mut levels, level - 1, SLACK) {
+            while level > 0 && fits_at(&mut given, level - 1, SLACK) {
                 level -= 1;
             }
         } else {
             // Smaller ones until they fit, or nothing left to give
-            while level < max && !fits_at(&mut levels, level + 1, 0.0) {
+            while level < max && !fits_at(&mut given, level + 1, 0.0) {
                 level += 1;
             }
             level = (level + 1).min(max);
         }
-        levels[lane] = level;
+        given[lane].level = level;
+        // The last one had to be taken; those before it go back if the room it left is enough,
+        // the one that matters most first. With room to spare, unless it was back already
+        for j in (0..level.saturating_sub(1)).rev() {
+            let item = lanes[lane][j].item;
+            // The widget keeps a smaller form a later step gave it: nothing would change
+            if given[lane].taken().any(|k| k > j && lanes[lane][k].item == item) {
+                continue;
+            }
+            given[lane].spared.push(j);
+            let slack = if spared.contains(&j) { 0.0 } else { SLACK };
+            if !fits(lane, measure(&forms(items, &lanes, &given)), slack) {
+                given[lane].spared.pop();
+            }
+        }
     }
-    let forms = forms(items, &lanes, &levels);
-    (levels, forms)
+    let forms = forms(items, &lanes, &given);
+    (given, forms)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use Form::*;
+
+    /// A lane that took its first `level` steps, each of them.
+    fn at(level: usize) -> Given {
+        Given { level, spared: vec![] }
+    }
 
     /// A bar: (left, width, compact width) of each widget, in the order of the config.
     fn bar(widgets: &[(bool, f64, f64)]) -> (Vec<Item>, impl Fn(&[Form]) -> (f64, f64) + Clone) {
@@ -161,24 +229,27 @@ mod tests {
     fn room_enough() {
         let (items, measure) = bar(&[(true, 100.0, 50.0), (false, 100.0, 50.0)]);
         let (levels, forms) = fit(&items, Room::Shared(300.0), &[], measure);
-        assert_eq!(levels, vec![0]);
+        assert_eq!(levels, vec![at(0)]);
         assert_eq!(forms, vec![Full, Full]);
     }
 
     #[test]
     fn farthest_from_the_edge_first() {
         // apple, aerospace | home, audio, clock
-        let widgets = [(true, 30.0, 30.0), (true, 300.0, 150.0), (false, 50.0, 50.0), (false, 200.0, 60.0), (false, 120.0, 60.0)];
+        let widgets = [(true, 30.0, 30.0), (true, 300.0, 150.0), (false, 50.0, 30.0), (false, 200.0, 60.0), (false, 120.0, 60.0)];
         let (items, measure) = bar(&widgets);
         // 700 wide in 570: home and audio compact (2nd and 1st from the right edge), before
         // aerospace (1st from the left one)
         let (_, forms) = fit(&items, Room::Shared(570.0), &[], measure.clone());
         assert_eq!(forms, vec![Full, Full, Compact, Compact, Full]);
         // Less room: aerospace too, then the clock
-        let (_, forms) = fit(&items, Room::Shared(400.0), &[], measure.clone());
+        let (_, forms) = fit(&items, Room::Shared(360.0), &[], measure.clone());
         assert_eq!(forms, vec![Full, Compact, Compact, Compact, Compact]);
+        // A little more: once the clock had to give way, the room it left is enough for home
+        let (_, forms) = fit(&items, Room::Shared(380.0), &[], measure.clone());
+        assert_eq!(forms, vec![Full, Compact, Full, Compact, Compact]);
         // Every one compact isn't enough: home goes first
-        let (_, forms) = fit(&items, Room::Shared(330.0), &[], measure.clone());
+        let (_, forms) = fit(&items, Room::Shared(320.0), &[], measure.clone());
         assert_eq!(forms, vec![Compact, Compact, Hidden, Compact, Compact]);
         // Nothing fits: nothing stays
         let (_, forms) = fit(&items, Room::Shared(10.0), &[], measure);
@@ -191,8 +262,8 @@ mod tests {
         let widgets = [
             (true, 30.0, None, 30.0),
             (true, 300.0, None, 150.0),
-            (false, 50.0, None, 50.0),
-            (false, 470.0, Some((1, 110.0)), 110.0),
+            (false, 50.0, None, 40.0),
+            (false, 470.0, Some((1, 110.0)), 90.0),
             (false, 400.0, Some((0, 200.0)), 60.0),
             (false, 120.0, None, 60.0),
         ];
@@ -200,18 +271,18 @@ mod tests {
         // 1370 wide in 1200: audio leaves its sliders out, though home and claude are farther from
         // the edge
         let (levels, forms) = fit(&items, Room::Shared(1200.0), &[], measure.clone());
-        assert_eq!((levels, forms), (vec![1], vec![Full, Full, Full, Full, Slim, Full]));
+        assert_eq!((levels, forms), (vec![at(1)], vec![Full, Full, Full, Full, Slim, Full]));
         // Less room: claude next
         let (levels, forms) = fit(&items, Room::Shared(1000.0), &[], measure.clone());
-        assert_eq!((levels, forms), (vec![2], vec![Full, Full, Full, Slim, Slim, Full]));
+        assert_eq!((levels, forms), (vec![at(2)], vec![Full, Full, Full, Slim, Slim, Full]));
         // Less still: then the others, the farthest first, as without them
-        let (_, forms) = fit(&items, Room::Shared(700.0), &[], measure.clone());
+        let (_, forms) = fit(&items, Room::Shared(670.0), &[], measure.clone());
         assert_eq!(forms, vec![Full, Full, Compact, Compact, Compact, Full]);
         // Compact from the config: no slim step
         let mut items = items;
         items[4].form = Compact;
         let (levels, forms) = fit(&items, Room::Shared(2000.0), &[], measure);
-        assert_eq!((levels, forms), (vec![0], vec![Full, Full, Full, Full, Compact, Full]));
+        assert_eq!((levels, forms), (vec![at(0)], vec![Full, Full, Full, Full, Compact, Full]));
     }
 
     #[test]
@@ -233,7 +304,7 @@ mod tests {
         assert_eq!(forms, vec![Full, Compact, Full, Hidden]);
         let (levels, forms) = fit(&items, Room::Shared(170.0), &[], measure);
         assert_eq!(forms, vec![Compact, Compact, Compact, Hidden]);
-        assert_eq!(levels, vec![2]);
+        assert_eq!(levels, vec![at(2)]);
     }
 
     #[test]
@@ -241,12 +312,49 @@ mod tests {
         let widgets = [(true, 100.0, 50.0), (false, 100.0, 50.0)];
         let (items, measure) = bar(&widgets);
         let (levels, _) = fit(&items, Room::Shared(190.0), &[], measure.clone());
-        assert_eq!(levels, vec![1]);
+        assert_eq!(levels, vec![at(1)]);
         // Room for both full forms, but not much more: the right one stays compact
         let (levels, forms) = fit(&items, Room::Shared(200.0 + SLACK / 2.0), &levels, measure.clone());
-        assert_eq!((levels.clone(), forms), (vec![1], vec![Full, Compact]));
+        assert_eq!((levels.clone(), forms), (vec![at(1)], vec![Full, Compact]));
         // With room to spare it takes its full form back
         let (levels, forms) = fit(&items, Room::Shared(200.0 + SLACK), &levels, measure);
-        assert_eq!((levels, forms), (vec![0], vec![Full, Full]));
+        assert_eq!((levels, forms), (vec![at(0)], vec![Full, Full]));
+    }
+
+    #[test]
+    fn what_matters_more_keeps_its_form() {
+        // apple | system (1st in slim_first), claude (2nd), clock
+        let widgets = [(true, 30.0, None, 30.0), (false, 200.0, Some((0, 70.0)), 70.0), (false, 300.0, Some((1, 100.0)), 100.0), (false, 100.0, None, 50.0)];
+        let (items, measure) = bar_slim(&widgets);
+        // 630 wide in 520: system gives way, claude stays whole
+        let (_, forms) = fit(&items, Room::Shared(520.0), &[], measure.clone());
+        assert_eq!(forms, vec![Full, Slim, Full, Full]);
+        // Less room: claude has to go slim all the same, and with the room it leaves system fits
+        // whole beside it
+        let (levels, forms) = fit(&items, Room::Shared(460.0), &[], measure.clone());
+        assert_eq!((levels, forms), (vec![Given { level: 2, spared: vec![0] }], vec![Full, Full, Slim, Full]));
+        // Less still: both
+        let (levels, forms) = fit(&items, Room::Shared(400.0), &[], measure.clone());
+        assert_eq!(forms, vec![Full, Slim, Slim, Full]);
+        // Back whole only with room to spare...
+        let (levels, forms) = fit(&items, Room::Shared(440.0), &levels, measure.clone());
+        assert_eq!(forms, vec![Full, Slim, Slim, Full]);
+        let (levels, forms) = fit(&items, Room::Shared(430.0 + SLACK), &levels, measure.clone());
+        assert_eq!(forms, vec![Full, Full, Slim, Full]);
+        // ...and then whole while it fits
+        let (levels, forms) = fit(&items, Room::Shared(432.0), &levels, measure.clone());
+        assert_eq!(forms, vec![Full, Full, Slim, Full]);
+        let (_, forms) = fit(&items, Room::Shared(428.0), &levels, measure);
+        assert_eq!(forms, vec![Full, Slim, Slim, Full]);
+    }
+
+    #[test]
+    fn gave_less_when_what_matters_more_is_whole() {
+        // Steps 0 and 2 taken gave less than 1 and 2: step 1 matters more than step 0
+        assert!(Given { level: 3, spared: vec![1] } < Given { level: 3, spared: vec![0] });
+        // Every step up to 1 gave less than step 2 alone
+        assert!(at(2) < Given { level: 3, spared: vec![1, 0] });
+        assert!(at(2) < at(3));
+        assert_eq!(Given { level: 3, spared: vec![] }, at(3));
     }
 }

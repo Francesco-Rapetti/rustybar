@@ -52,9 +52,11 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   background (`run`, `fire`, `shell`, `open`, `open_app`, `which`).
 - `fit.rs`: tiene separati i lati sinistro e destro; prima va ciò di cui la barra può fare a meno
   (forma `Slim`, per i widget di `[displays] slim_first` e nel loro ordine: gli slider di `audio`,
-  poi `claude` in una pill), poi cedono i widget più lontani dal loro bordo, prima compatti e poi
-  nel popup di una pill `⋯`, con un margine prima di tornare grandi (lo usa `App::bar_tree`, che
-  disegna una forma solo quando serve misurarla).
+  `system` con la sola memoria, poi `claude` in una pill), poi cedono i widget più lontani dal loro
+  bordo, prima compatti e poi nel popup di una pill `⋯`, con un margine prima di tornare grandi.
+  L'ordine dice cosa conta meno: quando un passo serve comunque, quelli prima tornano indietro se
+  lo spazio basta, dal più importante (`Given`: livello e passi risparmiati) (lo usa
+  `App::bar_tree`, che disegna una forma solo quando serve misurarla).
 - `surface.rs`, `ui/` (`node.rs` albero dichiarativo, `layout.rs` flexbox, `render.rs` diff dei
   layer con animazioni implicite), `gfx.rs` (testo, SF Symbols e icone in bitmap, con cache a due
   generazioni ripulita dopo ogni render, e del tutto quando un popup si chiude, insieme alle pagine
@@ -434,6 +436,22 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   nessuno sale, o se quell'account non ha numeri. Provato coi dati finti (`latest` in
   `claude.json`, e senza) e, coi dati veri sulla barra di prova, col valore scritto a mano nei
   default (poi tolto). Da provare dal vero: il passaggio da un account all'altro usandoli.
+- `system` cede prima di `claude` (l'ha chiesto l'utente: `claude` conta di più): `slim_first`
+  di default `audio`, `system`, `claude`, e la forma slim di `system` è quella compatta (solo la
+  memoria). L'ordine di `fit` dice cosa conta meno, non cosa deve cedere: quando un passo serve
+  comunque, quelli prima tornano indietro se lo spazio basta, dal più importante, con `SLACK` se
+  non erano già tornati (`Given`, ordinato su quanto ha ceduto il lato: il confronto del gruppo
+  centrale compatto lo usa). Vale per tutti i passi: anche un widget lontano dal bordo torna
+  intero quando uno più vicino è diventato compatto e lascia lo spazio. Provato coi dati finti
+  sulla barra di prova sullo schermo esterno (1920 pt): `system` solo memoria con `claude`
+  intero, poi `claude` in una pill con `system` intero, poi entrambi; stati fermi su tutti e due
+  gli schermi: ~23 MB, 0,03% CPU, 0 processi. Sulla barra vera dal 10/11/2026 (build fatta da
+  HEAD più solo questo cambiamento): sullo schermo esterno `system` e `claude` interi (solo
+  `audio` slim; prima `claude` era in una pill); sul MacBook `system` e `claude` slim, `audio`
+  compatto (prima compatti anche `home` e `docker`). Forme ferme per minuti (cambiano solo le
+  larghezze di `system` e `front_app`); primo frame 33 ms; 27 MB nel primo minuto, 0,63% CPU;
+  poi, con l'utente che cambiava app, 34 MB e 1,23% (il vetro di `front_app`), ma 10 s di
+  `sample` ~0,3%; 0 processi.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

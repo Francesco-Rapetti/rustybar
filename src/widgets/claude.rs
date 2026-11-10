@@ -6,8 +6,8 @@
 //!   The account of `~/.claude` is orange; `accounts` adds others, each with its Claude Code config
 //!   dir (`CLAUDE_CONFIG_DIR`) and color. With more than one, each has its own pill, the others on
 //!   the left, with the time the session resets (`42% · 31% · 17:07`) and a popup of its own;
-//!   slim (when the bar has no room for them: after the volume sliders of `audio`, see
-//!   `slim_first`) or compact, one pill, the account whose numbers went up last (the one in use;
+//!   slim (when the bar has no room for them: after the volume sliders of `audio` and the CPU and
+//!   GPU of `system`, see `slim_first`) or compact, one pill, the account whose numbers went up last (the one in use;
 //!   remembered in the defaults, so across reloads; the busiest session until one does, or when
 //!   that account has no numbers), whose popup has them all, each under its name in its color.
 //! - Popup: for each account a header with its spark, the name (or the email), the plan (`Max`),
