@@ -436,6 +436,10 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   nessuno sale, o se quell'account non ha numeri. Provato coi dati finti (`latest` in
   `claude.json`, e senza) e, coi dati veri sulla barra di prova, col valore scritto a mano nei
   default (poi tolto). Da provare dal vero: il passaggio da un account all'altro usandoli.
+  Il piano viene dal profilo che Claude Code tiene in `.claude.json` (`oauthAccount.organizationType`,
+  `claude_max` → `Max`, più il multiplo dal rate limit tier: `Max 5×`), non da `auth status`, che
+  tiene il piano del login (diceva `pro` dopo il passaggio a Max). Provato coi dati veri sulla barra
+  di prova: Pro, Team, Max 5×.
 - `system` cede prima di `claude` (l'ha chiesto l'utente: `claude` conta di più): `slim_first`
   di default `audio`, `system`, `claude`, e la forma slim di `system` è quella compatta (solo la
   memoria). L'ordine di `fit` dice cosa conta meno, non cosa deve cedere: quando un passo serve

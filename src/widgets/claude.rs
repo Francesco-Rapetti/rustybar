@@ -10,8 +10,8 @@
 //!   GPU of `system`, see `slim_first`) or compact, one pill, the account whose numbers went up last (the one in use;
 //!   remembered in the defaults, so across reloads; the busiest session until one does, or when
 //!   that account has no numbers), whose popup has them all, each under its name in its color.
-//! - Popup: for each account a header with its spark, the name (or the email), the plan (`Max`),
-//!   the email and the organization (not the personal one, named after the email), how old the
+//! - Popup: for each account a header with its spark, the name (or the email), the plan (`Max 5×`,
+//!   from the profile Claude Code keeps, which follows an upgrade), the email and the organization (not the personal one, named after the email), how old the
 //!   numbers are (`3 min fa`, yellow when the last
 //!   reading failed, `Aggiornamento…` while it reads), ↻ to read again and sign out, which asks for
 //!   a second click (`Fai clic di nuovo per uscire` in place of the email). Under it two tiles, the
@@ -217,7 +217,8 @@ fn read(path: &str, dir: &Option<String>, previous: Option<Account>) -> Account 
     };
     let config: Value = std::fs::read(config).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
     let name = config["oauthAccount"]["displayName"].as_str().or(config["oauthAccount"]["fullName"].as_str()).unwrap_or_default().to_string();
-    let mut account = Account { logged_in: true, email: text("email"), org: text("orgName"), plan: text("subscriptionType"), name, ..Default::default() };
+    let plan = plan(&config["oauthAccount"]).unwrap_or_else(|| text("subscriptionType"));
+    let mut account = Account { logged_in: true, email: text("email"), org: text("orgName"), plan, name, ..Default::default() };
     let request = r#"{"type":"control_request","request_id":"usage","request":{"subtype":"get_usage","skip_behaviors":true}}"#;
     let args = ["-p", "--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
     let out = claude(path, dir, &args, Some(&format!("{request}\n")), Duration::from_secs(30));
@@ -273,6 +274,26 @@ fn details(a: &Account) -> String {
     let email = if a.name.is_empty() { "" } else { a.email.as_str() };
     let org = if !a.email.is_empty() && a.org.contains(&a.email) { "" } else { a.org.as_str() };
     [email, org].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+}
+
+/// The plan from the profile Claude Code keeps in `.claude.json` and fetches again as it runs:
+/// `claude_max` with `default_claude_max_5x` → `max 5×`. `auth status` has only the plan of the
+/// login, which stays `pro` after an upgrade to Max until the next login.
+fn plan(profile: &Value) -> Option<String> {
+    let plan = profile["organizationType"].as_str()?;
+    let plan = plan.strip_prefix("claude_").unwrap_or(plan);
+    if plan.is_empty() {
+        return None;
+    }
+    // The usage multiple of Max, at the end of the rate limit tier
+    let times = ["userRateLimitTier", "organizationRateLimitTier"]
+        .iter()
+        .filter_map(|k| profile[*k].as_str())
+        .find_map(|tier| tier.strip_suffix('x')?.rsplit_once('_')?.1.parse::<u32>().ok());
+    Some(match times {
+        Some(n) => format!("{plan} {n}×"),
+        None => plan.to_string(),
+    })
 }
 
 /// `team` → `Team`.
@@ -755,6 +776,22 @@ mod tests {
         assert_eq!(parse_usage("garbage"), None);
         assert_eq!(plan_name("max"), "Max");
         assert_eq!(plan_name(""), "");
+    }
+
+    #[test]
+    fn plan_from_the_profile() {
+        let profile = |v: Value| plan(&v);
+        let max = serde_json::json!({"organizationType": "claude_max", "organizationRateLimitTier": "default_claude_max_5x", "userRateLimitTier": null});
+        assert_eq!(profile(max).as_deref(), Some("max 5×"));
+        let max = serde_json::json!({"organizationType": "claude_max", "organizationRateLimitTier": "default_claude_max_20x"});
+        assert_eq!(profile(max).map(|p| plan_name(&p)).as_deref(), Some("Max 20×"));
+        let pro = serde_json::json!({"organizationType": "claude_pro", "organizationRateLimitTier": "default_claude_ai"});
+        assert_eq!(profile(pro).as_deref(), Some("pro"));
+        let team = serde_json::json!({"organizationType": "claude_team", "organizationRateLimitTier": "default_raven", "userRateLimitTier": "default_raven"});
+        assert_eq!(profile(team).as_deref(), Some("team"));
+        // Without a profile, the plan of `auth status`
+        assert_eq!(profile(Value::Null), None);
+        assert_eq!(profile(serde_json::json!({"organizationType": ""})), None);
     }
 
     #[test]
