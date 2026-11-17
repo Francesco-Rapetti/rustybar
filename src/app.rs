@@ -66,6 +66,9 @@ pub struct Bar {
     /// On a screen with a notch, where the center group went at the last render: beside the left
     /// or the right side, in its own form or compact; none when it had no room.
     pub center: Option<(Side, Form)>,
+    /// On a screen without one, the side the center group leaned against at the last render, off
+    /// the middle to leave the other side room; none in the middle.
+    lean: Option<Side>,
     /// The room the center group had beside it at the last render (see `spare`).
     pub spare: f64,
     /// Whether the center group, or the island, was compact at the last render, to give the sides
@@ -585,7 +588,9 @@ impl App {
 
     /// The bar of `self.bars[b]`: the left side at the left edge, the right one at the right edge,
     /// the center one in the middle, with the widgets of the left and right sides in the form that
-    /// keeps them apart (see `fit`). Those that aren't in the bar are in the popup of a `⋯` pill, at
+    /// keeps them apart (see `fit`). The sides share the room the center group leaves them: when
+    /// one needs more than its half and the other leaves it, the group moves aside, no further
+    /// than it must (see `center_x`). Those that aren't in the bar are in the popup of a `⋯` pill, at
     /// the inner end of their side. On a screen with a notch the middle is the notch's: the center
     /// group goes beside it, at the inner end of the left side if that has room for it, else of the
     /// right one, else in its compact form the same way, else nowhere (see `place_center`). The
@@ -634,17 +639,15 @@ impl App {
         let mut center = draw_center(self, false);
         let center_w = width_of(&center);
 
-        // The room of the sides: up to the notch and the island's wings, or to the center group,
-        // with a gap; or all the bar between the margins when there's nothing in the middle
-        let room_of = |center_w: f64, wings: Option<(f64, f64)>| {
-            let middle = d.notch.or_else(|| (center_w > 0.0).then(|| ((width - center_w) / 2.0).round()).map(|x| (x, x + center_w)));
-            match middle {
-                Some((l, r)) => {
-                    let (il, ir) = wings.unwrap_or_default();
-                    Room::Split { left: l - il - margin - gap, right: width - margin - r - ir - gap }
-                }
-                None => Room::Shared(width - 2.0 * margin - gap),
+        // The room of the sides: up to the notch and the island's wings, with a gap; or all the bar
+        // between the margins but the center group and a gap beside it, which they share: the group
+        // leaves the middle for the side that needs the room, when the other one doesn't
+        let room_of = |center_w: f64, wings: Option<(f64, f64)>| match d.notch {
+            Some((l, r)) => {
+                let (il, ir) = wings.unwrap_or_default();
+                Room::Split { left: l - il - margin - gap, right: width - margin - r - ir - gap }
             }
+            None => Room::Shared(width - 2.0 * margin - gap - if center_w > 0.0 { center_w + gap } else { 0.0 }),
         };
         let room = room_of(center_w, least);
         // The compact form of what's between the sides, when it leaves them more room: the
@@ -730,10 +733,12 @@ impl App {
         if let Some((smaller, more)) = smaller {
             let own = match (was_compact, room) {
                 (true, Room::Split { left, right }) => fit::fit(&items, Room::Split { left: left - fit::SLACK, right: right - fit::SLACK }, &prev, &mut measure).0,
+                (true, Room::Shared(w)) => fit::fit(&items, Room::Shared(w - fit::SLACK), &prev, &mut measure).0,
                 _ => fitted.0.clone(),
             };
             let small = fit::fit(&items, smaller, &prev, &mut measure);
-            if (0..2).any(|s| more[s] && small.0[s] < own[s]) {
+            // A lane for each side beside the notch, one for both without it
+            if (0..small.0.len()).any(|s| more[s] && small.0[s] < own[s]) {
                 compact = true;
                 fitted = small;
             }
@@ -767,6 +772,8 @@ impl App {
         // the middle, what's left beside it goes to the text it had to cut (see `Rx::spare`)
         let mut center_form = |name: &str, form: Form| forms.insert(name.to_string(), form);
         let used = groups.each_ref().map(|g| width_of(g));
+        // Without a notch, the room the sides leave the center group between them
+        let between = [margin + if used[0] > 0.0 { used[0] + gap } else { 0.0 }, width - margin - if used[1] > 0.0 { used[1] + gap } else { 0.0 }];
         // The island takes the room the sides leave beside it, unless compact; the rest of the
         // group what it leaves
         let mut island_node = None;
@@ -842,9 +849,9 @@ impl App {
                     center = nodes;
                     self.bars[b].spare = 0.0;
                 }
-                // In the middle: on both sides as far as the wider side lets it
+                // All the room between the sides: it stays in the middle as long as it can
                 None if !center.is_empty() => {
-                    let spare = width - 2.0 * (margin + used[0].max(used[1]) + gap) - center_w;
+                    let spare = between[1] - between[0] - center_w;
                     center = self.widen(b, &centered, center, false, spare);
                 }
                 None => {}
@@ -871,7 +878,12 @@ impl App {
             let (w, h) = layout.intrinsic(&group, None);
             let x = match side {
                 Side::Left => margin,
-                Side::Center => ((width - w) / 2.0).round(),
+                Side::Center => {
+                    let (x, middle) = (center_x(width, between, w), ((width - w) / 2.0).round());
+                    // Left of the middle, it leans against the right side
+                    self.bars[b].lean = (x != middle).then_some(if x < middle { Side::Right } else { Side::Left });
+                    x
+                }
                 Side::Right => width - margin - w,
             };
             root.children.push(group.at(x, ((height - h) / 2.0).round()));
@@ -1019,7 +1031,7 @@ impl App {
                     surface.animate = false;
                     let window = Window::new(self.mtm, SurfaceId::Bar(d.id), frame, level, &surface.root, Backdrop::None, 0.0);
                     window.show();
-                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new(), center: None, spare: 0.0, center_compact: false, tree: Node::default(), peek_pill: None, island: None, island_spare: [0.0; 2] });
+                    self.bars.push(Bar { display: d, window, surface, items: HashMap::new(), fit: Vec::new(), forms: HashMap::new(), center: None, lean: None, spare: 0.0, center_compact: false, tree: Node::default(), peek_pill: None, island: None, island_spare: [0.0; 2] });
                     changed = true;
                 }
             }
@@ -1823,10 +1835,10 @@ impl App {
         let mut content = catch_unwind(AssertUnwindSafe(|| slot.widget.peek(&rx))).ok().flatten()?;
         content.normalize();
         // As its popup does; the center group beside the notch is at the inner end of a side, and
-        // grows into the room it found there, not over that side's pills
-        let side = match (slot.side, bar.center) {
-            (Side::Center, Some((side, _))) => side,
-            (side, _) => side,
+        // grows into the room it found there, not over that side's pills; the same off the middle
+        let side = match (slot.side, bar.center, bar.lean) {
+            (Side::Center, Some((side, _)), _) | (Side::Center, None, Some(side)) => side,
+            (side, ..) => side,
         };
 
         let layout = Layout { scale: d.scale };
@@ -2082,6 +2094,12 @@ fn place_center(used: [f64; 2], room: [f64; 2], full_w: f64, compact_w: Option<f
         .map(|(_, &(side, form, _))| (side, form))
 }
 
+/// Where the center group, `w` wide, goes on a screen without a notch, in the room the sides leave
+/// it (`between`): in the middle, or as near to it as they let it.
+fn center_x(width: f64, between: [f64; 2], w: f64) -> f64 {
+    ((width - w) / 2.0).round().min((between[1] - w).floor()).max(between[0].ceil())
+}
+
 /// A node drawn as an island (see `Rx::island`).
 /// The smallest rectangle with both.
 fn union(a: CGRect, b: CGRect) -> CGRect {
@@ -2190,6 +2208,18 @@ mod tests {
         assert_eq!(place([367.0, 267.0]), None);
         // An empty side has no gap to leave
         assert_eq!(place_center([0.0, 0.0], [100.0, 0.0], 100.0, None, 8.0, Some((Side::Left, Form::Full))), Some((Side::Left, Form::Full)));
+    }
+
+    #[test]
+    fn the_center_leaves_the_middle_only_for_a_side_that_needs_it() {
+        // 200 wide on a bar 1000 wide: in the middle while the sides leave it there
+        assert_eq!(center_x(1000.0, [100.0, 900.0], 200.0), 400.0);
+        assert_eq!(center_x(1000.0, [400.0, 600.0], 200.0), 400.0);
+        // A wide right side pushes it left, a wide left one right, as far as they need
+        assert_eq!(center_x(1000.0, [100.0, 550.5], 200.0), 350.0);
+        assert_eq!(center_x(1000.0, [520.2, 900.0], 200.0), 521.0);
+        // No room: clear of the left side at least
+        assert_eq!(center_x(1000.0, [500.0, 600.0], 200.0), 500.0);
     }
 
     #[test]

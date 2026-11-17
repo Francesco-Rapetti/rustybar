@@ -1,5 +1,6 @@
 //! Keeps the two sides of a bar apart. When the widgets on the left and those on the right don't
-//! fit in the room the screen gives them, between its edges and the notch (or each other), first
+//! fit in the room the screen gives them, between its edges and the notch (or each other, and the
+//! center group, which moves aside for the side that needs the room), first
 //! the center group between them turns compact, when that keeps one of them in a bigger form (see
 //! `App::bar_tree`); then the widgets of `slim_first` leave out what the bar can do without, in
 //! that order (the volume sliders of `audio`, the CPU and GPU of `system`, then the pills of the
@@ -45,9 +46,9 @@ pub struct Item {
 /// The room the sides have, without the margins and the gaps around them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Room {
-    /// Nothing between them: together they take at most this.
+    /// Nothing between them, or a center group that moves aside: together they take at most this.
     Shared(f64),
-    /// The notch or the center group between them: each side takes at most its own.
+    /// The notch between them: each side takes at most its own.
     Split { left: f64, right: f64 },
 }
 

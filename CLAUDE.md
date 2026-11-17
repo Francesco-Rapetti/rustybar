@@ -456,6 +456,20 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   larghezze di `system` e `front_app`); primo frame 33 ms; 27 MB nel primo minuto, 0,63% CPU;
   poi, con l'utente che cambiava app, 34 MB e 1,23% (il vetro di `front_app`), ma 10 s di
   `sample` ~0,3%; 0 processi.
+- Senza notch il gruppo `center` non è più fisso a metà (l'utente vedeva pill compatte e la `⋯`
+  a destra con ~190 pt liberi a sinistra, sul monitor da 1920 pt): i lati si dividono lo spazio
+  che lascia (`Room::Shared`, una corsia sola come senza gruppo centrale; prima `Split`, metà
+  ciascuno), e il gruppo resta in mezzo finché può, poi si sposta verso il lato che ha posto,
+  quanto basta (`center_x`). Per il titolo prende tutto lo spazio fra i lati (`spare`), e il peek
+  cresce lontano dal lato a cui si appoggia (`Bar::lean`). Col notch non cambia niente. Provato
+  coi dati finti sulla barra di prova accanto alla build di prima, stessa config dei dotfiles:
+  sul MQ16AHE (1920 pt) nessun widget nella `⋯` (prima cinque), `now_playing` compatto contro
+  `home`; sull'Odyssey (5120 pt) `now_playing` intero con l'artista, `system` e `claude` interi
+  (prima compatto, con `claude` e `audio` slim); peek della pill compatta verso sinistra. ~21 MB,
+  0,03% CPU, 0 processi in 60 s; primo frame 36 ms. Sulla barra vera dal 17/11/2026 (build del
+  working tree, con dentro il lavoro su `gfx.rs` che un'altra sessione stava facendo): sul MQ16AHE
+  niente `⋯` e `home`, `network` e `clock` di nuovo interi; sull'Odyssey tutto intero,
+  `now_playing` di 511 pt; 27 MB in 2 processi, 0,33% CPU nel primo minuto, 0 processi.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

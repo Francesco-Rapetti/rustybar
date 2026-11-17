@@ -193,7 +193,9 @@ there's room again. In `[displays]`,
 `compact_on_notch = true` makes every widget compact on screens with a notch, `always_compact` lists
 widgets compact on every screen, and `hide_on_notch` widgets that go in the `⋯` popup there.
 
-The `center` group is in the middle of the bar, between the two sides. On a screen with a notch
+The `center` group is in the middle of the bar, between the two sides. They share the room it
+leaves them: when one needs more than its half and the other leaves some of its own, the group
+moves aside, no further than it must, and back to the middle once it can. On a screen with a notch
 the middle is the notch's, so the group goes beside it: at the inner end of the left side if that
 has room for it, else of the right one, else the same in its compact form; with no room on either
 side it doesn't show there. It only takes the room the sides leave, and moves back to a better
@@ -269,11 +271,11 @@ macOS 15.4), and these two tell it with a notification at every change, which ne
 The bar shows the one playing, or the one paused last; the popup has a switch when both have a
 track.
 
-A title too long for the pill takes the room the bar has left beside it: up to the notch, or up to
-the sides when it's in the middle; then the artist does. If it still doesn't fit, it scrolls while
-the track plays, as in Spotify: all of it, a pause of 3 seconds, and again. Core Animation moves it
-in the window server, so RustyBar does nothing meanwhile; with Reduce Motion (or
-`animations = false`) it's cut instead.
+A title too long for the pill takes the room the bar has left beside it: up to the notch, or, without
+one, up to the sides (leaving the middle if only one of them has room); then the artist does. If it
+still doesn't fit, it scrolls while the track plays, as in Spotify: all of it, a pause of 3
+seconds, and again. Core Animation moves it in the window server, so RustyBar does nothing
+meanwhile; with Reduce Motion (or `animations = false`) it's cut instead.
 
 At rest the pill shows where the track is with a line along the straight part of its bottom edge,
 in the theme's accent, gray while paused. Core Animation takes it on to the end of the track in the
