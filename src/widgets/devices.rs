@@ -14,7 +14,7 @@
 //!   headsets over HFP, AirPods with each earbud and the case) and the game controllers macOS
 //!   knows. powerd says when it changes (libnotify); a read takes ~0.1 ms, on the main thread.
 //!   Over Bluetooth Low Energy a device sends only its level: it charges for us while that goes
-//!   up (`rising`).
+//!   up step after step (`rising`).
 //! - Receivers and cables (`hid`; `receivers = false` leaves them out): Razer, Logitech, ROG, the
 //!   Steam Controller. A pass on a worker thread at the start, a second after one of their
 //!   interfaces comes or goes (IOKit says), on wake, when the popup opens and every 5 minutes
@@ -29,6 +29,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int};
+use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use objc2_foundation::ns_string;
@@ -47,6 +48,10 @@ use crate::ui::{Align, Justify, Kind as NodeKind, Node};
 const EVERY: f64 = 5.0 * 60.0;
 /// IOKit tells a device's interfaces one by one: they're read this long after the last, in seconds.
 const SETTLE: f64 = 1.0;
+/// A device that doesn't say whether it charges, charging, goes up a step every few minutes (a
+/// keyboard 1–3 points a minute, slower near full); a battery at rest comes back once, or slowly
+/// over hours. So it charges while each step up comes this soon after the one before.
+const STEADY: Duration = Duration::from_secs(15 * 60);
 
 /// powerd's notifications: an accessory came or went, its charging state or its level changed;
 /// and any power source changed (also every minute or so on a Mac with a battery).
@@ -86,7 +91,7 @@ struct Device {
     parts: Vec<Part>,
     charging: bool,
     /// It says whether it charges; one that doesn't (a keyboard over Bluetooth Low Energy sends
-    /// only its level) charges for us while its level goes up (`rising`).
+    /// only its level) charges for us while its level goes up step after step (`rising`).
     says_charging: bool,
     connected: bool,
     /// Behind a receiver or a cable, not answering now (asleep, off) but read since the bar
@@ -105,9 +110,8 @@ pub struct Devices {
     /// The last level of each device behind a receiver, by its key, with its other half and the
     /// time it was read, for while it sleeps.
     last: HashMap<String, (u8, Option<u8>, String)>,
-    /// For the devices of macOS's list that don't say whether they charge: by key, the lowest level
-    /// since it last went down, and the last one (`rising`).
-    rises: HashMap<String, (u8, u8)>,
+    /// For the devices of macOS's list that don't say whether they charge, by key (`rising`).
+    rises: HashMap<String, Rise>,
     /// Names of the user's for the pill, by the full name (lowercase): `names = { "Razer Naga V2
     /// Pro" = "Gioco" }`.
     names: HashMap<String, String>,
@@ -160,7 +164,7 @@ impl Devices {
     /// macOS's list read again; what went away from it stays among the others. True if it changed.
     fn read_accessories(&mut self) -> bool {
         let mut now = accessories();
-        rising(&mut self.rises, &mut now);
+        rising(&mut self.rises, &mut now, Instant::now());
         if now == self.bluetooth {
             return false;
         }
@@ -528,18 +532,33 @@ fn accessories() -> Vec<Device> {
     out
 }
 
-/// The devices that don't say whether they charge charge while their level goes up: from 2 points
-/// over the lowest since it last went down (a battery at rest can come back 1), until it goes down
-/// again. Full, it stays charging until it goes down.
-fn rising(rises: &mut HashMap<String, (u8, u8)>, devices: &mut [Device]) {
+/// How the level of a device that doesn't say whether it charges went lately.
+#[derive(Clone, Copy)]
+struct Rise {
+    last: u8,
+    /// Steps up since it last went down, each within `STEADY` of the one before.
+    steps: u8,
+    /// When the last step up came.
+    at: Instant,
+}
+
+/// The devices that don't say whether they charge charge while their level goes up step after
+/// step: from the second step up, each within `STEADY` of the one before, until one doesn't come
+/// in time, the level goes down or it's full. One step isn't enough: a battery at rest comes back
+/// (an AA one too, which never charges), and a device charged while away comes back higher once.
+fn rising(rises: &mut HashMap<String, Rise>, devices: &mut [Device], now: Instant) {
     for d in devices.iter_mut().filter(|d| !d.says_charging) {
         let Some(level) = d.level else { continue };
-        let (low, last) = rises.entry(d.key.clone()).or_insert((level, level));
-        if level < *last {
-            *low = level;
+        let r = rises.entry(d.key.clone()).or_insert(Rise { last: level, steps: 0, at: now });
+        let late = now.duration_since(r.at) > STEADY;
+        if level < r.last {
+            r.steps = 0;
+        } else if level > r.last {
+            r.steps = if r.steps > 0 && late { 1 } else { r.steps.saturating_add(1) };
+            r.at = now;
         }
-        *last = level;
-        d.charging = level >= low.saturating_add(2);
+        r.last = level;
+        d.charging = level < 100 && r.steps >= 2 && now.duration_since(r.at) <= STEADY;
     }
 }
 
@@ -965,20 +984,25 @@ mod tests {
 
     #[test]
     fn a_level_that_goes_up_is_charging() {
+        let start = Instant::now();
         let mut rises = HashMap::new();
-        let mut read = |level: u8, says: bool| {
+        let mut read = |minute: u64, level: u8, says: bool| {
             let mut d = device("ROG AZOTH", Kind::Keyboard, Maker::Asus, Link::Bluetooth, level, true);
             d.says_charging = says;
             let mut now = [d];
-            rising(&mut rises, &mut now);
+            rising(&mut rises, &mut now, start + Duration::from_secs(minute * 60));
             now[0].charging
         };
-        // A battery at rest comes back a point: not yet
-        assert_eq!([21, 22, 21, 22].map(|l| read(l, false)), [false; 4]);
-        // Two points over the lowest, and on up to full; down again: no more
-        assert_eq!([23, 40, 100, 100, 99, 100].map(|l| read(l, false)), [true, true, true, true, false, false]);
+        // A battery at rest comes back once, even by much: not charging
+        assert_eq!([(0, 21), (1, 22), (2, 21), (3, 30), (4, 25)].map(|(m, l)| read(m, l, false)), [false; 5]);
+        // Steps up a few minutes apart: from the second, until it's full
+        assert_eq!([(5, 26), (7, 28), (20, 40), (30, 99), (31, 100)].map(|(m, l)| read(m, l, false)), [false, true, true, true, false]);
+        // A step that doesn't come in time: no more, and the next one alone isn't enough
+        assert_eq!([(40, 50), (42, 52), (44, 54), (70, 54), (71, 55), (73, 57)].map(|(m, l)| read(m, l, false)), [false, false, true, false, false, true]);
+        // Slowly over hours, as a battery that rests: never
+        assert_eq!([(80, 40), (200, 41), (320, 42), (440, 43)].map(|(m, l)| read(m, l, false)), [false; 4]);
         // One that says whether it charges keeps what it says
-        assert!(!read(100, true));
+        assert!(!read(441, 100, true));
     }
 
     #[test]

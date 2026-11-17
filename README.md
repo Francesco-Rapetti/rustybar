@@ -364,10 +364,11 @@ The batteries come from two places:
   battery over Bluetooth (Apple's mice, keyboards and trackpads, the Bluetooth Low Energy ones with
   the battery service, headsets, AirPods with each earbud and the case) and the game controllers
   macOS supports. powerd says when it changes; reading it takes about 0.1 ms. Over Bluetooth Low
-  Energy a device tells its level and nothing else: it shows charging once the level has gone up
-  2 points (a battery at rest can come back 1), until it goes down again. A device that goes
-  away stays in the popup, under *Not connected*, with the level it had, until the bar starts
-  again.
+  Energy a device tells its level and nothing else: it shows charging while the level goes up step
+  after step, from the second step, each within 15 minutes of the one before, until it's full (a
+  battery at rest comes back once, or slowly, and one on AA batteries never charges). A device
+  that goes away stays in the popup, under *Not connected*, with the level it had, until the bar
+  starts again.
 - **Receivers and cables**, which macOS doesn't know, each maker's own way, all of it questions
   the device answers and never a setting: Razer (cable and HyperSpeed receivers), Logitech (HID++
   through Bolt, Unifying and Lightspeed receivers; the receiver knows the name of a mouse that

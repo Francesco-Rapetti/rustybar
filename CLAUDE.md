@@ -521,9 +521,13 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   sulla barra vera dal 17/11/2026 (trackpad e occhiali; la ROG resta `keyboard.fill`).
   In carica senza che lo dica: via BLE (la ROG col cavo a un caricatore, non al Mac) macOS ha solo
   il livello, senza `Is Charging` e con `Power Source State` = `Battery Power`. Quindi `rising`:
-  un dispositivo che non lo dice (`says_charging`) è in carica da 2 punti sopra il minimo da cui
-  è risalito (1 può tornare a riposo), finché non scende; senza la chiave, `AC Power` vale in
-  carica.
+  un dispositivo che non lo dice (`says_charging`) è in carica dal secondo passo in su, ognuno
+  entro `STEADY` (15 minuti) dal precedente, finché un passo non arriva in tempo, il livello
+  scende o è al 100%; senza la chiave, `AC Power` vale in carica. Prima bastavano 2 punti sopra il
+  minimo, fino alla discesa: un mouse Logitech a pila AA via BLE (mai in carica) era a 100% e in
+  carica, per un solo salto in su (una pila a riposo si riprende) che a 100% non scendeva più.
+  Sulla barra vera dal 17/11/2026: il mouse a 100% senza fulmine. Da riprovare: la ROG al
+  caricatore (il fulmine ora dopo due passi in su, ~2 minuti).
   Il fulmine resta anche nella forma compatta (senza, da compatta la carica non si vedeva). Provato
   sulla barra vera dal 17/11/2026 con la ROG al caricatore (sale di 1–3 punti al minuto): dopo un
   riavvio, che azzera la memoria, fulmine in pill e popup ("in carica") entro 5 minuti.
