@@ -105,7 +105,21 @@ pub struct Popup {
     view: Option<(Window, Surface)>,
     pub anchor: CGRect,
     pub side: Side,
+    /// The tip of what the mouse rests on (see `Node::tip`), shown once it has rested a moment.
+    tip: Option<Tip>,
 }
+
+struct Tip {
+    /// The node it's of, and what it says.
+    path: String,
+    text: String,
+    shown: bool,
+}
+
+/// How long the mouse rests on a node before its tip shows, and how wide a tip gets before it
+/// goes on another line.
+const TIP_DELAY: f64 = 0.6;
+const TIP_WIDTH: f64 = 240.0;
 
 /// How far an island grew (see `Rx::island`): with its peek under the mouse, into its popup on a
 /// click, or with its notice by itself. A pill's peek is always the first.
@@ -200,6 +214,8 @@ pub struct App {
     peek_ticket: u64,
     /// The same for its goings out of the peek and back in: a pending shrink doesn't happen.
     leave_ticket: u64,
+    /// The same for the tips of the popup: one the mouse left doesn't show.
+    tip_ticket: u64,
     /// The next render of the bars isn't animated: a pill hides under a peek, or shows again
     /// under one going away, at once.
     instant: bool,
@@ -284,6 +300,7 @@ pub fn start(mtm: MainThreadMarker) {
         hovered_pill: None,
         peek_ticket: 0,
         leave_ticket: 0,
+        tip_ticket: 0,
         instant: false,
         cache: Cache::load(),
         lua: None,
@@ -1226,13 +1243,20 @@ impl App {
                     }
                     let slider = surface.hit(p, &[HitKind::Slider]).map(|h| h.path.clone());
                     surface.set_slider_hover(slider);
+                    // The tip of the topmost node under the mouse, if it has one
+                    let tip = surface.hit(p, &[HitKind::Click, HitKind::Slider, HitKind::Tip]).and_then(|h| Some((h.path.clone(), h.tip.clone()?)));
+                    self.hover_tip(id, tip);
                 }
             }
             Mouse::Exited => {
                 surface.set_hover(None, None);
                 surface.set_slider_hover(None);
+                self.hide_tip(false);
             }
             Mouse::Down => {
+                // A click is past the tip: it doesn't come back until the mouse is on something else
+                self.hide_tip(true);
+                let Some(surface) = self.surface_mut(id) else { return };
                 if let Some(h) = surface.hit(p, &[HitKind::Slider]).cloned() {
                     let v = crate::ui::slider_value(h.rect, p.x);
                     surface.drag_slider(&h.path, v);
@@ -1270,6 +1294,8 @@ impl App {
             }
             Mouse::RightDown => {}
             Mouse::Scroll { dy, ended } => {
+                self.hide_tip(false);
+                let Some(surface) = self.surface_mut(id) else { return };
                 let Some(h) = surface.hit(p, &[HitKind::Scroll]).cloned() else { return };
                 let edge = surface.scroll_by(&h.path, dy, true);
                 if ended {
@@ -1307,7 +1333,7 @@ impl App {
         self.close_popup();
         // An island's popup is the island grown further, from where it is
         if self.bars.iter().find(|b| b.display.id == display).and_then(|b| b.island.as_ref()).is_some_and(|i| i.widget == widget) {
-            self.popup = Some(Popup { widget: widget.to_string(), display, view: None, anchor: CGRect::ZERO, side: Side::Center });
+            self.popup = Some(Popup { widget: widget.to_string(), display, view: None, anchor: CGRect::ZERO, side: Side::Center, tip: None });
             self.with_slot(widget, |w, cx| w.event(&Event::PopupOpened, cx));
             self.grow(widget, display, Stage::Popup);
             if !self.peek.as_ref().is_some_and(|p| p.widget == widget && p.open && p.stage == Stage::Popup) {
@@ -1354,7 +1380,7 @@ impl App {
         let mut window = Window::new(self.mtm, SurfaceId::Popup, frame, level, &surface.root, backdrop, t.popup_radius);
         window.set_dark(t.glass_dark);
         window.panel.setAlphaValue(0.0);
-        self.popup = Some(Popup { widget: widget.to_string(), display: d.id, view: Some((window, surface)), anchor, side });
+        self.popup = Some(Popup { widget: widget.to_string(), display: d.id, view: Some((window, surface)), anchor, side, tip: None });
         let name = widget.to_string();
         self.with_slot(&name, |w, cx| w.event(&Event::PopupOpened, cx));
         if !self.render_popup(false) {
@@ -1436,6 +1462,13 @@ impl App {
         let max_h = (anchor.origin.y - d.frame.origin.y - 8.0).max(100.0);
         h = h.min(max_h);
         w = w.ceil();
+        // The tip over the rest, under the node it's of where it was last drawn
+        if let Some(popup) = &self.popup
+            && let (Some(tip), Some((_, surface))) = (popup.tip.as_ref().filter(|t| t.shown), &popup.view)
+            && let Some(hit) = surface.hits.iter().find(|h| h.path == tip.path)
+        {
+            tree.children.push(tip_node(&self.theme, &layout, &tip.text, hit.rect, w, h));
+        }
         let laid = layout.place(&tree, 0.0, 0.0, w, h);
         let gap = self.config.bar.popup_gap;
         let margin = self.config.bar.margin;
@@ -1457,6 +1490,66 @@ impl App {
         surface.motion = animate;
         surface.render(&tree, &laid);
         true
+    }
+
+    /// The mouse is on `hit` (its path and tip) in surface `id`, or on nothing with a tip: after a
+    /// moment its tip shows; from one shown to the next at once, as macOS's do.
+    fn hover_tip(&mut self, id: SurfaceId, hit: Option<(String, String)>) {
+        let Some(popup) = self.popup.as_mut().filter(|p| id == SurfaceId::Popup && p.view.is_some()) else { return };
+        if let (Some(tip), Some((path, text))) = (&popup.tip, &hit)
+            && tip.path == *path
+        {
+            // The same node: a text that changed shows as it is now
+            if tip.text != *text && tip.shown {
+                popup.tip = Some(Tip { path: path.clone(), text: text.clone(), shown: true });
+                let animate = self.animations();
+                self.render_popup(animate);
+            }
+            return;
+        }
+        let shown = popup.tip.take().is_some_and(|t| t.shown);
+        self.tip_ticket += 1;
+        let Some((path, text)) = hit else {
+            if shown {
+                let animate = self.animations();
+                self.render_popup(animate);
+            }
+            return;
+        };
+        popup.tip = Some(Tip { path, text, shown });
+        if shown {
+            let animate = self.animations();
+            self.render_popup(animate);
+            return;
+        }
+        let ticket = self.tip_ticket;
+        runtime::after(TIP_DELAY, move |app| {
+            if app.tip_ticket != ticket {
+                return;
+            }
+            let Some(tip) = app.popup.as_mut().and_then(|p| p.tip.as_mut()) else { return };
+            tip.shown = true;
+            let animate = app.animations();
+            app.render_popup(animate);
+        });
+    }
+
+    /// The tip goes; `clicked`, it stays away while the mouse stays on its node.
+    fn hide_tip(&mut self, clicked: bool) {
+        self.tip_ticket += 1;
+        let Some(popup) = self.popup.as_mut() else { return };
+        let shown = popup.tip.as_ref().is_some_and(|t| t.shown);
+        if clicked {
+            if let Some(t) = &mut popup.tip {
+                t.shown = false;
+            }
+        } else {
+            popup.tip = None;
+        }
+        if shown {
+            let animate = self.animations();
+            self.render_popup(animate);
+        }
     }
 
     pub fn close_popup(&mut self) {
@@ -2100,7 +2193,21 @@ fn center_x(width: f64, between: [f64; 2], w: f64) -> f64 {
     ((width - w) / 2.0).round().min((between[1] - w).floor()).max(between[0].ceil())
 }
 
-/// A node drawn as an island (see `Rx::island`).
+/// A tip under the node at `of` in a popup `w` × `h`, over it if there's no room below; on more
+/// lines when long, and never out of the popup.
+fn tip_node(t: &Theme, layout: &Layout, text: &str, of: CGRect, w: f64, h: f64) -> Node {
+    let font = t.font_with(Weight::Medium, t.small_size);
+    let width = TIP_WIDTH.min(w - 28.0);
+    let lines: Vec<Node> = crate::ui::wrap(text, &font, width).into_iter().map(|line| Node::text(line, font.clone(), t.text)).collect();
+    let mut node = Node::column(lines).gap(1.0).align(Align::Start).padding(4.0, 8.0, 4.0, 8.0).radius(6.0).background(t.base).border(1.0, t.overlay.faded(0.5)).key("tip");
+    node.normalize();
+    let (tw, th) = layout.intrinsic(&node, None);
+    let x = (of.origin.x + (of.size.width - tw) / 2.0).clamp(6.0, (w - tw - 6.0).max(6.0));
+    let below = of.origin.y + of.size.height + 4.0;
+    let y = if below + th <= h - 4.0 { below } else { (of.origin.y - th - 4.0).max(4.0) };
+    node.at(x.round(), y.round())
+}
+
 /// The smallest rectangle with both.
 fn union(a: CGRect, b: CGRect) -> CGRect {
     let (x0, y0) = (a.origin.x.min(b.origin.x), a.origin.y.min(b.origin.y));
@@ -2108,6 +2215,7 @@ fn union(a: CGRect, b: CGRect) -> CGRect {
     CGRect::new(CGPoint::new(x0, y0), CGSize::new(x1 - x0, y1 - y0))
 }
 
+/// A node drawn as an island (see `Rx::island`).
 fn is_island(node: &Node) -> bool {
     node.style.notch.is_some() && node.children.iter().any(|c| c.key.as_deref() == Some("notch"))
 }

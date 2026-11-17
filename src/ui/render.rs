@@ -26,6 +26,7 @@ pub struct Hit {
     pub action: Option<Action>,
     pub hover: Option<Rgba>,
     pub kind: HitKind,
+    pub tip: Option<String>,
 }
 
 /// Where Liquid Glass goes behind a glass node, in surface coordinates (top-left origin).
@@ -42,6 +43,8 @@ pub enum HitKind {
     Click,
     Slider,
     Scroll,
+    /// Nothing to click, only a tip to show.
+    Tip,
 }
 
 struct Entry {
@@ -589,6 +592,7 @@ impl Surface {
                 Kind::Slider { .. } => None,
                 Kind::Scroll { .. } => Some(HitKind::Scroll),
                 _ if node.on_click.is_some() => Some(HitKind::Click),
+                _ if node.tip.is_some() => Some(HitKind::Tip),
                 _ => None,
             };
             if let Some(kind) = kind {
@@ -598,7 +602,7 @@ impl Surface {
                     (HitKind::Click, hover) => Some(hover.unwrap_or(highlight)),
                     (_, hover) => hover,
                 };
-                self.hits.push(Hit { path: path.clone(), rect: r, action: node.on_click.clone(), hover, kind });
+                self.hits.push(Hit { path: path.clone(), rect: r, action: node.on_click.clone(), hover, kind, tip: node.tip.clone() });
             }
         }
 

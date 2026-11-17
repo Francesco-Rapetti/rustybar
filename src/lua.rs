@@ -516,6 +516,9 @@ impl Convert<'_> {
         if let Some(c) = self.color(t, "hover") {
             node.hover = Some(c);
         }
+        if let Some(tip) = self.string(t, "tip") {
+            node.tip = Some(tip);
+        }
         if let Some(sel) = self.string(t, "selected") {
             node.selected = Some(sel);
             node.selected_color = Some(self.color(t, "selected_color").unwrap_or(theme.primary));

@@ -28,7 +28,7 @@ processes a minute.
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, or to dismiss with their ✕ or all at once (a badge comes back when it goes up), the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
 | `claude` | How much of the Claude plan each account has used: the 5-hour session and the week | For each account its plan and two tiles, the session and the week, with a bar, when they reset and how long until then; how old the numbers are, ↻ to read them again, log in and log out; the usage page on claude.ai |
-| `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | A dashboard: the engine and what the containers use; every container, by Compose project, with its state, CPU, memory, image, ports (links to localhost) and uptime, and buttons to start, stop, restart and remove it (a project's at once too); disk usage of images, containers, volumes and build cache, each cleaned up with a click, unused networks and a system prune; Docker Desktop |
+| `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | A dashboard: the engine and what the containers use; every container, by Compose project, with its state, CPU, memory, image, ports (links to localhost) and uptime, and buttons to start, stop, restart and remove it (a project's at once too); disk usage of images, containers, volumes and build cache, unused networks and a system prune, each cleaned up only after saying what it would remove; Docker Desktop |
 
 Each widget with its popup, on made-up data (see below):
 
@@ -348,23 +348,35 @@ cover_colors = true    # the popup in the colors of the cover
 The `docker` widget finds the Engine API socket of Docker Desktop, OrbStack, colima, Rancher
 Desktop or `DOCKER_HOST=unix://…` by itself, and has no options.
 
-Its popup does what the `docker` CLI would, through the same API:
+Its popup does what the `docker` CLI would, through the same API. With the mouse resting on a
+button, a tip says what it does and to which containers (`Stop db-1`, `Restart api-1, db-1 and
+web-1 in shop`).
 
 | In the popup | As |
 | --- | --- |
 | ▶ ■ ↻ on a container | `docker start` (`unpause` when paused), `stop`, `restart` |
-| The bin, clicked twice | `docker rm -f`: running containers too; their anonymous volumes stay |
+| The bin | Asks first, then `docker rm -f`: running containers too; their anonymous volumes stay |
 | ▶ ■ ↻ by a Compose project | The same on each of its containers, at once, without Compose's `depends_on` order |
 | A port | Opens `http://localhost:<port>` |
-| Images, clicked twice | `docker image prune -a`: every image no container uses |
-| Containers, clicked twice | `docker container prune` |
-| Volumes, clicked twice | `docker volume prune`: anonymous volumes only, named ones keep their data |
-| Build Cache, clicked twice | `docker builder prune -a` |
-| Unused Networks, clicked twice | `docker network prune` |
-| Clean Up All, clicked twice | `docker system prune -a`: stopped containers, unused networks and images, build cache; not volumes |
+| Images | Asks first, then `docker image prune -a`: every image no container uses |
+| Containers | Asks first, then `docker container prune`: every stopped container |
+| Volumes | Asks first, then `docker volume prune`: anonymous volumes only, named ones keep their data |
+| Build Cache | Asks first, then `docker builder prune -a` |
+| Clean Up Networks… | Asks first, then `docker network prune` |
+| Clean Up All… | Asks first, then `docker system prune -a`: stopped containers, unused networks and images (those of the stopped containers too), build cache; not volumes |
 
-The disk usage is read (`/system/df`) when the popup opens and after each action, and the CPU and
-memory of the containers every few seconds while it's open.
+Nothing is removed on the first click. The popup asks instead, in place of the dashboard: what
+would go, by name and with its size (measured again first, so it's about how things are now),
+what stays, what's lost for good (a container's files outside its volumes, a volume's data), and
+how to get it back: `docker compose up -d` in the project's folder for a Compose container, the
+same `docker run` for the others, `docker pull` or `docker build` for images. Stopped containers
+on a network that a clean-up removes are named too, as they won't start again without it. The
+button that does it says what (`Remove 3 Containers`), and a click on it within half a second of
+the question, as from a double click, does nothing.
+
+The disk usage is read (`/system/df` and `/networks`) when the popup opens, when it asks about a
+clean-up and after each action, and the CPU and memory of the containers every few seconds while
+the dashboard shows.
 
 ## Lua widgets
 
@@ -403,7 +415,8 @@ rb.widget {
   `disclosure` (a title whose children show only with `open = true`; its `on_click` flips your
   flag), `month`.
 - **Options**: `gap`, `pad`, `width`, `height`, `min_width`, `max_width`, `grow`, `radius`,
-  `background`, `border`, `opacity`, `align`, `justify`, `key`, `hover`, `selected` (a sliding
+  `background`, `border`, `opacity`, `align`, `justify`, `key`, `hover`, `tip` (what it does, shown
+  under it when the mouse rests on it in a popup), `selected` (a sliding
   highlight behind the child with that key), `marquee = true` (a text that doesn't fit scrolls
   instead of being cut), `trace = { value = 0.3, rate = 1 / 214 }` (a line along the bottom edge
   as far as `value`, which Core Animation takes on by `rate` a second without a render; `along =

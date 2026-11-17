@@ -248,6 +248,27 @@ impl Layout {
     }
 }
 
+/// `text` in lines that fit `width`, broken between words; a word wider than that alone is cut.
+pub fn wrap(text: &str, font: &gfx::FontSpec, width: f64) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+        if gfx::measure_text(&candidate, font).width <= width {
+            line = candidate;
+            continue;
+        }
+        if !line.is_empty() {
+            lines.push(std::mem::take(&mut line));
+        }
+        line = if gfx::measure_text(word, font).width <= width { word.to_string() } else { truncate(word, font, width) };
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
 /// The longest prefix of `text` that fits `width` with "…" after it.
 pub fn truncate(text: &str, font: &gfx::FontSpec, width: f64) -> String {
     let chars: Vec<char> = text.chars().collect();
@@ -270,6 +291,20 @@ mod tests {
 
     fn boxed(w: f64, h: f64) -> Node {
         Node::default().size(w, h)
+    }
+
+    #[test]
+    fn wraps() {
+        let font = gfx::FontSpec::new("SF Pro", gfx::Weight::Medium, 11.0);
+        let text = "The files it wrote outside its volumes are lost, and its logs.";
+        let lines = wrap(text, &font, 120.0);
+        assert!(lines.len() > 1);
+        assert!(lines.iter().all(|l| gfx::measure_text(l, &font).width <= 120.0));
+        assert_eq!(lines.join(" "), text);
+        // A word too long for a line alone is cut
+        let long = wrap("a supercalifragilisticexpialidocious word", &font, 60.0);
+        assert!(long[1].ends_with('…'));
+        assert!(wrap("", &font, 60.0).is_empty());
     }
 
     #[test]

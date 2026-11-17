@@ -23,6 +23,10 @@ pub struct Node {
     /// clear one (alpha 0): none, the background stays as it is.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hover: Option<Rgba>,
+    /// What it does, in a few words under it while the mouse rests on it in a popup: for a
+    /// button that is only an icon, or a click whose result isn't plain from what it shows.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tip: Option<String>,
     /// The key of the child that gets a sliding highlight behind it (the focused workspace…).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub selected: Option<String>,
@@ -302,6 +306,11 @@ impl Node {
 
     pub fn hover(mut self, color: Rgba) -> Node {
         self.hover = Some(color);
+        self
+    }
+
+    pub fn tip(mut self, text: impl Into<String>) -> Node {
+        self.tip = Some(text.into());
         self
     }
 

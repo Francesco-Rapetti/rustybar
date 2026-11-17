@@ -201,6 +201,27 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Azioni con `net::unix_request` (POST/DELETE) in `cx.background`, poi rilettura subito. Provato
   coi dati finti (stati, conferme, note): ~16 MB, ~0% CPU, 0 processi. Da provare con l'utente sul
   Docker vero: le azioni e le pulizie (cambiano lo stato reale).
+  Niente più secondo clic (l'utente ha eliminato tutti i container senza volerlo): cestino, riquadri
+  del disco, `Pulisci reti…` e `Pulisci tutto…` mostrano al posto della plancia una domanda
+  (`Ask`, `Sheet`) con cosa va via per nome e misura, cosa resta, cosa si perde e come riaverlo
+  (`docker compose up -d` nella cartella del progetto, da `com.docker.compose.project.working_dir`;
+  `docker run`; pull o build delle immagini), `Annulla` e un tasto rosso che dice cosa fa; un clic
+  sul tasto entro 0,5 s dalla domanda non vale. Per le pulizie prima rilegge `/system/df` e
+  `/networks` (tasto in attesa fino ad allora). Calcolato come Docker: `system prune` toglie anche
+  le immagini dei container fermi; `network prune` toglie le reti senza endpoint, anche se un
+  container fermo ci sta, che poi non riparte (verificato nel sorgente di moby): la domanda lo
+  nomina. Riquadro Container: `N fermi`, non i MB. Tip su ogni tasto a icona (`Ferma db-1`,
+  `Riavvia api-1, db-1 e web-1 di shop`).
+  Tip nel motore (`Node::tip`, in Lua `tip`): col mouse fermo 0,6 s su un nodo di un popup,
+  un'etichetta sotto (sopra se non c'è posto), da una all'altra subito; via a un clic (finché il
+  mouse non va altrove), allo scroll e all'uscita. È un figlio `at` della radice del popup, aggiunto
+  da `render_popup` dopo la misura, quindi non cambia la misura del popup; testo a capo con
+  `ui::wrap`. Solo nei popup, non nella barra né nel peek. Provato coi dati finti sulla barra di
+  prova (it/en), con un comando temporaneo che mandava eventi del mouse al popup (tolto): domande,
+  annulla, conferma subito ignorata e dopo accettata, tip con ritardo e passaggio: ~22 MB, 0,13% CPU,
+  0 processi. Sulla barra vera dal 17/11/2026 (insieme a `devices`): popup coi container veri,
+  stats e disco letti (una cache di build vuota diceva `-0 MB`: la somma di niente è -0.0). Da
+  provare con l'utente: il mouse vero sui tip, e una pulizia vera.
 - `network` a plancia: in cima Wi-Fi (↻ e interruttore) con le reti vicine a riquadri e i servizi
   cablati con l'interruttore, sotto le metriche: la connessione col segnale (o la velocità di
   Ethernet), download e upload con gli ultimi 30 s a barre (contatori a 64 bit di `NET_RT_IFLIST2`),
