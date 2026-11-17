@@ -29,6 +29,11 @@ fn info(kind: &str) -> (&'static str, &'static str, &'static str) {
         "now_playing" => (t("In riproduzione", "Now Playing"), "play.circle.fill", t("Cosa suonano Music e Spotify (o qualunque app, con l'opzione), con un player nel popup.", "What Music and Spotify are playing (or any app, with the option), with a player in the popup.")),
         "system" => (t("Sistema", "System"), "cpu", t("CPU, GPU e memoria, colorate dal carico; nel popup anche i dischi.", "CPU, GPU and memory, colored by load; the disks too in the popup.")),
         "battery" => (t("Batteria", "Battery"), "battery.75percent", t("La carica, con un'icona per il suo stato.", "The charge, with an icon for its state.")),
+        "devices" => (
+            t("Dispositivi", "Devices"),
+            "computermouse.fill",
+            t("La batteria di mouse, tastiere, controller e cuffie, anche dietro un ricevitore o un cavo.", "The battery of mice, keyboards, controllers and headphones, also behind a receiver or a cable."),
+        ),
         "clock" => (t("Orologio", "Clock"), "clock.fill", t("Data e ora, con un calendario nel popup.", "Date and time, with a calendar in the popup.")),
         "audio" => ("Audio", "speaker.wave.2.fill", t("L'uscita e l'ingresso in uso, con il volume.", "The output and input in use, with their volume.")),
         "network" => (t("Rete", "Network"), "wifi", t("La VPN, la rete Wi-Fi o Ethernet.", "The VPN, the Wi-Fi network or Ethernet.")),
@@ -499,6 +504,23 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
             f.number_at(t("Arancione da", "Peach from"), None, &spot.k("sooner"), 15.0, mins);
             f.number_at(t("Rossa da", "Red from"), None, &spot.k("imminent"), 5.0, mins);
             &["soon", "sooner", "imminent"]
+        }
+        "devices" => {
+            f.group(Some(t("Nella barra", "In the bar")));
+            f.number_at(t("Quando scende a", "When it drops to"), Some(t("Un dispositivo collegato va nella barra da questa carica in giù, in percentuale", "A connected device goes in the bar from this charge down, in percent")), &spot.k("low"), 20.0, Num::new(0.0, 100.0, 1.0, 0));
+            f.toggle_at(t("Sempre tutti", "Always all of them"), Some(t("Ogni dispositivo collegato, con qualunque carica", "Every connected device, whatever its charge")), &spot.k("always"), false);
+            let pinned = spot.k("pinned");
+            member(f, t("Sempre i mouse e i trackpad", "Always mice and trackpads"), None, &pinned, "mouse");
+            member(f, t("Sempre le tastiere", "Always keyboards"), None, &pinned, "keyboard");
+            member(f, t("Sempre i controller", "Always controllers"), None, &pinned, "controller");
+            f.group(Some(t("Opzioni", "Options")));
+            f.toggle_at(
+                t("Ricevitori e cavi", "Receivers and cables"),
+                Some(t("Anche Razer, Logitech, ROG e lo Steam Controller dietro il loro ricevitore o un cavo, non solo il Bluetooth", "Razer, Logitech, ROG and the Steam Controller behind their receiver or a cable too, not just Bluetooth")),
+                &spot.k("receivers"),
+                true,
+            );
+            &["low", "always", "pinned", "receivers", "names"]
         }
         "notifications" => {
             notifications(f, &spot);

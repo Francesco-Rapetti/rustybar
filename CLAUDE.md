@@ -58,7 +58,9 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   lo spazio basta, dal più importante (`Given`: livello e passi risparmiati) (lo usa
   `App::bar_tree`, che disegna una forma solo quando serve misurarla).
 - `surface.rs`, `ui/` (`node.rs` albero dichiarativo, `layout.rs` flexbox, `render.rs` diff dei
-  layer con animazioni implicite), `gfx.rs` (testo, SF Symbols e icone in bitmap, con cache a due
+  layer con animazioni implicite), `gfx.rs` (testo, SF Symbols e icone in bitmap, più i simboli
+  che SF Symbols non ha, disegnati lì su pixel interi: `magictrackpad.fill`, `magickeyboard.fill`;
+  con cache a due
   generazioni ripulita dopo ogni render, e del tutto quando un popup si chiude, insieme alle pagine
   libere di malloc), `theme.rs`, `palette.rs` (i colori di un'immagine in Oklab e un tema fatto
   con quelli), `config.rs` (`rustybar.local.toml` unito sopra `rustybar.toml`),
@@ -75,7 +77,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `form.rs` i controlli (checkbox e campi numerici: `NSSwitch` e `NSSlider` portano il processo
   oltre 120 MB su macOS 26; sfondi con un layer, non `drawRect`), poi una pagina per file
   (`rustybar.rs`, `aerospace.rs` con i bordi, `other.rs`). Dati finti: `<mock>/settings/`.
-- `widgets/`: un file per widget, registrato in `widgets::create`. Il trait `Widget` ha `start`,
+- `widgets/`: un file per widget, registrato in `widgets::create` (più `hid.rs`, i protocolli HID
+  dei ricevitori per `devices`). Il trait `Widget` ha `start`,
   `bar`, `popup`, `peek`, `notice`, `ready`, `action(name, value, cx)` ed `event` (`Wake`,
   `ScreensChanged`, `Trigger`, `PopupOpened`, `PopupClosed`, `PeekOpened`, `PeekClosed`). `Cx` dà
   `redraw`, `close_popup`, `notice`, `after`, `every`,
@@ -477,6 +480,53 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   larghezze di `system` e `front_app`); primo frame 33 ms; 27 MB nel primo minuto, 0,63% CPU;
   poi, con l'utente che cambiava app, 34 MB e 1,23% (il vetro di `front_app`), ma 10 s di
   `sample` ~0,3%; 0 processi.
+- `devices` (chiesto dall'utente, come il widget `devices` di rustybar-windows, non di
+  SketchyBar; non nel layout di default): le batterie di mouse, tastiere, trackpad, controller e
+  cuffie. Pill: i collegati sotto `low` (20), i tipi di `pinned`, o tutti con `always`; per
+  ognuno tipo, nome corto (`short_name`: senza proprietario, marca e parole generiche; `names` per
+  i propri), barretta e numero col colore del livello, fulmine in carica, righe sottili fra uno e
+  l'altro; compatta tipi, barrette e fulmini; quelli che dormono attenuati. Popup: un riquadro per
+  collegato (badge del tipo, nome, marca · collegamento · stato, livello grande, una barra per
+  parte: metà di una tastiera divisa, auricolari e custodia; tinta quando è basso), poi
+  `Non collegati`, poi Impostazioni Bluetooth. Due fonti: l'elenco degli accessori di macOS
+  (`IOPSCopyPowerSourcesByType(4)`, lo stesso di `pmset -g accps`: Bluetooth, BLE col servizio
+  batteria, cuffie HFP, AirPods per parte) letto sul main thread (~0,1 ms) alle notifiche di
+  powerd (`notify_register_dispatch` su `accpowersources.attach/.source/.timeremaining` e
+  `powersources`, che su un MacBook arriva ogni minuto); e `hid.rs`, i protocolli di Windows
+  portati su IOKit HID (Razer a feature report da 90 byte, Logitech HID++ 2.0 con i registri di
+  Bolt e Unifying, ROG `12 01`/`12 07`, Steam Controller report 0x43) in `cx.background`:
+  all'avvio, 1 s dopo che IOKit dice che un'interfaccia di quei produttori va o viene, al
+  risveglio, all'apertura del popup e ogni 5 minuti se ce n'è una. Solo le interfacce di quei
+  quattro produttori, aperte senza esclusiva, mai una con una collezione tastiera (1,6)/(1,7):
+  così niente richiesta di Monitoraggio input. Sony e Xbox li lascia a macOS (gamecontrollerd),
+  non provato. Un dispositivo visto da tutte e due le fonti (stesso produttore e tipo) compare
+  una volta sola. Provato coi dati finti (it/en, screenshot del README) e coi dati veri sulla barra
+  di prova (`always = true`): trackpad Apple, occhiali audio BLE e una tastiera ROG in Bluetooth
+  da macOS, nessuna richiesta di permessi; dietro un ricevitore o un cavo una tastiera Razer è
+  trovata (14 ms) ma risponde 4 (timeout) e va in `Non collegati`. ~15 MB, 0,02% CPU, 0 processi
+  in 60 s; apertura e chiusura del popup ~50 ms di CPU; primo frame 36–43 ms. In 30 minuti nessun
+  livello è cambiato: da provare che `accpowersources.*` arrivino a un cambio di livello. Da
+  provare con l'utente: la tastiera Razer (cavo o HyperSpeed, accesa), il ricevitore ROG,
+  ricevitori Logitech, controller in macOS, AirPods (parti raggruppate), la pagina delle
+  impostazioni. Sulla barra vera dal 17/11/2026 (nei dotfiles prima di `battery`, opzioni di
+  default; build HEAD + docker + devices): pronto su tutti e due gli schermi, lettura dei
+  ricevitori 49–252 ms sul thread; 31 MB in 2 processi (con l'helper di `now_playing`), 0,32% CPU
+  nel primo minuto, che ha 2 processi brevi all'avvio; poi 70 s senza nessuno.
+  Icone dei modelli (chieste dall'utente): Magic Mouse `magicmouse.fill`, Magic Trackpad e Magic
+  Keyboard disegnati in `gfx` nello stile di `magicmouse.fill` (SF Symbols non li ha, nemmeno fra
+  quelli privati), riconosciuti dal vendor Apple o dal nome; occhiali (per macOS un `Headset`) dal
+  nome, `eyeglasses`. Gli schermi dell'utente sono a 1x: l'unità è `size / 14` arrotondata ai
+  pixel, tasti da 2 unità a 1 di distanza (la prima versione, 7 colonne in 22 pt, a 1x era
+  sfocata). Provati coi dati finti sulla barra di prova (pill a 1x ingrandita, badge del popup) e
+  sulla barra vera dal 17/11/2026 (trackpad e occhiali; la ROG resta `keyboard.fill`).
+  In carica senza che lo dica: via BLE (la ROG col cavo a un caricatore, non al Mac) macOS ha solo
+  il livello, senza `Is Charging` e con `Power Source State` = `Battery Power`. Quindi `rising`:
+  un dispositivo che non lo dice (`says_charging`) è in carica da 2 punti sopra il minimo da cui
+  è risalito (1 può tornare a riposo), finché non scende; senza la chiave, `AC Power` vale in
+  carica.
+  Il fulmine resta anche nella forma compatta (senza, da compatta la carica non si vedeva). Provato
+  sulla barra vera dal 17/11/2026 con la ROG al caricatore (sale di 1–3 punti al minuto): dopo un
+  riavvio, che azzera la memoria, fulmine in pill e popup ("in carica") entro 5 minuti.
 - Senza notch il gruppo `center` non è più fisso a metà (l'utente vedeva pill compatte e la `⋯`
   a destra con ~190 pt liberi a sinistra, sul monitor da 1920 pt): i lati si dividono lo spazio
   che lascia (`Room::Shared`, una corsia sola come senza gruppo centrale; prima `Split`, metà

@@ -18,9 +18,11 @@ pub mod audio;
 pub mod battery;
 pub mod claude;
 pub mod clock;
+pub mod devices;
 pub mod docker;
 pub mod events;
 pub mod front_app;
+pub mod hid;
 pub mod home;
 pub mod network;
 pub mod notifications;
@@ -333,7 +335,7 @@ pub trait Widget: Any {
 }
 
 /// The kinds `create` knows, in the order of the settings window's sidebar.
-pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "events", "clock", "notifications"];
+pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "devices", "events", "clock", "notifications"];
 
 /// The name among `known` that `name` is most likely a typo of: at most two letters off.
 pub fn closest<'a>(name: &str, known: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
@@ -371,6 +373,7 @@ pub fn create(kind: &str, options: &Options) -> Option<Box<dyn Widget>> {
         "apple" => Box::new(apple::Apple::new(options)),
         "aerospace" => Box::new(aerospace::Aerospace::new(options)),
         "battery" => Box::new(battery::Battery::default()),
+        "devices" => Box::new(devices::Devices::new(options)),
         "claude" => Box::new(claude::Claude::new(options)),
         "system" => Box::new(system::System::new(options)),
         _ => return None,

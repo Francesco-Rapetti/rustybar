@@ -82,6 +82,13 @@ large_width = 3840        # from this width a screen is "large"
 # storage_warning = 90    # a disk in the popup turns yellow from this percent used
 # storage_critical = 95   # and red from here
 #
+# [widgets.devices]       # not in the layout above: add it where you like
+# low = 20                # a connected device shows in the bar from this charge down
+# pinned = ["mouse", "keyboard", "controller"]   # these kinds always show, whatever the charge
+# always = false          # every connected device shows
+# names = { "Razer Naga V2 Pro" = "Desk" }       # your names for the bar, by the full name
+# receivers = true        # Razer, Logitech, ROG and the Steam Controller behind a receiver too
+#
 # [widgets.events]
 # soon = 30               # minutes before an event when its time turns yellow
 # sooner = 15             # peach

@@ -21,6 +21,7 @@ processes a minute.
 | `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then), with a line along the bottom for where the track is; hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music in a ring of where the track is | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track |
 | `system` | CPU, GPU and memory, colored by load and memory pressure | A dashboard: CPU and GPU with the last minute as a graph; memory split into app, wired and compressed; each disk with its used, available and purgeable space (a click opens it in the Finder); the apps that use the most CPU, GPU or memory; Activity Monitor and Storage settings |
 | `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
+| `devices` | The batteries of the mice, trackpads, keyboards, controllers and headphones that run low, or of the kinds you pin, side by side: the kind, a short name, a small bar and the level, colored by how full it is, and a bolt while it charges; one asleep behind its receiver stays dimmed. Not in the default layout | A tile for each connected device: its kind, name, maker, how it's connected and whether it charges, the level big and as a bar (one for each half of a split keyboard, each earbud and the case), tinted when it runs low; then the others, and Bluetooth settings |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
 | `audio` | The output and the input in use, with the battery of Bluetooth devices and a slider with the volume of each (`sliders = false` hides them), the first thing to go when the bar has no room; the Mac's own speakers and microphone, or both halves of a headset, show as one | A dashboard: the output and input volume, each with its level and a slider; tiles for the devices to switch to and for the paired Bluetooth headphones and speakers to connect or disconnect |
 | `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph and the VPN; then Details, closed until clicked: on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click |
@@ -55,17 +56,19 @@ Each widget with its popup, on made-up data (see below):
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/events.png" width="392" alt="The next event in a tile, with its calendar, room, guests and Join Google Meet, an all-day event as a chip, then the day: a past standup, a red line at the time it is now, the design review and lunch, each with the color of its calendar"><br><code>events</code><br><br><img src="docs/screenshots/aerospace.png" width="348" alt="AeroSpace workspaces with the icons of their windows"><br><code>aerospace</code><br><br><img src="docs/screenshots/front_app.png" width="121" alt="The app in front"><br><code>front_app</code></td>
-<td align="center" valign="top"><img src="docs/screenshots/now_playing.png" width="343" alt="A player for Music in the colors of its cover, navy with golden controls: the cover, title, artist and album, a bar to seek, shuffle, previous, pause, next and repeat, the volume, and a switch to Spotify"><br><code>now_playing</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/now_playing.png" width="343" alt="A player for Music in the colors of its cover, navy with golden controls: the cover, title, artist and album, a bar to seek, shuffle, previous, pause, next and repeat, the volume, and a switch to Spotify"><br><code>now_playing</code><br><br><img src="docs/screenshots/devices.png" width="392" alt="Earbuds at 15% and a keyboard at 8% in the bar; in the popup a tile for each device, with its kind in a round badge, name and link, the level big and as a bar: a controller, earbuds on an orange tile with each earbud and the case, a mouse charging on its cable, a split keyboard with a bar for each half, a trackpad, a keyboard at 8% on a red tile, a mouse asleep behind its receiver, dimmed; then a controller not connected, and Bluetooth Settings"><br><code>devices</code></td>
 </tr>
 </table>
 
 Widgets don't poll what macOS can tell them: AeroSpace events come from its socket, the battery
 from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, what plays from the
 notifications of Music and Spotify, the sound from CoreAudio
-listeners, the network from the System Configuration store, the calendars from EventKit, Home
-Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
+listeners, the batteries of the devices from powerd's notifications and IOKit's (a receiver
+plugged in or out), the network from the System Configuration store, the calendars from EventKit,
+Home Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
 from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
-memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility), and only while
+memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility), the batteries
+behind a receiver or a cable every 5 minutes while one is plugged in, and only while
 their popups are open the network's traffic and Wi-Fi link every second and, with its details
 open, a ping to the router every 5, the battery's temperature and power every 2 seconds, and the
 disks every 10. The bar is redrawn only when a value changes.
@@ -342,6 +345,42 @@ hover = true           # with the mouse on it, the pill grows down with quick co
 other_apps = false     # any app, through a perl process always running
 cover_colors = true    # the popup in the colors of the cover
 ```
+
+### Devices
+
+The `devices` widget isn't in the default layout: add it where you like. Its pill shows the
+connected devices that run low (`low`, 20% by default), the kinds of `pinned` always (`pinned =
+["mouse", "keyboard", "controller"]`; a trackpad is a mouse), or every connected one with
+`always = true`. Each has its kind (Apple's Magic Mouse, Trackpad and Keyboard and glasses that
+play sound their own), a short name (the model without its owner and maker: *Naga*,
+*Azoth*, *MX Master 4*, *Magic Trackpad*; or yours, `names = { "Razer Naga V2 Pro" = "Desk"
+}`), a small bar and the level: green above half, yellow down to a quarter, orange down to a
+tenth, then red, the number in that color from yellow down; a bolt while it charges. Earbuds show
+the lower of the two. Compact: the kinds, the bars and the bolts.
+
+The batteries come from two places:
+
+- **macOS's own list**, the one of `pmset -g accps` and the Batteries widget: what tells its
+  battery over Bluetooth (Apple's mice, keyboards and trackpads, the Bluetooth Low Energy ones with
+  the battery service, headsets, AirPods with each earbud and the case) and the game controllers
+  macOS supports. powerd says when it changes; reading it takes about 0.1 ms. Over Bluetooth Low
+  Energy a device tells its level and nothing else: it shows charging once the level has gone up
+  2 points (a battery at rest can come back 1), until it goes down again. A device that goes
+  away stays in the popup, under *Not connected*, with the level it had, until the bar starts
+  again.
+- **Receivers and cables**, which macOS doesn't know, each maker's own way, all of it questions
+  the device answers and never a setting: Razer (cable and HyperSpeed receivers), Logitech (HID++
+  through Bolt, Unifying and Lightspeed receivers; the receiver knows the name of a mouse that
+  sleeps), ASUS ROG (SpeedNova and Omni receivers, both halves of a split keyboard), the Steam
+  Controller (2026). One behind a receiver that sleeps (a keyboard left alone, a mouse that's off)
+  stays in the bar dimmed, with the level it had when it last answered since the bar started.
+  Only the HID interfaces of these makers are opened, and never one with a keyboard on it, so
+  macOS asks for no permission. They're read on a worker thread at the start, a second after
+  IOKit says one came or went, on wake, when the popup opens and every 5 minutes while one is
+  plugged in (a few ms; up to a few seconds of waiting for a Steam Controller's battery among its
+  other reports). `receivers = false` keeps macOS's list alone.
+
+A device seen in both (paired over Bluetooth, on its receiver now) shows once.
 
 ### Docker
 

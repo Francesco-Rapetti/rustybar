@@ -1,4 +1,5 @@
-//! Rasterization of text, SF Symbols and app icons into CGImages that CALayers show as contents.
+//! Rasterization of text, SF Symbols (and the few drawn here that it lacks) and app icons into
+//! CGImages that CALayers show as contents.
 //! Everything is drawn at the pixel scale of the screen it goes on and cached, so a layer that
 //! shows the same text again (a digit of the calendar, the label of a pill) reuses the bitmap.
 
@@ -14,10 +15,10 @@ use objc2_app_kit::{
     NSFontWeightMedium, NSFontWeightRegular, NSFontWeightSemibold, NSGraphicsContext, NSImage,
     NSImageSymbolConfiguration, NSWorkspace,
 };
-use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType, CGPoint, CGSize};
+use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextCreateImage, CGBlendMode, CGColor, CGColorSpace, CGContext,
-    CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
+    CGImage, CGImageAlphaInfo, CGImageByteOrderInfo, CGMutablePath,
 };
 use objc2_core_text::{CTFont, CTLine, kCTFontAttributeName, kCTForegroundColorAttributeName};
 use objc2_foundation::{NSRect, NSSize, NSString};
@@ -350,12 +351,21 @@ fn symbol_image(name: &str, size: f64, weight: Weight) -> Option<Retained<NSImag
 ///
 /// `laptopcomputer+speaker.wave.2.fill+mic.fill` is a symbol with badges: the others, small, at
 /// its bottom right, cut out of it with a gap around them (a Mac that plays and records).
+///
+/// `magictrackpad.fill` and `magickeyboard.fill` aren't SF Symbols: they're drawn here (see
+/// `drawn_symbol`), without badges.
 pub fn symbol(name: &str, size: f64, weight: Weight, color: Rgba, scale: f64) -> Option<Bitmap> {
     let key = Key::Symbol(name.to_string(), (size * 100.0) as u32, weight, color.key(), (scale * 100.0) as u32);
     cached(key, || {
         let _mtm = MainThreadMarker::new()?;
         let mut names = name.split('+');
         let base = names.next()?;
+        if let Some((u, w, h, draw)) = drawn_symbol(base, size, scale) {
+            let ctx = bitmap_context(w, h, scale)?;
+            draw(&ctx, u, weight);
+            tint(&ctx, w, h, color);
+            return finish(&ctx, w, h);
+        }
         let image = symbol_image(base, size, weight)?;
         let badges: Vec<Retained<NSImage>> = {
             let names: Vec<&str> = names.collect();
@@ -405,6 +415,67 @@ pub fn symbol(name: &str, size: f64, weight: Weight, color: Rgba, scale: f64) ->
         tint(&ctx, w, h, color);
         finish(&ctx, w, h)
     })
+}
+
+/// Draws a symbol in black, with `u` its unit: a point of a symbol of 14 points.
+type Draw = fn(&CGContext, f64, Weight);
+
+/// The symbols SF Symbols doesn't have, drawn in the style of its `magicmouse.fill` and about as
+/// big as a symbol of `size` points: Apple's Magic Trackpad, a pad with the Apple logo cut out low
+/// as on the mouse, and Magic Keyboard, with its half-height function keys and the arrows as an
+/// inverted T. On whole pixels, so they stay sharp on a screen at 1x too: the unit is `size / 14`
+/// rounded to pixels, and every key is a whole number of units (2 wide, 1 apart). Their unit, size
+/// and how to draw them.
+fn drawn_symbol(name: &str, size: f64, scale: f64) -> Option<(f64, f64, f64, Draw)> {
+    let u = (size / 14.0 * scale).round().max(1.0) / scale;
+    match name {
+        "magictrackpad.fill" => Some((u, 17.0 * u, 12.0 * u, magic_trackpad)),
+        "magickeyboard.fill" => Some((u, 21.0 * u, 14.0 * u, magic_keyboard)),
+        _ => None,
+    }
+}
+
+fn magic_trackpad(ctx: &CGContext, u: f64, weight: Weight) {
+    rounded(ctx, 0.0, 0.0, 17.0 * u, 12.0 * u, 2.4 * u);
+    CGContext::fill_path(Some(ctx));
+    let Some(logo) = symbol_image("apple.logo", 4.2 * u, weight) else { return };
+    let NSSize { width, height } = logo.size();
+    let ns_ctx = NSGraphicsContext::graphicsContextWithCGContext_flipped(ctx, false);
+    NSGraphicsContext::saveGraphicsState_class();
+    NSGraphicsContext::setCurrentContext(Some(&ns_ctx));
+    let place = NSRect::new(CGPoint::new(8.5 * u - width / 2.0, 3.7 * u - height / 2.0), CGSize::new(width, height));
+    logo.drawInRect_fromRect_operation_fraction(place, NSRect::ZERO, objc2_app_kit::NSCompositingOperation::DestinationOut, 1.0);
+    NSGraphicsContext::restoreGraphicsState_class();
+}
+
+fn magic_keyboard(ctx: &CGContext, u: f64, _: Weight) {
+    rounded(ctx, 0.0, 0.0, 21.0 * u, 14.0 * u, 2.4 * u);
+    CGContext::fill_path(Some(ctx));
+    // The keys are holes, six columns: from the top the function keys, two rows, the bottom row
+    CGContext::set_blend_mode(Some(ctx), CGBlendMode::Clear);
+    let r = 0.5 * u;
+    let x = |i: usize| (2.0 + 3.0 * i as f64) * u;
+    for i in 0..6 {
+        rounded(ctx, x(i), 11.0 * u, 2.0 * u, u, r);
+        rounded(ctx, x(i), 8.0 * u, 2.0 * u, 2.0 * u, r);
+        rounded(ctx, x(i), 5.0 * u, 2.0 * u, 2.0 * u, r);
+    }
+    rounded(ctx, x(0), 2.0 * u, 2.0 * u, 2.0 * u, r);
+    rounded(ctx, x(1), 2.0 * u, 5.0 * u, 2.0 * u, r);
+    // The arrows: ← and → low, ↑ and ↓ as one key between them
+    rounded(ctx, x(3), 2.0 * u, 2.0 * u, u, r);
+    rounded(ctx, x(4), 2.0 * u, 2.0 * u, 2.0 * u, r);
+    rounded(ctx, x(5), 2.0 * u, 2.0 * u, u, r);
+    CGContext::fill_path(Some(ctx));
+    CGContext::set_blend_mode(Some(ctx), CGBlendMode::Normal);
+}
+
+/// Adds a rounded rectangle to the path of `ctx`; CoreGraphics takes radii up to half a side.
+fn rounded(ctx: &CGContext, x: f64, y: f64, w: f64, h: f64, r: f64) {
+    let path = CGMutablePath::new();
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    unsafe { CGMutablePath::add_rounded_rect(Some(&path), ptr::null(), CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)), r, r) };
+    CGContext::add_path(Some(ctx), Some(&path));
 }
 
 /// The icon of the app with `bundle_id` at `size` points square, as in the Dock.

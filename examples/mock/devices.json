@@ -1,0 +1,12 @@
+{
+  "devices": [
+    {"name": "Glide Pro", "category": "mouse", "link": "cable", "battery": 100, "charging": true, "connected": true},
+    {"name": "Tempo Keys 75", "category": "keyboard", "link": "receiver", "battery": 8, "connected": true},
+    {"name": "Split 80", "category": "keyboard", "link": "receiver", "battery": 53, "second": 48, "connected": true},
+    {"name": "Arcade Pad", "category": "controller", "link": "bluetooth", "battery": 91, "connected": true},
+    {"name": "Aurora Buds", "category": "headphones", "link": "bluetooth", "left": 15, "right": 22, "case": 60, "connected": true},
+    {"name": "Studio Trackpad", "category": "trackpad", "link": "bluetooth", "battery": 64, "connected": true},
+    {"name": "Drift Mouse", "category": "mouse", "link": "receiver", "battery": 25, "connected": false, "asleep": true, "read": "18:42"},
+    {"name": "Nimbus Pad", "category": "controller", "link": "bluetooth", "connected": false}
+  ]
+}

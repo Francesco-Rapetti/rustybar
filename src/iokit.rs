@@ -89,6 +89,22 @@ impl Entry {
         self.property(key)?.downcast::<NSString>().ok().map(|s| s.to_string())
     }
 
+    /// A data property's bytes, e.g. a HID device's report descriptor.
+    pub fn data(&self, key: &str) -> Option<Vec<u8>> {
+        self.property(key)?.downcast::<objc2_foundation::NSData>().ok().map(|d| d.to_vec())
+    }
+
+    /// The object itself, for IOKit calls that take it (`IOHIDDeviceCreate`); still released
+    /// when the entry is dropped.
+    pub fn object(&self) -> u32 {
+        self.0
+    }
+
+    /// An object an IOKit call gave us (an iterator's next), released when the entry is dropped.
+    pub fn from_object(object: u32) -> Entry {
+        Entry(object)
+    }
+
     /// The children of the entry in the service plane, e.g. the clients of a GPU.
     pub fn children(&self) -> Vec<Entry> {
         let mut it = 0u32;
