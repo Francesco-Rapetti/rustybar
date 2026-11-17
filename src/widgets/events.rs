@@ -424,8 +424,8 @@ impl Events {
                     .align(Align::Start)
                     .width(hours)
                     .key("hours"),
-                Node::column(text).gap(1.0).align(Align::Start).key("text"),
-                Node::spacer(),
+                // Growing instead of a spacer, which would add a gap that `names` doesn't leave
+                Node::column(text).gap(1.0).align(Align::Start).grow().key("text"),
             ];
             if any_meet {
                 row.push(match &e.meet {
