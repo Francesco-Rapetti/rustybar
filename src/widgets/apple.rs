@@ -1,18 +1,20 @@
 //! The Apple menu, which the bar covers: the apple opens its commands, with the same texts and
 //! shortcuts. They run in-process (Apple events to loginwindow, the sleep of IOKit, the lock of
-//! login.framework), so a click starts no process. Last, under them, the settings window of the
-//! dotfiles (see `settings`).
+//! login.framework), so a click starts no process. Under them, with a `fn_keys` in the bar, the
+//! switch of the function keys' mode, and fn beside the logo while they're standard keys if it
+//! asks for it; last, the settings window of the dotfiles (see `settings`).
 //! Options: `icon` (an SF Symbol, "apple.logo" by default). With made-up data (see `mock`) the
 //! name is the `user` of `apple.json` and the commands do nothing.
 
 use serde::Deserialize;
 
+use super::fn_keys::{self, Mark};
 use super::{Cx, Rx, Widget};
 use crate::config::Options;
 use crate::gfx::Weight;
 use crate::i18n::t;
 use crate::runtime;
-use crate::ui::Node;
+use crate::ui::{Kind, Node};
 
 pub struct Apple {
     icon: String,
@@ -41,9 +43,14 @@ impl Apple {
 impl Widget for Apple {
     fn bar(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
+        let mut children = vec![Node::symbol(&self.icon, 16.0, Weight::Semibold, th.text).key("logo")];
+        // F1, F2… are standard keys (see `fn_keys`): fn up beside the logo, as an exponent
+        if fn_keys::mark(Mark::Apple, rx.notch_island).is_some() {
+            children.push(Node::row(vec![fn_keys::label(th, 10.0)]).padding(0.0, 0.0, 9.0, 1.0).key("fn"));
+        }
         // No pill: the logo stands on the desktop, as in the menu bar
         Some(
-            Node::row(vec![Node::symbol(&self.icon, 16.0, Weight::Semibold, th.text)])
+            Node::row(children)
                 .key(rx.name)
                 .height(th.pill_height)
                 .padding(0.0, 6.0, 0.0, 6.0)
@@ -74,8 +81,11 @@ impl Widget for Apple {
                     row("lock", t("Blocca schermo", "Lock Screen").into(), Some("⌃⌘Q")),
                     row("log_out", log_out, Some("⇧⌘Q")),
                     rx.divider().key("d4"),
-                    row("settings", t("Impostazioni dotfiles…", "Dotfiles Settings…").into(), None),
-                ],
+                ]
+                .into_iter()
+                .chain(fn_row(rx).into_iter().flat_map(|r| [r, rx.divider().key("d5")]))
+                .chain([row("settings", t("Impostazioni dotfiles…", "Dotfiles Settings…").into(), None)])
+                .collect(),
             )
             .gap(0.0)
             .padding(4.0, 4.0, 4.0, 4.0),
@@ -107,6 +117,16 @@ impl Widget for Apple {
     }
 
     crate::any_widget!();
+}
+
+/// The switch of the function keys' mode (see `fn_keys`), with its hotkey, when a `fn_keys` is in
+/// the bar. It stays open, as a switch: the popup shows the new mode.
+fn fn_row(rx: &Rx) -> Option<Node> {
+    let th = rx.theme;
+    let (on, action, combo) = fn_keys::switch()?;
+    let mut right: Vec<Node> = combo.map(|c| Node::text(c, th.font_with(Weight::Medium, 12.0), th.subtext).key("combo")).into_iter().collect();
+    right.push(Node::new(Kind::Toggle { on, color: th.primary, track: th.surface }).key("toggle"));
+    Some(rx.row_button(vec![Node::text(t("Tasti F1, F2… standard", "F1, F2… as standard keys"), th.font(), th.text).key("title")], right, action).key("fn_keys"))
 }
 
 /// Sends loginwindow the Apple event the Apple menu sends: it shows the Force Quit window or asks

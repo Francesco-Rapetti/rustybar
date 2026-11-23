@@ -3,7 +3,8 @@
 //! a darker tile, the one in fullscreen with the fullscreen symbol, and the binding mode while it
 //! isn't main. A click on a number shows that workspace, on an icon focuses that window, on the
 //! mode goes back to main. Compact, when the bar has no room for the rest, only the focused
-//! workspace has its icons: the others are their number.
+//! workspace has its icons: the others are their number. While F1, F2… are standard keys and
+//! `fn_keys` asks for it, an F after the workspaces, as a mode, which a click switches back.
 //!
 //! RustyBar talks to AeroSpace's server socket, as its CLI does, so following it starts no
 //! process: one connection receives the events (`subscribe --all`), and each change asks for the
@@ -26,6 +27,7 @@ use objc2_core_graphics::{CGWindowListCopyWindowInfo, CGWindowListOption};
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, ns_string};
 use serde::Deserialize;
 
+use super::fn_keys::{self, Mark};
 use super::{Cx, Event, Rx, Widget};
 use crate::config::Options;
 use crate::gfx::Weight;
@@ -271,6 +273,20 @@ impl Widget for Aerospace {
             return None;
         }
         let selected = groups.iter().any(|g| g.key.as_deref() == Some(&format!("ws{}", self.focused_ws))).then(|| format!("ws{}", self.focused_ws));
+        let mut groups = groups;
+        // F1, F2… are standard keys (see `fn_keys`): an F after the workspaces, as a mode of
+        // AeroSpace would be; a click switches back
+        if let Some(action) = fn_keys::mark(Mark::Aerospace, rx.notch_island) {
+            groups.push(
+                Node::row(vec![Node::text("F", th.font_with(Weight::Bold, 12.0), th.primary)])
+                    .key("fn")
+                    .height(18.0)
+                    .padding(0.0, 6.0, 0.0, 6.0)
+                    .radius(9.0)
+                    .border(1.0, th.primary)
+                    .click(action),
+            );
+        }
         let spaces = rx.pill(groups).key("spaces").gap(0.0).padding(0.0, 3.0, 0.0, 3.0).selected(selected, th.primary);
         let mut row = vec![spaces];
         if self.mode != "main" && !self.mode.is_empty() {

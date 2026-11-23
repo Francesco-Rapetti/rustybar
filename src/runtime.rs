@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchTime};
 use objc2::rc::Retained;
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::NSWorkspace;
-use objc2_foundation::{NSString, NSTimer, NSURL};
+use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSObject, NSString, NSTimer, NSURL};
 
 use crate::app::{self, App};
 
@@ -55,6 +56,55 @@ impl Timer {
 impl Drop for Timer {
     fn drop(&mut self) {
         self.0.invalidate();
+    }
+}
+
+pub struct ListenerIvars {
+    f: Box<dyn Fn(&NSNotification)>,
+}
+
+define_class!(
+    /// Gets a distributed notification (one another process posts) and calls its closure.
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = ListenerIvars]
+    pub struct ListenerObserver;
+
+    impl ListenerObserver {
+        #[unsafe(method(notified:))]
+        fn notified(&self, n: &NSNotification) {
+            (self.ivars().f)(n);
+        }
+    }
+);
+
+/// Listens to a distributed notification until dropped, on the main thread. Delivered at once: by
+/// default they wait while the app isn't active, and RustyBar never is.
+pub struct Listener(Retained<ListenerObserver>);
+
+impl Listener {
+    pub fn new(mtm: MainThreadMarker, name: &str, f: impl Fn(&NSNotification) + 'static) -> Listener {
+        let this = ListenerObserver::alloc(mtm).set_ivars(ListenerIvars { f: Box::new(f) });
+        let observer: Retained<ListenerObserver> = unsafe { msg_send![super(this), init] };
+        let center = NSDistributedNotificationCenter::defaultCenter();
+        unsafe {
+            let _: () = msg_send![
+                &*center,
+                addObserver: &*observer,
+                selector: sel!(notified:),
+                name: &*NSString::from_str(name),
+                object: Option::<&NSString>::None,
+                suspensionBehavior: 4usize // NSNotificationSuspensionBehaviorDeliverImmediately
+            ];
+        }
+        Listener(observer)
+    }
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        let o: &NSObject = &self.0;
+        unsafe { NSDistributedNotificationCenter::defaultCenter().removeObserver(o) };
     }
 }
 

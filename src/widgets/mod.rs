@@ -22,6 +22,7 @@ pub mod clock;
 pub mod devices;
 pub mod docker;
 pub mod events;
+pub mod fn_keys;
 pub mod front_app;
 pub mod hid;
 pub mod home;
@@ -81,12 +82,15 @@ pub struct Rx<'a> {
     /// an extension of the notch, with `island`, and the bar puts it around the notch. Its peek,
     /// popup and notice then grow out of it, on the notch's black.
     pub island: Option<Island>,
+    /// The bar of this screen has an island (see `island`), which is drawn before its sides: what
+    /// the island shows needn't show again beside it (`fn_keys`).
+    pub notch_island: bool,
 }
 
 impl<'a> Rx<'a> {
     pub fn new(name: &'a str, theme: &'a Theme, display: &'a DisplayInfo, form: Form, popup_open: bool) -> Self {
         let compact = form == Form::Compact;
-        Rx { name, theme, display, compact, slim: compact || form == Form::Slim, popup_open, spare: 0.0, island: None }
+        Rx { name, theme, display, compact, slim: compact || form == Form::Slim, popup_open, spare: 0.0, island: None, notch_island: false }
     }
 
     /// The widget as an extension of the notch, with `left` beside it on the left and `right` on
@@ -337,7 +341,7 @@ pub trait Widget: Any {
 }
 
 /// The kinds `create` knows, in the order of the settings window's sidebar.
-pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "devices", "events", "clock", "notifications"];
+pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "devices", "fn_keys", "events", "clock", "notifications"];
 
 /// The name among `known` that `name` is most likely a typo of: at most two letters off.
 pub fn closest<'a>(name: &str, known: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
@@ -376,6 +380,7 @@ pub fn create(kind: &str, options: &Options) -> Option<Box<dyn Widget>> {
         "aerospace" => Box::new(aerospace::Aerospace::new(options)),
         "battery" => Box::new(battery::Battery::default()),
         "devices" => Box::new(devices::Devices::new(options)),
+        "fn_keys" => Box::new(fn_keys::FnKeys::new(options)),
         "claude" => Box::new(claude::Claude::new(options)),
         "system" => Box::new(system::System::new(options)),
         _ => return None,

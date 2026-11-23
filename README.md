@@ -15,13 +15,14 @@ processes a minute.
 
 | Widget | What it shows | Popup |
 | --- | --- | --- |
-| `apple` | The Apple logo | The Apple menu: About This Mac, Force Quit, Sleep, Restart, Shut Down, Lock Screen, Log Out, and last Dotfiles Settings (see [Settings window](#settings-window)) |
+| `apple` | The Apple logo | The Apple menu: About This Mac, Force Quit, Sleep, Restart, Shut Down, Lock Screen, Log Out, the switch of the function keys with a `fn_keys` in the bar (see [Function keys](#function-keys)), and last Dotfiles Settings (see [Settings window](#settings-window)) |
 | `aerospace` | [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspaces with the icons of their windows in on-screen order, the focused one under a sliding highlight, the binding mode | — (clicks switch workspace, focus a window, leave the mode) |
 | `front_app` | The app in front | — |
 | `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then), with a line along the bottom for where the track is; hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music in a ring of where the track is. During a Google Meet, Slack or Teams call, the call instead: the meeting, the camera and the mic | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track. During a call: the mic, the camera, the raised hand, the call brought to the front and Leave |
 | `system` | CPU, GPU and memory, colored by load and memory pressure | A dashboard: CPU and GPU with the last minute as a graph; memory split into app, wired and compressed; each disk with its used, available and purgeable space (a click opens it in the Finder); the apps that use the most CPU, GPU or memory; Activity Monitor and Storage settings |
 | `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `devices` | The batteries of the mice, trackpads, keyboards, controllers and headphones that run low, or of the kinds you pin, side by side: the kind, a short name, a small bar and the level, colored by how full it is, and a bolt while it charges; one asleep behind its receiver stays dimmed. Not in the default layout | A tile for each connected device: its kind, name, maker, how it's connected and whether it charges, the level big and as a bar (one for each half of a split keyboard, each earbud and the case), tinted when it runs low; then the others, and Bluetooth settings |
+| `fn_keys` | A mark while F1, F2… are standard function keys (so that play/pause, volume and brightness want fn), where you choose: a pill like the fn key, a dot, fn beside the Apple logo or in the notch's island, an F after AeroSpace's workspaces, a tab at the edge of the screen. Hidden the rest of the time; a click switches back. Not in the default layout | — (under the mouse, the key or the dot grows with a switch) |
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
 | `audio` | The output and the input in use, with the battery of Bluetooth devices and a slider with the volume of each (`sliders = false` hides them), the first thing to go when the bar has no room; the Mac's own speakers and microphone, or both halves of a headset, show as one | A dashboard: the output and input volume, each with its level and a slider; tiles for the devices to switch to and for the paired Bluetooth headphones and speakers to connect or disconnect |
 | `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph and the VPN; then Details, closed until clicked: on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click |
@@ -61,7 +62,8 @@ Each widget with its popup, on made-up data (see below):
 </table>
 
 Widgets don't poll what macOS can tell them: AeroSpace events come from its socket, the battery
-from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, what plays from the
+from IOKit and PowerUIAgent notifications, the front app from NSWorkspace, the mode of the
+function keys from Keyboard Settings' notification, what plays from the
 notifications of Music and Spotify, the sound from CoreAudio
 listeners, the batteries of the devices from powerd's notifications and IOKit's (a receiver
 plugged in or out), the network from the System Configuration store, the calendars from EventKit,
@@ -429,6 +431,46 @@ The batteries come from two places:
 
 A device seen in both (paired over Bluetooth, on its receiver now) shows once.
 
+### Function keys
+
+With *Use F1, F2, etc. keys as standard function keys* on in Keyboard Settings, the media keys
+want fn. The `fn_keys` widget shows when they're on, and switches them quickly; it isn't in the
+default layout: add it where you like (its place matters for its own pill and dot only).
+
+```toml
+[widgets.fn_keys]
+show = ["key", "apple", "edge"]   # any of: key, dot, apple, island, aerospace, edge
+hotkey = "ctrl-alt-f"
+apps = ["com.example.game"]       # F1, F2… standard while one of these is in front
+media_apps = ["com.spotify.client"] # the special features while one of these is
+```
+
+While F1, F2… are standard keys, the marks of `show` (the `key` by default) say so:
+
+| Mark | Where |
+| --- | --- |
+| `key` | Its own pill, drawn as the fn key: fn and the globe. A dot when the bar has no room |
+| `dot` | Its own: a dot in the theme's accent |
+| `apple` | fn up beside the Apple logo |
+| `island` | fn beside the bars of `now_playing`'s island, on a screen with a notch, while something plays. There it's the only mark: the others show on the screens with no island |
+| `aerospace` | An F after AeroSpace's workspaces, as one of its modes |
+| `edge` | A tab at the left edge of the screen; the bar moves aside for it |
+
+Each of them goes when the special features are back. To switch: a click on the key, the dot,
+the island's fn, AeroSpace's F or the tab; the key or the dot under the mouse (`hover = false` turns it off),
+which grows with a switch, the shortcut and the app it's on for; the switch in the Apple menu;
+`hotkey`, a shortcut of RustyBar's own from any app (`ctrl-alt-f`, `cmd-shift-f12`…: modifiers and a
+key by its place on a US keyboard, as AeroSpace writes them; it asks for no permission);
+`rustybar msg trigger fn_keys` (with `mode=on` or `mode=off` to set one), for an AeroSpace
+binding; and the widget's page in the settings window. With `apps` and `media_apps`, an app in
+front gets the mode it wants, and the others the one you switched by hand; a switch while one of
+those apps is in front lasts until another comes to the front.
+
+The mode is read and set in-process, through the parameters of IOHIDSystem (`HIDFKeyMode`, what
+the keyboards follow), and Keyboard Settings' notification says when it changes: no timer, no
+process. Switching also writes the preference Keyboard Settings shows and posts that
+notification, so the settings follow.
+
 ### Docker
 
 The `docker` widget finds the Engine API socket of Docker Desktop, OrbStack, colima, Rancher
@@ -523,7 +565,8 @@ takes more than 250 ms is stopped. Anything slow goes through `rb.exec`.
 
 `rustybar check` loads the config and the Lua widgets and reports the first error, and every
 name in `[layout]` that is no widget, with the one most likely meant (`notification`:
-`notifications`). The bar skips such a name, and its log says the same.
+`notifications`), and a mark or a hotkey of `fn_keys` it doesn't know. The bar skips such a
+name, and its log says the same.
 
 ## Settings window
 
@@ -559,7 +602,8 @@ The window runs in a process of its own, which ends when it closes: AppKit's con
 ## Made-up data
 
 With `RUSTYBAR_MOCK` set to a folder, every widget but the clock reads `<folder>/<widget>.json`
-instead of your Mac, and their actions do nothing, for screenshots and demos.
+instead of your Mac, and their actions do nothing (`fn_keys` switches its own made-up mode, never
+the Mac's), for screenshots and demos.
 [examples/mock](examples/mock) has one file for each, and the settings window edits the configs in
 [examples/mock/settings](examples/mock/settings) and applies nothing. AppKit's own flags pick
 another language:
@@ -586,7 +630,14 @@ rustybar secret set home-assistant   save the Home Assistant token, read from st
 ```
 
 For example, AeroSpace bindings that move windows can run
-`rustybar msg trigger aerospace_windows` so the workspaces update at once.
+`rustybar msg trigger aerospace_windows` so the workspaces update at once, and one can switch the
+function keys with `rustybar msg trigger fn_keys` (see [Function keys](#function-keys)):
+
+```toml
+# ~/.config/aerospace/aerospace.toml
+[mode.main.binding]
+alt-shift-f = 'exec-and-forget rustybar msg trigger fn_keys'
+```
 
 ## License
 

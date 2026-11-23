@@ -38,7 +38,8 @@
 //! of the screen as it does. Left of it the cover, the title and the artist, which take the room
 //! the bar leaves there (the cover alone when compact, the first in the bar to give way); right of
 //! it bars that move to the music in the cover's liveliest color, or
-//! the pause sign, in a ring of where the track is. Under the mouse it grows down with the peek, on
+//! the pause sign, in a ring of where the track is; before them fn while F1, F2… are standard keys,
+//! if `fn_keys` asks for it there. Under the mouse it grows down with the peek, on
 //! a click into the player, in the cover's colors on the notch's black, and by itself for a moment
 //! when the track changes, with the cover bigger (see `notice`): not for the first one, nor with
 //! the mouse on it.
@@ -66,15 +67,15 @@ use std::ptr::NonNull;
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{NSObject, ProtocolObject};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2::runtime::ProtocolObject;
+use objc2::MainThreadMarker;
 use objc2_app_kit::{
     NSRunningApplication, NSWorkspace, NSWorkspaceApplicationKey, NSWorkspaceDidLaunchApplicationNotification,
     NSWorkspaceDidTerminateApplicationNotification,
 };
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGBitmapContextCreate, CGColorSpace, CGContext, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo, kCGColorSpaceSRGB};
-use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSNumber, NSObjectProtocol, NSString};
+use objc2_foundation::{NSNotification, NSNumber, NSObjectProtocol, NSString};
 use serde::Deserialize;
 
 use super::call::{self, Blocked, Call, Control, Found, Service, Target};
@@ -291,34 +292,6 @@ struct Mock {
     queue: Vec<Player>,
 }
 
-pub struct ObserverIvars {
-    f: Box<dyn Fn(&NSNotification)>,
-}
-
-define_class!(
-    /// Gets the distributed notifications of a player and calls its closure. Registered to have
-    /// them delivered at once: by default they wait while the app isn't active, and RustyBar never
-    /// is.
-    #[unsafe(super = NSObject)]
-    #[thread_kind = MainThreadOnly]
-    #[ivars = ObserverIvars]
-    pub struct NowPlayingObserver;
-
-    impl NowPlayingObserver {
-        #[unsafe(method(notified:))]
-        fn notified(&self, n: &NSNotification) {
-            (self.ivars().f)(n);
-        }
-    }
-);
-
-impl NowPlayingObserver {
-    fn new(mtm: MainThreadMarker, f: impl Fn(&NSNotification) + 'static) -> Retained<NowPlayingObserver> {
-        let this = Self::alloc(mtm).set_ivars(ObserverIvars { f: Box::new(f) });
-        unsafe { msg_send![super(this), init] }
-    }
-}
-
 /// What the bar shows while there's a call and something to play too (see `follow`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Focus {
@@ -349,7 +322,7 @@ pub struct NowPlaying {
     pick: Option<App>,
     /// Counts the popup's openings and closings: the timer of an older one stops.
     ticking: u64,
-    observers: Vec<Retained<NowPlayingObserver>>,
+    observers: Vec<crate::runtime::Listener>,
     workspace: Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
     /// The helper's commands, while it runs. Dropped with the widget (a reload, a quit), it ends
     /// the helper.
@@ -498,24 +471,12 @@ impl NowPlaying {
     /// Listens to the players' notifications and to their launches and quits.
     fn observe(&mut self, cx: &mut Cx) {
         let Some(mtm) = MainThreadMarker::new() else { return };
-        let center = NSDistributedNotificationCenter::defaultCenter();
         for app in APPS {
             let handle = cx.handle::<NowPlaying>();
-            let observer = NowPlayingObserver::new(mtm, move |n| {
+            self.observers.push(crate::runtime::Listener::new(mtm, app.notification(), move |n| {
                 let info = info(app, n);
                 handle.send(move |w, cx| w.notified(app, info, cx));
-            });
-            unsafe {
-                let _: () = msg_send![
-                    &*center,
-                    addObserver: &*observer,
-                    selector: sel!(notified:),
-                    name: &*NSString::from_str(app.notification()),
-                    object: Option::<&NSString>::None,
-                    suspensionBehavior: 4usize // NSNotificationSuspensionBehaviorDeliverImmediately
-                ];
-            }
-            self.observers.push(observer);
+            }));
         }
         let ws = NSWorkspace::sharedWorkspace();
         for (name, launched) in unsafe { [(NSWorkspaceDidLaunchApplicationNotification, true), (NSWorkspaceDidTerminateApplicationNotification, false)] } {
@@ -749,7 +710,7 @@ impl NowPlaying {
         if let Some(t) = progress(th, p, Along::Around, Some(th.surface)) {
             sign = sign.trace(t);
         }
-        let mut right = Vec::new();
+        let mut right = island_marks(th);
         if self.warning() {
             right.push(Node::symbol("mic.fill", 12.0, Weight::Semibold, th.yellow).key("mic"));
         }
@@ -792,6 +753,12 @@ fn open_row(rx: &Rx, p: &Player) -> Node {
     )
     .hover(th.highlight)
     .key(key)
+}
+
+/// What the island shows of the rest of the Mac, right of the notch before its own signs: fn
+/// while F1, F2… are standard keys, if `fn_keys` asks for it there.
+fn island_marks(th: &Theme) -> Vec<Node> {
+    super::fn_keys::island_mark(th).into_iter().collect()
 }
 
 /// How big the cover is in the island: as far from its top as from its bottom, as in the pill.
@@ -2053,7 +2020,9 @@ impl NowPlaying {
             left.push(Node::text(&name, th.font(), th.text).max_width(least + (whole - least).clamp(0.0, island.left.max(0.0))).marquee(true).key("title"));
         }
         let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
-        let right = Node::row(call_signs(th, c, rx.compact, self.warning())).gap(8.0).align(Align::Center).height(island.height).padding(0.0, inset + 2.0, 0.0, 8.0).key("wing");
+        let mut right = island_marks(th);
+        right.extend(call_signs(th, c, rx.compact, self.warning()));
+        let right = Node::row(right).gap(8.0).align(Align::Center).height(island.height).padding(0.0, inset + 2.0, 0.0, 8.0).key("wing");
         rx.island(vec![left], vec![right]).click(rx.toggle_popup()).hover(crate::gfx::Rgba(0.0, 0.0, 0.0, 0.0))
     }
 
@@ -2457,11 +2426,6 @@ fn decode_cover(base64: &str, key: &str) -> Option<String> {
 
 impl Drop for NowPlaying {
     fn drop(&mut self) {
-        let center = NSDistributedNotificationCenter::defaultCenter();
-        for o in self.observers.drain(..) {
-            let o: &NSObject = &o;
-            unsafe { center.removeObserver(o) };
-        }
         let ws = NSWorkspace::sharedWorkspace().notificationCenter();
         for o in self.workspace.drain(..) {
             unsafe { ws.removeObserver(o.as_ref()) };

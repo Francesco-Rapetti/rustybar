@@ -90,6 +90,15 @@ large_width = 3840        # from this width a screen is "large"
 # names = { "Razer Naga V2 Pro" = "Desk" }       # your names for the bar, by the full name
 # receivers = true        # Razer, Logitech, ROG and the Steam Controller behind a receiver too
 #
+# [widgets.fn_keys]       # not in the layout above: add it where you like
+# show = ["key"]          # where the mark goes while F1, F2… are standard keys: key, dot, apple,
+#                         # island, aerospace, edge (any of them; [] for none). Where the island
+#                         # shows it, the others don't
+# hover = true            # under the mouse, the key or the dot grows with a switch
+# hotkey = "ctrl-alt-f"   # switches from any app, as AeroSpace writes keys; none by default
+# apps = ["com.example.game"]        # F1, F2… are standard keys while one of these is in front
+# media_apps = ["com.spotify.client"] # and the special features while one of these is
+#
 # [widgets.events]
 # soon = 30               # minutes before an event when its time turns yellow
 # sooner = 15             # peach

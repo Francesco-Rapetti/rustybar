@@ -5,7 +5,9 @@ mod cache;
 mod config;
 mod display;
 mod fit;
+mod fnkeys;
 mod gfx;
+mod hotkey;
 mod i18n;
 mod iokit;
 mod ipc;
@@ -54,7 +56,7 @@ define_class!(
 
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _notification: &NSNotification) {
-            app::with(|app| app.cache.save());
+            app::with(|app| app.stop());
         }
     }
 );
@@ -97,7 +99,11 @@ fn main() {
                             for (name, hint) in &unknown {
                                 eprintln!("unknown widget {name:?} in [layout]{}", hint.as_ref().map(|h| format!(": did you mean {h:?}?")).unwrap_or_default());
                             }
-                            if !unknown.is_empty() {
+                            let problems = widgets::fn_keys::check(&c);
+                            for p in &problems {
+                                eprintln!("{p}");
+                            }
+                            if !unknown.is_empty() || !problems.is_empty() {
                                 std::process::exit(1);
                             }
                             println!("ok: {} Lua widget(s)", lua.len());

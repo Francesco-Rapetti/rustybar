@@ -226,6 +226,8 @@ pub struct App {
     flush_queued: bool,
     pressed: Option<(SurfaceId, String)>,
     edge_requested: Option<String>,
+    /// While a bar is drawn: it has an island (see `Rx::notch_island`).
+    beside_island: bool,
     observers: Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
     /// Watches the app's appearance, which follows macOS between light and dark.
     appearance: Option<Retained<AppearanceObserver>>,
@@ -309,6 +311,7 @@ pub fn start(mtm: MainThreadMarker) {
         flush_queued: false,
         pressed: None,
         edge_requested: None,
+        beside_island: false,
         observers: Vec::new(),
         appearance: None,
         monitor: None,
@@ -570,6 +573,7 @@ impl App {
         let mut rx = Rx::new(&slot.name, &self.theme, d, form, popup_open);
         rx.spare = spare;
         rx.island = island;
+        rx.notch_island = self.beside_island;
         if let Some(err) = &slot.failed {
             return Some(error_pill(&rx, err));
         }
@@ -626,7 +630,6 @@ impl App {
         let gap = self.theme.item_gap;
         let layout = Layout { scale: d.scale };
         let mut forms: HashMap<String, Form> = HashMap::new();
-
         let mut centered: Vec<(usize, Form)> = (0..self.slots.len())
             .filter(|&i| self.slots[i].side == Side::Center)
             .map(|i| (i, self.config_form(&self.slots[i].name, &d)))
@@ -649,6 +652,12 @@ impl App {
             centered.remove(0);
         }
         let least = island.as_ref().map(|(_, _, n)| wings(&layout, n));
+        // The sides are drawn knowing of the island (see `Rx::notch_island`)
+        self.beside_island = island.is_some();
+        // The tab at the left edge of the screen while F1, F2… are standard keys (see `fn_keys`),
+        // unless the island says it: the left side starts after it
+        let edge = widgets::fn_keys::mark(widgets::fn_keys::Mark::Edge, island.is_some());
+        let left_margin = if edge.is_some() { margin.max(widgets::fn_keys::EDGE_WIDTH + gap) } else { margin };
         let draw_center = |app: &mut App, compact: bool| -> Vec<Node> {
             centered.iter().filter_map(|&(i, form)| app.item(i, &d, if compact { Form::Compact } else { form })).collect()
         };
@@ -662,9 +671,9 @@ impl App {
         let room_of = |center_w: f64, wings: Option<(f64, f64)>| match d.notch {
             Some((l, r)) => {
                 let (il, ir) = wings.unwrap_or_default();
-                Room::Split { left: l - il - margin - gap, right: width - margin - r - ir - gap }
+                Room::Split { left: l - il - left_margin - gap, right: width - margin - r - ir - gap }
             }
-            None => Room::Shared(width - 2.0 * margin - gap - if center_w > 0.0 { center_w + gap } else { 0.0 }),
+            None => Room::Shared(width - margin - left_margin - gap - if center_w > 0.0 { center_w + gap } else { 0.0 }),
         };
         let room = room_of(center_w, least);
         // The compact form of what's between the sides, when it leaves them more room: the
@@ -790,7 +799,7 @@ impl App {
         let mut center_form = |name: &str, form: Form| forms.insert(name.to_string(), form);
         let used = groups.each_ref().map(|g| width_of(g));
         // Without a notch, the room the sides leave the center group between them
-        let between = [margin + if used[0] > 0.0 { used[0] + gap } else { 0.0 }, width - margin - if used[1] > 0.0 { used[1] + gap } else { 0.0 }];
+        let between = [left_margin + if used[0] > 0.0 { used[0] + gap } else { 0.0 }, width - margin - if used[1] > 0.0 { used[1] + gap } else { 0.0 }];
         // The island takes the room the sides leave beside it, unless compact; the rest of the
         // group what it leaves
         let mut island_node = None;
@@ -894,7 +903,7 @@ impl App {
             let group = group.gap(gap);
             let (w, h) = layout.intrinsic(&group, None);
             let x = match side {
-                Side::Left => margin,
+                Side::Left => left_margin,
                 Side::Center => {
                     let (x, middle) = (center_x(width, between, w), ((width - w) / 2.0).round());
                     // Left of the middle, it leans against the right side
@@ -909,6 +918,14 @@ impl App {
         if let Some((x, node)) = island_node {
             root.children.push(Node::row(vec![node]).key("island").at(x, 0.0));
         }
+        // Its round end out of the edge, as tall as the pills
+        if let Some(action) = edge {
+            let h = self.theme.pill_height;
+            let tab = widgets::fn_keys::edge_tab(&self.theme, h, action);
+            let x = -tab.style.padding[3];
+            root.children.push(Node::row(vec![tab]).key("edge").at(x, ((height - h) / 2.0).round()));
+        }
+        self.beside_island = false;
         root
     }
 
@@ -1952,7 +1969,13 @@ impl App {
         let frame = CGRect::new(CGPoint::new(x, top - h), CGSize::new(w, h));
         let px = pill_x - x;
 
-        let look = pill.style.clone();
+        let mut look = pill.style.clone();
+        // One drawn without a pill of its own (a dot) grows into one: the card has the pill's look
+        // from the start, as its glass can't come later
+        if !look.glass && look.background.is_none() {
+            let own = rx.pill(Vec::new()).style;
+            (look.glass, look.background, look.border) = (own.glass, own.background, own.border);
+        }
         let mut row = pill;
         row.key = Some("pill".into());
         row.style.glass = false;
@@ -2085,6 +2108,14 @@ impl App {
         tree.normalize();
         let on = CGRect::new(CGPoint::new(x0 - ear - room.origin.x, 0.0), CGSize::new(x1 - x0 + 2.0 * ear, h));
         Some((tree, frame, on, room))
+    }
+
+    /// The process is about to end: the last state on disk, and the widgets dropped now, in order,
+    /// rather than with the thread locals after exit, when what their drops use may be gone (a
+    /// hot key's registry). Their helpers end, and `fn_keys` puts back the mode switched by hand.
+    pub fn stop(&mut self) {
+        self.cache.save();
+        self.slots.clear();
     }
 
     pub fn quit(&mut self) {

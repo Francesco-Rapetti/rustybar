@@ -65,7 +65,9 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   libere di malloc), `theme.rs`, `palette.rs` (i colori di un'immagine in Oklab e un tema fatto
   con quelli), `config.rs` (`rustybar.local.toml` unito sopra `rustybar.toml`),
   `lua.rs` + `prelude.lua`,
-  `ipc.rs`, `cache.rs` (ultimo stato su disco per l'avvio), `service.rs` (LaunchAgent), `iokit.rs`,
+  `ipc.rs`, `cache.rs` (ultimo stato su disco per l'avvio), `fnkeys.rs` (modo dei tasti F:
+  `HIDFKeyMode` coi parametri di IOHIDSystem, preferenza e notifica di Impostazioni Tastiera),
+  `hotkey.rs` (scorciatoie globali con gli hot key di Carbon, senza permessi), `service.rs` (LaunchAgent), `iokit.rs`,
   `i18n.rs` (`t("italiano", "english")`), `mock.rs`, `net.rs` (WebSocket e richieste HTTP con
   NSURLSession, HTTP/1.1 su socket Unix), `secret.rs` (portachiavi via `security`, e
   `rustybar secret set`), `time.rs` (ora locale, ISO 8601, durate come `2 h 57 min`).
@@ -619,6 +621,42 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   chiamata trovata (codice, microfono e videocamera giusti), mano alzata dalla barra, dump con la
   mano alzata e no; durante la chiamata 28 MB in 2 processi, 0,22% CPU in 60 s, 0 processi (con gli
   Apple event la lettura costava 20–50 ms ogni secondo).
+- `fn_keys` (chiesto dall'utente, segni scelti dai mockup: tasto fn, pallino, mela, isola,
+  AeroSpace, linguetta; uno o più, a scelta in `show`; spenti, spariscono): mentre F1, F2… sono
+  tasti standard un segno lo dice. Modo letto e cambiato in-process (`fnkeys.rs`:
+  `IOHIDCopyCFTypeParameter`/`IOHIDSetCFTypeParameter` di `HIDFKeyMode` su IOHIDSystem, poi
+  `com.apple.keyboard.fnState` nel dominio globale e la notifica `com.apple.keyboard.fnstatedidchange`
+  di Impostazioni Tastiera, che la barra ascolta: niente timer). Stato condiviso con gli altri
+  widget per generazione (`fn_keys::mark`, `fn_keys::switch`): `apple` (fn in alto accanto al logo,
+  interruttore nel menu), `aerospace` (F cerchiata dopo i workspace), `now_playing` (fn nell'ala
+  destra dell'isola), `App::bar_tree` (linguetta al bordo sinistro, il lato sinistro le fa posto).
+  Per cambiarlo: clic su tasto, pallino, F e linguetta; peek con l'interruttore (un nodo senza
+  pill, il pallino, cresce con l'aspetto della pill); menu della mela; `hotkey` (Carbon,
+  `RegisterEventHotKey`); `msg trigger fn_keys [mode=on|off]`; interruttore nella pagina delle
+  impostazioni (passa dalla barra); `apps`/`media_apps` col modo per app, il resto quello scelto a
+  mano (`fn_keys.base` nei default). Provato coi dati finti sulla barra di prova col notch: tutti i
+  segni, spento e riacceso (via trigger e dall'interruttore delle impostazioni via AX), peek di
+  tasto e pallino, menu della mela, una casella dei segni che scrive il TOML: 17 MB, 0,03% CPU,
+  0 processi. Dal vero sulla barra di prova, con l'OK dell'utente (e il modo rimesso com'era):
+  cambio col trigger (preferenza e tutti i 232 servizi con `HIDFKeyMode`, senza permessi), un
+  cambio da fuori seguito, la scorciatoia (un F19 sintetico vale solo col flag fn, che i tasti F
+  veri hanno), `media_apps` con l'app davanti all'avvio, al reload e all'uscita: andando via il
+  widget rimette il modo scelto a mano. Per questo i widget si chiudono in
+  `applicationWillTerminate` (`App::stop`): nei thread local dopo exit il drop di un hot key
+  mandava in abort. Sulla barra vera dal 23/11/2026 (build HEAD + `fn_keys`), con le scelte
+  dell'utente nei dotfiles: `show = ["island", "edge"]` (nessuna pill), `ctrl-alt-f`, `apps` VS
+  Code, Xcode e Android Studio, `media_apps` Spotify e Keynote; linguetta e "fn" nell'isola visti
+  sullo schermo; 28 MB in 2 processi, 0,23% CPU, 0 processi in 60 s. Poi, chiesto dall'utente
+  lo stesso giorno: dove l'isola mostra "fn" gli altri segni non compaiono (`shows`,
+  `Rx::notch_island`: l'isola si disegna prima dei lati); servono agli schermi senza isola, e
+  al notch quando non suona niente. "fn" nell'isola si clicca (anche da cresciuta), come gli altri
+  segni: l'utente non aveva modo di spegnerli da lì. La linguetta sotto il mouse spariva: il
+  colore di `hover` prende il posto dello sfondo, quindi su un nodo pieno dev'essere un colore
+  pieno (`primary.mix(on_primary, 0.18)`, come il play). Provato coi dati finti sulla barra di
+  prova col notch, con clic veri: con l'isola solo il suo "fn", senza (`center = []`) linguetta,
+  mela, tasto e F di AeroSpace; clic su "fn" nell'isola e nell'isola cresciuta; linguetta sotto
+  il mouse. Sulla barra vera: 27 MB in 2 processi, 0,22% CPU, 0 processi in 60 s. Da provare con
+  l'utente: tastiere e Impostazioni Tastiera che seguono, il modo per app al cambio d'app.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

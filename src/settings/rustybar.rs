@@ -34,6 +34,11 @@ fn info(kind: &str) -> (&'static str, &'static str, &'static str) {
             "computermouse.fill",
             t("La batteria di mouse, tastiere, controller e cuffie, anche dietro un ricevitore o un cavo.", "The battery of mice, keyboards, controllers and headphones, also behind a receiver or a cable."),
         ),
+        "fn_keys" => (
+            t("Tasti F", "Function keys"),
+            "fn",
+            t("Un segno mentre F1, F2… sono tasti standard, e i modi per cambiarli al volo.", "A mark while F1, F2… are standard keys, and quick ways to switch them."),
+        ),
         "clock" => (t("Orologio", "Clock"), "clock.fill", t("Data e ora, con un calendario nel popup.", "Date and time, with a calendar in the popup.")),
         "audio" => ("Audio", "speaker.wave.2.fill", t("L'uscita e l'ingresso in uso, con il volume.", "The output and input in use, with their volume.")),
         "network" => (t("Rete", "Network"), "wifi", t("La VPN, la rete Wi-Fi o Ethernet.", "The VPN, the Wi-Fi network or Ethernet.")),
@@ -522,6 +527,10 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
             );
             &["low", "always", "pinned", "receivers", "names"]
         }
+        "fn_keys" => {
+            fn_keys(f, &spot, !side.is_empty());
+            &["show", "hover", "hotkey", "apps", "media_apps"]
+        }
         "notifications" => {
             notifications(f, &spot);
             &["apps", "brewfile", "brew"]
@@ -608,15 +617,72 @@ fn move_to(name: &str, side: &str) {
 
 /// A switch for whether `name` is in the list at `spot`.
 fn member(f: &mut Form, title: &str, help: Option<&str>, spot: &Spot, name: &str) {
-    let on = store::get_strings(spot).unwrap_or_default().iter().any(|n| n == name);
+    member_or(f, title, help, spot, name, &[]);
+}
+
+/// As `member`, for a list that is `default` without its key.
+fn member_or(f: &mut Form, title: &str, help: Option<&str>, spot: &Spot, name: &str, default: &[&str]) {
+    let default: Vec<String> = default.iter().map(|d| d.to_string()).collect();
+    let on = store::get_strings(spot).unwrap_or_else(|| default.clone()).iter().any(|n| n == name);
     let (s, n) = (spot.clone(), name.to_string());
     f.toggle(title, help, on, move |v| {
-        let mut list: Vec<String> = store::get_strings(&s).unwrap_or_default().into_iter().filter(|x| *x != n).collect();
+        let mut list: Vec<String> = store::get_strings(&s).unwrap_or_else(|| default.clone()).into_iter().filter(|x| *x != n).collect();
         if v {
             list.push(n.clone());
         }
-        store::put(&s, store::strings(&list), Some(&toml::Value::Array(vec![])));
+        store::put(&s, store::strings(&list), Some(&toml::Value::Array(default.iter().map(|d| toml::Value::String(d.clone())).collect())));
     });
+}
+
+/// The page of `fn_keys`: the mode now, which the switch changes at once (through the bar, which
+/// keeps track of the apps that want one, when it's in the bar), where the marks go and the ways
+/// to switch.
+fn fn_keys(f: &mut Form, spot: &Spot, in_bar: bool) {
+    f.group(Some(t("Adesso", "Now")));
+    f.toggle(
+        t("Tasti F1, F2… standard", "F1, F2… as standard keys"),
+        Some(t("Luminosità, volume e musica allora vogliono fn; come in Impostazioni Tastiera", "Brightness, volume and music then want fn; as in Keyboard Settings")),
+        widgets::fn_keys::mode(),
+        move |v| widgets::fn_keys::request(v, in_bar),
+    );
+    f.group(Some(t("Dove si vede, mentre sono standard", "Where it shows, while they're standard")));
+    let show = spot.k("show");
+    let mark = |f: &mut Form, title: &str, help: &str, name: &str| member_or(f, title, Some(help), &show, name, &["key"]);
+    mark(f, t("Tasto fn", "fn key"), t("Una pillola come il tasto fn, al posto del widget; un pallino se la barra non ha spazio", "A pill like the fn key, in the widget's place; a dot when the bar has no room"), "key");
+    mark(f, t("Pallino", "Dot"), t("Solo un pallino nel colore d'accento, al posto del widget", "Just a dot in the accent color, in the widget's place"), "dot");
+    mark(f, t("Sulla mela", "On the Apple logo"), t("fn in alto accanto al logo", "fn up beside the logo"), "apple");
+    mark(f, t("Nell'isola del notch", "In the notch's island"), t("fn accanto alle barre di In riproduzione, mentre suona qualcosa. Sullo schermo dell'isola gli altri segni non compaiono", "fn beside the bars of Now Playing, while something plays. On the island's screen the other marks don't show"), "island");
+    mark(f, t("Dopo i workspace", "After the workspaces"), t("Una F nella pillola di AeroSpace, come uno dei suoi modi", "An F in AeroSpace's pill, as one of its modes"), "aerospace");
+    mark(f, t("Linguetta al bordo", "Tab at the edge"), t("Al bordo sinistro dello schermo, prima della barra", "At the left edge of the screen, before the bar"), "edge");
+    f.group(Some(t("Per cambiarli", "To switch them")));
+    f.toggle_at(
+        t("Controlli sotto il mouse", "Controls under the mouse"),
+        Some(t("Col mouse sopra, il tasto fn o il pallino si allunga con l'interruttore e la scorciatoia", "With the mouse on it, the fn key or the dot grows with the switch and the shortcut")),
+        &spot.k("hover"),
+        true,
+    );
+    f.text_at(
+        t("Scorciatoia", "Shortcut"),
+        Some(t("Come le scrive AeroSpace, per esempio ctrl-alt-f; non chiede permessi", "As AeroSpace writes them, e.g. ctrl-alt-f; it asks for no permission")),
+        &spot.k("hotkey"),
+        "ctrl-alt-f",
+    );
+    f.tokens_at(
+        t("App coi tasti F", "Apps with F keys"),
+        Some(t("Bundle id delle app in cui F1, F2… sono standard mentre sono in primo piano", "Bundle ids of the apps where F1, F2… are standard while they're in front")),
+        &spot.k("apps"),
+        "com.example.app",
+    );
+    f.tokens_at(
+        t("App coi tasti speciali", "Apps with special keys"),
+        Some(t("Bundle id delle app in cui F1, F2… fanno luminosità, volume e musica mentre sono in primo piano", "Bundle ids of the apps where F1, F2… do brightness, volume and music while they're in front")),
+        &spot.k("media_apps"),
+        "com.example.app",
+    );
+    f.footer(t(
+        "Anche dal menu Apple, con un clic su un segno e con rustybar msg trigger fn_keys [mode=on|off], per un tasto di AeroSpace. Nelle altre app, il modo scelto a mano.",
+        "Also from the Apple menu, with a click on a mark and with rustybar msg trigger fn_keys [mode=on|off], for an AeroSpace binding. In the other apps, the mode switched by hand.",
+    ));
 }
 
 /// `~/…` for a path in the home folder.
