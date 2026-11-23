@@ -799,10 +799,13 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `telegram_message`, `telegram_chat`); `SHARED` tiene un segno per servizio, `island_mark` li
   mette insieme e `guest_notice` dà l'ultimo arrivato. Provato solo coi dati finti
   (`examples/mock/telegram.json`): `rustybar check`, widget `ready`, segno blu nell'isola della
-  musica col conto che cala aprendo una chat; il popup non visto a schermo (l'utente era in una
-  riunione). Dal vero niente ancora: serve il login dell'utente. Da provare tutto: login, chat,
-  update, invio, segna come letta, media, `tg://openmessage`, riconnessione dopo lo stop, memoria
-  e CPU con la connessione aperta.
+  musica col conto che cala aprendo una chat; il popup visto nello screenshot del README
+  (`docs/screenshots/telegram.png`, `screenshots.py` lo apre su una chat come per `whatsapp`).
+  Dal vero il 23/11/2026, dopo il login dell'utente: sulla barra di prova `ready` in pochi secondi,
+  30 foto profilo in cache, 15 MB, 0,10% CPU, 0 processi in 30 s, elenco e chat visti da lui;
+  sulla barra vera dallo stesso giorno (nei dotfiles in `center` dopo `whatsapp`): 29 MB in 2
+  processi, 0,30% CPU, 0 processi. Da provare: un messaggio in arrivo, invio, segna come letta,
+  un video o documento al clic, `tg://openmessage`, riconnessione dopo lo stop.
 - Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
   sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
   (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del

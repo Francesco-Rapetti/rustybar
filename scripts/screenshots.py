@@ -88,8 +88,8 @@ def save(name, left, top, right, bottom, pills, popup=None):
         canvas.alpha_composite(img, (px - left, py - top))
     canvas.convert("RGB").save(os.path.join(OUT, f"{name}.png"), optimize=True)
 
-# What opens the popup of a widget on more than its first page: whatsapp's on a chat
-OPEN = {"whatsapp": ["trigger", "whatsapp_chat", "chat=Thursday"]}
+# What opens the popup of a widget on more than its first page: whatsapp's and telegram's on a chat
+OPEN = {"whatsapp": ["trigger", "whatsapp_chat", "chat=Thursday"], "telegram": ["trigger", "telegram_chat", "chat=Irene"]}
 
 os.makedirs(OUT, exist_ok=True)
 for name in [n for n in sys.argv[2:] if n != "settings"] or ([] if sys.argv[2:] else list(pos)):
