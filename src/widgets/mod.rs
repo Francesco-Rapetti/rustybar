@@ -31,6 +31,7 @@ pub mod network;
 pub mod notifications;
 pub mod now_playing;
 pub mod system;
+pub mod tg;
 pub mod wa;
 pub mod whatsapp;
 
@@ -355,7 +356,7 @@ pub trait Widget: Any {
 }
 
 /// The kinds `create` knows, in the order of the settings window's sidebar.
-pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "devices", "fn_keys", "whatsapp", "events", "clock", "notifications"];
+pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "devices", "fn_keys", "whatsapp", "telegram", "events", "clock", "notifications"];
 
 /// The name among `known` that `name` is most likely a typo of: at most two letters off.
 pub fn closest<'a>(name: &str, known: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
@@ -397,7 +398,8 @@ pub fn create(kind: &str, options: &Options) -> Option<Box<dyn Widget>> {
         "fn_keys" => Box::new(fn_keys::FnKeys::new(options)),
         "claude" => Box::new(claude::Claude::new(options)),
         "system" => Box::new(system::System::new(options)),
-        "whatsapp" => Box::new(whatsapp::WhatsApp::new(options)),
+        "whatsapp" => Box::new(whatsapp::WhatsApp::new(options, whatsapp::Service::WhatsApp)),
+        "telegram" => Box::new(whatsapp::WhatsApp::new(options, whatsapp::Service::Telegram)),
         _ => return None,
     })
 }

@@ -1,0 +1,75 @@
+{
+  "chats": [
+    {
+      "jid": "700100",
+      "name": "Irene Costa",
+      "unread": 2,
+      "at": 180,
+      "picture": "whatsapp/marta.png",
+      "newest": 15,
+      "messages": [
+        {"id": 10, "at": 90000, "text": "Are the tickets for Saturday still on your phone?"},
+        {"id": 11, "mine": true, "at": 89000, "text": "Yes, both. I'll forward them tonight"},
+        {"id": 12, "mine": true, "at": 4000, "kind": "file", "title": "Tickets Saturday.pdf"},
+        {"id": 13, "at": 1200, "kind": "voice", "seconds": 21, "file": "whatsapp/voice.opus"},
+        {"id": 14, "at": 400, "kind": "image", "file": "whatsapp/terrace.png", "text": "The view from the hotel"},
+        {"id": 15, "at": 180, "text": "Train leaves at 7:40, platform 4. Shall we meet at the bar by the entrance?"}
+      ]
+    },
+    {
+      "jid": "-1001700200",
+      "name": "Board game night",
+      "group": true,
+      "unread": 4,
+      "at": 700,
+      "picture": "whatsapp/team.png",
+      "newest": 26,
+      "messages": [
+        {"id": 21, "sender": "Paolo Riva", "at": 6000, "text": "Friday at mine, bring the big box"},
+        {"id": 22, "mine": true, "at": 5800, "text": "I'll bring snacks"},
+        {"id": 23, "sender": "Paolo Riva", "at": 2600, "kind": "link", "title": "How to play in five minutes", "url": "https://example.com/rules", "thumb": "whatsapp/pitch.png", "text": "Rules here https://example.com/rules"},
+        {"id": 24, "sender": "Giulia Sala", "at": 1700, "kind": "video", "seconds": 48, "thumb": "whatsapp/pitch.png", "text": "Last time's final round"},
+        {"id": 25, "sender": "Giulia Sala", "at": 1500, "kind": "poll", "text": "Pizza or sushi?"},
+        {"id": 26, "sender": "Marco Villa", "at": 700, "kind": "once"}
+      ]
+    },
+    {
+      "jid": "700101",
+      "name": "Saved Messages",
+      "at": 8000,
+      "newest": 31,
+      "messages": [
+        {"id": 30, "mine": true, "at": 8600, "text": "Wi-Fi of the mountain house: ask Paolo"},
+        {"id": 31, "mine": true, "at": 8000, "kind": "location"}
+      ]
+    },
+    {
+      "jid": "-1001700300",
+      "name": "Climbing gym news",
+      "group": true,
+      "muted": true,
+      "unread": 9,
+      "at": 9500,
+      "newest": 41,
+      "messages": [
+        {"id": 40, "sender": "Front desk", "at": 9900, "kind": "file", "title": "Autumn timetable.pdf"},
+        {"id": 41, "sender": "Front desk", "at": 9500, "text": "New routes on the north wall from Monday"}
+      ]
+    },
+    {
+      "jid": "700102",
+      "name": "Paolo Riva",
+      "at": 40000,
+      "newest": 51,
+      "messages": [
+        {"id": 50, "at": 41000, "kind": "sticker"},
+        {"id": 51, "mine": true, "at": 40000, "text": "Deal"}
+      ]
+    }
+  ],
+  "incoming": [
+    {"jid": "700102", "message": {"text": "Found the big box, it was in the car all along"}},
+    {"jid": "-1001700200", "message": {"sender": "Giulia Sala", "kind": "image", "file": "whatsapp/terrace.png", "text": "Table's ready"}},
+    {"jid": "700100", "message": {"kind": "voice", "seconds": 9, "file": "whatsapp/voice.opus"}}
+  ]
+}

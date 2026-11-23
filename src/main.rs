@@ -71,6 +71,7 @@ const USAGE: &str = "usage:
   rustybar service install start RustyBar at login, and again if it crashes (a LaunchAgent)
   rustybar service uninstall
   rustybar secret set home-assistant   save the Home Assistant token, read from stdin, in the keychain
+  rustybar telegram login|status|logout   sign the telegram widget in to Telegram, or out
   rustybar --version";
 
 fn main() {
@@ -140,6 +141,16 @@ fn main() {
         }
         Some("settings") => {
             settings::run(args.get(1).filter(|a| !a.starts_with('-')).cloned());
+            return;
+        }
+        Some("telegram") => {
+            match widgets::tg::command(&args[1..]) {
+                Ok(msg) => println!("{msg}"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
             return;
         }
         Some("secret") => {

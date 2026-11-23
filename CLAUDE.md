@@ -780,6 +780,29 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   avvio della barra (vale finché il processo vive), a meno dell'Accesso completo al disco: era
   l'attesa di ~30 s in `loading`. Da provare: un invio a una chat con non letti, la bolla "una
   volta" (non vista a schermo).
+- `telegram` (chiesto dall'utente: "lo stesso identico widget" di `whatsapp`; fonte scelta da lui:
+  le API di Telegram). Il database dell'app del Mac (`ru.keepcoder.Telegram`, Postbox) è cifrato
+  con SQLCipher e in un formato binario suo: niente lettura come per WhatsApp. `tg.rs` è un client
+  MTProto con `grammers` 0.12 (più `tokio` a un thread solo; il binario passa da 5,8 a 8,3 MB):
+  sessione in `~/Library/Application Support/rustybar/telegram.json` (0600; `Store`, il `Session`
+  di grammers in memoria, perché quello suo vuole un SQLite tutto suo), `rustybar telegram
+  login|status|logout` da terminale (api_id e api_hash dell'utente, codice, password 2FA senza
+  eco), un thread `telegram` con la connessione: i 40 dialoghi più recenti non archiviati
+  all'avvio e a `Cmd::Refresh` (risveglio, login), poi gli update (messaggio nuovo, modificato,
+  eliminato, `ReadHistoryInbox`/`ReadChannelInbox` da un altro dispositivo), invio e
+  `mark_as_read` diretti, download in cache (`~/Library/Caches/rustybar/telegram`) uno alla
+  volta: foto profilo, e per la chat aperta foto (misura `x`), sticker webp, vocali, miniature di
+  video e documenti; il file di un video o documento solo al clic (`Cmd::Fetch`). L'id di un
+  messaggio per il widget è `data << 32 | id`, perché un canale conta i suoi messaggi da solo e
+  il widget confronta gli id fra chat. Il widget è lo stesso di `whatsapp` (`whatsapp.rs`, con
+  `Service` per nome, colore, simbolo, app, chiavi di default e trigger: `telegram.seen`,
+  `telegram_message`, `telegram_chat`); `SHARED` tiene un segno per servizio, `island_mark` li
+  mette insieme e `guest_notice` dà l'ultimo arrivato. Provato solo coi dati finti
+  (`examples/mock/telegram.json`): `rustybar check`, widget `ready`, segno blu nell'isola della
+  musica col conto che cala aprendo una chat; il popup non visto a schermo (l'utente era in una
+  riunione). Dal vero niente ancora: serve il login dell'utente. Da provare tutto: login, chat,
+  update, invio, segna come letta, media, `tg://openmessage`, riconnessione dopo lo stop, memoria
+  e CPU con la connessione aperta.
 - Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
   sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
   (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del

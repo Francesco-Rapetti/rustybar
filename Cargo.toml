@@ -27,6 +27,11 @@ objc2-core-wlan = "0.3"
 objc2-io-bluetooth = "0.3"
 objc2-core-location = "0.3"
 toml_edit = "0.25"
+grammers-client = { version = "0.12", default-features = false, features = ["fs"] }
+grammers-session = { version = "0.12", default-features = false, features = ["serde"] }
+grammers-mtsender = "0.12"
+grammers-tl-types = "0.12"
+tokio = { version = "1.54.1", default-features = false, features = ["rt", "net", "time", "sync", "macros", "fs"] }
 
 [profile.release]
 lto = true

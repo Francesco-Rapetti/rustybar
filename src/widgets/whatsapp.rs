@@ -13,13 +13,17 @@
 //! WhatsApp's number), so that the bar doesn't say nothing while the app says one. A reply typed here is sent through the app, with Accessibility: the app
 //! comes to the front for a moment and opens the chat, so WhatsApp marks it read.
 //!
+//! The same widget is `telegram`, with Telegram's chats (see `tg`): there RustyBar is a client of
+//! its own, so a reply and a chat marked read go straight to Telegram, without its app, and what
+//! a chat shows is downloaded when the chat opens. `channels` (false) follows the channels too.
+//!
 //! Options: `recent` (how many chats without anything unread the popup lists, 5), `muted` (count
 //! the muted chats too, false), `groups` (true), `preview` (the text of a new message in the
 //! notch, true), `notch` (true), `hover` (the peek, true), `always` (in the bar with nothing
 //! unread too, false).
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
@@ -27,6 +31,7 @@ use objc2::{AnyThread, msg_send, sel};
 use objc2_foundation::{NSString, NSURL, NSUserDefaults, ns_string};
 use serde::Deserialize;
 
+use super::tg;
 use super::wa::{self, Chat, Kind as Is, Message};
 use super::{Cx, Event, Island, Rx, Widget};
 use crate::config::Options;
@@ -36,8 +41,61 @@ use crate::theme::Theme;
 use crate::time;
 use crate::ui::{Action, Align, Justify, Kind, Node, wrap};
 
-/// WhatsApp's green.
-const GREEN: Rgba = Rgba(0.145, 0.827, 0.4, 1.0);
+/// Whose chats a widget shows: all that differs between `whatsapp` and `telegram`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Service {
+    WhatsApp,
+    Telegram,
+}
+
+impl Service {
+    const ALL: [Service; 2] = [Service::WhatsApp, Service::Telegram];
+
+    /// The name of the widget's kind: of its made-up data, its defaults and its triggers too.
+    fn key(self) -> &'static str {
+        match self {
+            Service::WhatsApp => "whatsapp",
+            Service::Telegram => "telegram",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Service::WhatsApp => "WhatsApp",
+            Service::Telegram => "Telegram",
+        }
+    }
+
+    /// WhatsApp's green, Telegram's blue.
+    fn color(self) -> Rgba {
+        match self {
+            Service::WhatsApp => Rgba(0.145, 0.827, 0.4, 1.0),
+            Service::Telegram => Rgba(0.165, 0.671, 0.933, 1.0),
+        }
+    }
+
+    /// What's written on that color.
+    fn ink(self) -> Rgba {
+        match self {
+            Service::WhatsApp => Rgba(0.0, 0.0, 0.0, 1.0),
+            Service::Telegram => Rgba(1.0, 1.0, 1.0, 1.0),
+        }
+    }
+
+    fn bundle(self) -> &'static str {
+        match self {
+            Service::WhatsApp => wa::BUNDLE,
+            Service::Telegram => tg::BUNDLE,
+        }
+    }
+
+    fn symbol(self) -> &'static str {
+        match self {
+            Service::WhatsApp => "phone.bubble.fill",
+            Service::Telegram => "paperplane.fill",
+        }
+    }
+}
 
 const WIDTH: f64 = 340.0;
 /// How wide the text of a message gets before it goes on another line.
@@ -53,6 +111,8 @@ enum State {
     Missing,
     /// macOS doesn't let RustyBar read its data.
     Denied,
+    /// Telegram has no session: `rustybar telegram login`.
+    SignedOut,
     Failed(String),
 }
 
@@ -104,6 +164,7 @@ struct Incoming {
 /// for its generation.
 #[derive(Clone)]
 struct Shared {
+    service: Service,
     generation: u64,
     widget: String,
     unread: i64,
@@ -117,11 +178,11 @@ struct Shared {
 }
 
 thread_local! {
-    static SHARED: RefCell<Option<Shared>> = const { RefCell::new(None) };
+    static SHARED: RefCell<Vec<Shared>> = const { RefCell::new(Vec::new()) };
 }
 
-fn shared() -> Option<Shared> {
-    SHARED.with(|s| s.borrow().clone()).filter(|s| s.generation == crate::app::current_gen())
+fn shared(service: Service) -> Option<Shared> {
+    SHARED.with(|s| s.borrow().iter().find(|s| s.service == service).cloned()).filter(|s| s.generation == crate::app::current_gen())
 }
 
 /// The unread count in the island of another widget, right of the notch: the app's icon and the
@@ -129,45 +190,57 @@ fn shared() -> Option<Shared> {
 /// wave while a voice note plays; a click opens the chats. None with nothing unread and nothing
 /// playing, or without a `whatsapp` that wants the notch.
 pub fn island_mark(th: &Theme) -> Option<Node> {
-    let s = shared().filter(|s| s.unread + s.held > 0 || s.playing)?;
-    let (n, color) = tally(th, s.unread, s.held);
+    let marks: Vec<Node> = Service::ALL.into_iter().filter_map(|service| service_mark(th, service)).collect();
+    match marks.len() {
+        0 => None,
+        1 => marks.into_iter().next(),
+        _ => Some(Node::row(marks).gap(4.0).align(Align::Center).key("chats")),
+    }
+}
+
+/// The mark of one of the two (see `island_mark`).
+fn service_mark(th: &Theme, service: Service) -> Option<Node> {
+    let s = shared(service).filter(|s| s.unread + s.held > 0 || s.playing)?;
+    let (n, color) = tally(th, service, s.unread, s.held);
     let mut signs = Vec::new();
     if s.playing {
-        signs.push(listening());
+        signs.push(listening(service));
     }
-    signs.push(sign(12.0, if n > 0 { color } else { GREEN }));
+    signs.push(sign(service, 12.0, if n > 0 { color } else { service.color() }));
     if n > 0 {
         signs.push(Node::text(count(n), th.font_with(Weight::Bold, 12.0), color).key("count"));
     }
     Some(
         Node::row(signs)
-            .key("whatsapp")
+            .key(service.key())
             .gap(4.0)
             .padding(1.0, 4.0, 1.0, 4.0)
             .radius(6.0)
             .click(Action::Popup { widget: s.widget })
-            .hover(GREEN.faded(0.25)),
+            .hover(service.color().faded(0.25)),
     )
 }
 
 /// The message that just came, for the island of another widget to show as its own notice.
 pub fn guest_notice(rx: &Rx) -> Option<Node> {
-    let s = shared()?;
-    let (chat, at) = s.arrival.as_ref()?;
-    if time::now() - at >= FRESH {
-        return None;
-    }
-    let theme = notch_theme(rx.theme);
-    notice_node(&theme, &s.widget, chat, chat.messages.last()?, s.preview, WIDTH)
+    // Of the two, the one that came last
+    let now = time::now();
+    let s = Service::ALL.into_iter().filter_map(shared).filter(|s| s.arrival.as_ref().is_some_and(|(_, at)| now - at < FRESH)).max_by(|a, b| a.arrival.as_ref().map(|a| a.1).partial_cmp(&b.arrival.as_ref().map(|a| a.1)).unwrap_or(std::cmp::Ordering::Equal))?;
+    let (chat, _) = s.arrival.as_ref()?;
+    let theme = notch_theme(rx.theme, s.service);
+    notice_node(&theme, s.service, &s.widget, chat, chat.messages.last()?, s.preview, WIDTH)
 }
 
-/// The notch's colors with WhatsApp's green.
-fn notch_theme(theme: &Theme) -> Theme {
-    theme.notch(Some((GREEN, Rgba(0.0, 0.0, 0.0, 1.0))))
+/// The notch's colors with the service's own.
+fn notch_theme(theme: &Theme, service: Service) -> Theme {
+    theme.notch(Some((service.color(), service.ink())))
 }
 
 pub struct WhatsApp {
+    service: Service,
     recent: usize,
+    /// Telegram's channels are followed too.
+    channels: bool,
     muted: bool,
     groups: bool,
     preview: bool,
@@ -192,6 +265,10 @@ pub struct WhatsApp {
     send_error: Option<String>,
     playing: Option<Playing>,
     watcher: Option<wa::Watch>,
+    /// Telegram's connection.
+    telegram: Option<tg::Handle>,
+    /// The messages whose file Telegram is asked for, after a click.
+    fetching: HashSet<i64>,
     /// A read is under way; `again`, the database changed meanwhile.
     reading: bool,
     again: bool,
@@ -203,34 +280,37 @@ fn defaults() -> Option<Retained<NSUserDefaults>> {
 }
 
 /// The defaults key of the chats read here: a JSON object, jid → message id.
-const SEEN: &str = "whatsapp.seen";
+fn seen_key(service: Service) -> Retained<NSString> {
+    NSString::from_str(&format!("{}.seen", service.key()))
+}
 
 fn count(n: i64) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
 }
 
-/// WhatsApp's sign on the notch's black, where the app's icon (dark, as macOS draws it now) is lost.
-fn sign(size: f64, color: Rgba) -> Node {
-    Node::symbol("phone.bubble.fill", size, Weight::Semibold, color).key("icon")
+/// The service's sign on the notch's black, where the app's icon (WhatsApp's is dark, as macOS
+/// draws it now) is lost.
+fn sign(service: Service, size: f64, color: Rgba) -> Node {
+    Node::symbol(service.symbol(), size, Weight::Semibold, color).key("icon")
 }
 
 /// A voice note plays: for the notch.
-fn listening() -> Node {
-    Node::symbol("waveform", 12.0, Weight::Semibold, GREEN).key("listening")
+fn listening(service: Service) -> Node {
+    Node::symbol("waveform", 12.0, Weight::Semibold, service.color()).key("listening")
 }
 
 /// The number the bar shows and its color: the `new` messages in green, or with none of them
 /// those `held` (read here, unread for WhatsApp), dimmed.
-fn tally(th: &Theme, new: i64, held: i64) -> (i64, Rgba) {
-    if new > 0 { (new, GREEN) } else { (held, th.subtext) }
+fn tally(th: &Theme, service: Service, new: i64, held: i64) -> (i64, Rgba) {
+    if new > 0 { (new, service.color()) } else { (held, th.subtext) }
 }
 
-/// WhatsApp's icon; a green bubble where the app isn't installed.
-fn glyph(size: f64) -> Node {
+/// The app's icon; the service's sign in its color where the app isn't installed.
+fn glyph(service: Service, size: f64) -> Node {
     thread_local! {
-        static INSTALLED: bool = objc2_app_kit::NSWorkspace::sharedWorkspace().URLForApplicationWithBundleIdentifier(&NSString::from_str(wa::BUNDLE)).is_some();
+        static INSTALLED: [bool; 2] = Service::ALL.map(|s| objc2_app_kit::NSWorkspace::sharedWorkspace().URLForApplicationWithBundleIdentifier(&NSString::from_str(s.bundle())).is_some());
     }
-    if INSTALLED.with(|i| *i) { Node::app_icon(wa::BUNDLE, size).key("icon") } else { Node::symbol("phone.bubble.fill", size - 1.0, Weight::Semibold, GREEN).key("icon") }
+    if INSTALLED.with(|i| i[service as usize]) { Node::app_icon(service.bundle(), size).key("icon") } else { Node::symbol(service.symbol(), size - 1.0, Weight::Semibold, service.color()).key("icon") }
 }
 
 /// `19:42`.
@@ -299,13 +379,17 @@ fn first_name(name: &str) -> &str {
 }
 
 impl WhatsApp {
-    pub fn new(options: &Options) -> WhatsApp {
-        let mock = crate::mock::load::<Mock>("whatsapp");
+    pub fn new(options: &Options, service: Service) -> WhatsApp {
+        let mock = crate::mock::load::<Mock>(service.key());
         let seen = match &mock {
             Some(_) => HashMap::new(),
-            None => defaults().and_then(|d| d.stringForKey(ns_string!(SEEN))).and_then(|s| serde_json::from_str(&s.to_string()).ok()).unwrap_or_default(),
+            None => defaults().and_then(|d| d.stringForKey(&seen_key(service))).and_then(|s| serde_json::from_str(&s.to_string()).ok()).unwrap_or_default(),
         };
         WhatsApp {
+            service,
+            channels: options.bool("channels").unwrap_or(false),
+            telegram: None,
+            fetching: HashSet::new(),
             recent: options.f64("recent").map_or(5, |n| n.max(0.0) as usize),
             muted: options.bool("muted").unwrap_or(false),
             groups: options.bool("groups").unwrap_or(true),
@@ -337,8 +421,8 @@ impl WhatsApp {
         }
         let Some(d) = defaults() else { return };
         match serde_json::to_string(&self.seen) {
-            Ok(json) if !self.seen.is_empty() => unsafe { d.setObject_forKey(Some(&NSString::from_str(&json)), ns_string!(SEEN)) },
-            _ => d.removeObjectForKey(ns_string!(SEEN)),
+            Ok(json) if !self.seen.is_empty() => unsafe { d.setObject_forKey(Some(&NSString::from_str(&json)), &seen_key(self.service)) },
+            _ => d.removeObjectForKey(&seen_key(self.service)),
         }
     }
 
@@ -402,6 +486,13 @@ impl WhatsApp {
         if self.mock.is_some() {
             return;
         }
+        // Telegram's connection reads them again itself
+        if self.service == Service::Telegram {
+            if let Some(telegram) = &self.telegram {
+                telegram.send(tg::Cmd::Refresh);
+            }
+            return;
+        }
         if self.reading {
             self.again = true;
             return;
@@ -455,6 +546,8 @@ impl WhatsApp {
         }
         if cx.popup_open && let Some(jid) = self.open.clone() {
             self.see(&jid);
+            // What its new messages show
+            self.show_chat(&jid);
         }
         let last = self.chats.iter().filter(|c| self.unread(c) > 0).filter_map(|c| c.messages.iter().rev().find(|m| !m.mine).map(|m| (m.id, c.jid.clone()))).max();
         let highest = self.chats.iter().map(|c| c.newest).max().unwrap_or(0);
@@ -471,9 +564,17 @@ impl WhatsApp {
         cx.redraw();
     }
 
+    /// The chat `jid` is on show: Telegram downloads what its messages show.
+    fn show_chat(&self, jid: &str) {
+        if let Some(telegram) = &self.telegram {
+            telegram.send(tg::Cmd::Open(jid.to_string()));
+        }
+    }
+
     /// Tells the island of another widget what to show of this one.
     fn share(&self, cx: &Cx) {
         let shared = self.notch.then(|| Shared {
+            service: self.service,
             generation: cx.generation,
             widget: cx.name.to_string(),
             unread: self.total(),
@@ -486,7 +587,11 @@ impl WhatsApp {
             }),
             preview: self.preview,
         });
-        SHARED.with(|s| *s.borrow_mut() = shared);
+        SHARED.with(|s| {
+            let mut all = s.borrow_mut();
+            all.retain(|s| s.service != self.service);
+            all.extend(shared);
+        });
     }
 
 }
@@ -509,10 +614,10 @@ fn avatar(th: &Theme, chat: &Chat, size: f64) -> Node {
 
 /// The notice of the message `m` of `chat`, on the notch's black (`th`): who wrote, in which group,
 /// and how it starts (with `preview`). A click opens its chat in the popup of `widget`.
-fn notice_node(th: &Theme, widget: &str, chat: &Chat, m: &Message, preview: bool, width: f64) -> Option<Node> {
+fn notice_node(th: &Theme, service: Service, widget: &str, chat: &Chat, m: &Message, preview: bool, width: f64) -> Option<Node> {
     let max = width - 28.0 - 44.0 - 12.0;
     let title = if chat.group && !m.sender.is_empty() { m.sender.as_str() } else { chat.name.as_str() };
-    let mut head = vec![Node::text(title, th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max - if chat.group { 160.0 } else { 24.0 }).key("name"), Node::spacer(), sign(13.0, GREEN)];
+    let mut head = vec![Node::text(title, th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max - if chat.group { 160.0 } else { 24.0 }).key("name"), Node::spacer(), sign(service, 13.0, service.color())];
     if chat.group {
         head.insert(1, Node::text(format!("  {}", chat.name), th.small_font(), th.subtext).max_width(130.0).key("group"));
     }
@@ -575,14 +680,14 @@ impl WhatsApp {
     /// The island (see the top): left of the notch the picture and the name of who wrote last,
     /// right of it the count. Compact, the picture alone.
     fn island_bar(&self, rx: &Rx, island: Island, chat: &Chat) -> Node {
-        let theme = notch_theme(rx.theme);
+        let theme = notch_theme(rx.theme, self.service);
         let rx = &Rx { theme: &theme, ..*rx };
         let th = rx.theme;
         let size = (island.height - 12.0).clamp(12.0, 28.0);
         let inset = ((island.height - size) / 2.0).round();
         // Nothing new, only what was read here: dimmed
-        let (n, color) = tally(th, self.total(), self.held_total());
-        let dim = color != GREEN;
+        let (n, color) = tally(th, self.service, self.total(), self.held_total());
+        let dim = color != self.service.color();
         let mut left = vec![avatar(th, chat, size).opacity(if dim { 0.6 } else { 1.0 })];
         if !rx.compact {
             let font = th.font();
@@ -593,9 +698,9 @@ impl WhatsApp {
         let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
         let mut right: Vec<Node> = super::fn_keys::island_mark(th).into_iter().collect();
         if self.playing.as_ref().is_some_and(|p| !p.paused) {
-            right.push(listening());
+            right.push(listening(self.service));
         }
-        right.push(sign(13.0, color));
+        right.push(sign(self.service, 13.0, color));
         right.push(Node::text(count(n), th.font_with(Weight::Bold, 12.0), color).key("count"));
         let right = Node::row(right).gap(6.0).align(Align::Center).height(island.height).padding(0.0, inset + 2.0, 0.0, 8.0).key("wing");
         rx.island(vec![left], vec![right]).click(rx.toggle_popup()).hover(Rgba(0.0, 0.0, 0.0, 0.0))
@@ -611,12 +716,12 @@ impl WhatsApp {
         if chat.muted {
             top.push(Node::symbol("bell.slash.fill", 9.0, Weight::Semibold, th.overlay).padding(0.0, 6.0, 0.0, 0.0).key("muted"));
         }
-        top.push(Node::text(when(chat.at, now), th.small_font(), if lit { GREEN } else { th.subtext }).key("when"));
+        top.push(Node::text(when(chat.at, now), th.small_font(), if lit { self.service.color() } else { th.subtext }).key("when"));
         let mut bottom = vec![self.preview_line(th, chat, WIDTH - 120.0, if lit { th.text } else { th.subtext }), Node::spacer()];
         // Green for what's new; gray for what was read here and WhatsApp still counts
         let held = self.held(chat);
         if lit || held > 0 {
-            let (ink, fill) = if lit { (Rgba(0.0, 0.0, 0.0, 1.0), GREEN) } else { (th.subtext, th.surface) };
+            let (ink, fill) = if lit { (self.service.ink(), self.service.color()) } else { (th.subtext, th.surface) };
             let badge = Node::row(vec![Node::text(count(if lit { unread } else { held }), th.font_with(Weight::Bold, 10.0), ink).key("n")])
                 .height(16.0)
                 .min_width(16.0)
@@ -625,7 +730,7 @@ impl WhatsApp {
                 .radius(8.0)
                 .background(fill)
                 .key("badge");
-            bottom.push(if lit { badge } else { badge.tip(t("Letta qui, non ancora su WhatsApp", "Read here, not yet in WhatsApp")) });
+            bottom.push(if lit { badge } else { badge.tip(format!("{} {}", t("Letta qui, non ancora su", "Read here, not yet in"), self.service.name())) });
         }
         let lines = Node::column(vec![Node::row(top).key("top"), Node::row(bottom).key("bottom")]).gap(2.0).grow().key("lines");
         Node::row(vec![avatar(th, chat, 34.0), lines])
@@ -648,9 +753,9 @@ impl WhatsApp {
             .radius(6.0)
             .click(rx.action("app"))
             .hover(th.highlight)
-            .tip(t("Apri WhatsApp", "Open WhatsApp"))
+            .tip(format!("{} {}", t("Apri", "Open"), self.service.name()))
             .key("app");
-        let mut rows = vec![rx.section("WhatsApp", Some(open_app)).key("title")];
+        let mut rows = vec![rx.section(self.service.name(), Some(open_app)).key("title")];
         let note = |symbol: &str, color: Rgba, lines: Vec<String>| {
             let font = th.small_font();
             let text: Vec<Node> = lines.iter().flat_map(|l| wrap(l, &font, WIDTH - 60.0)).enumerate().map(|(i, l)| Node::text(l, font.clone(), th.subtext).key(format!("l{i}"))).collect();
@@ -681,6 +786,14 @@ impl WhatsApp {
                         .key("privacy"),
                 );
             }
+            State::SignedOut => rows.push(note(
+                "person.crop.circle.badge.questionmark",
+                th.yellow,
+                vec![
+                    t("RustyBar non è entrato in Telegram. Nel Terminale: rustybar telegram login", "RustyBar isn't signed in to Telegram. In Terminal: rustybar telegram login").into(),
+                    t("Chiede un api_id tuo (my.telegram.org), il numero e il codice che Telegram manda; poi le chat arrivano da sole.", "It asks for an api_id of yours (my.telegram.org), the number and the code Telegram sends; then the chats come by themselves.").into(),
+                ],
+            )),
             State::Failed(e) => rows.push(note("exclamationmark.triangle.fill", th.red, vec![e.clone()])),
             State::Ready => {
                 let waiting = self.waiting();
@@ -688,7 +801,7 @@ impl WhatsApp {
                     rows.push(self.chat_row(rx, c, now));
                 }
                 if waiting.is_empty() {
-                    rows.push(note("checkmark.circle.fill", GREEN, vec![t("Niente da leggere.", "Nothing to read.").into()]));
+                    rows.push(note("checkmark.circle.fill", self.service.color(), vec![t("Niente da leggere.", "Nothing to read.").into()]));
                 }
                 let mut others: Vec<&Chat> = self.chats.iter().filter(|c| self.unread(c) == 0 && self.held(c) == 0 && (self.groups || !c.group)).collect();
                 others.sort_by(|a, b| b.at.total_cmp(&a.at));
@@ -712,7 +825,7 @@ impl WhatsApp {
         let ink = th.text;
         let mut inside: Vec<Node> = Vec::new();
         if chat.group && !m.mine && !m.sender.is_empty() {
-            inside.push(Node::text(&m.sender, th.font_with(Weight::Semibold, th.small_size), GREEN).max_width(BUBBLE).key("sender"));
+            inside.push(Node::text(&m.sender, th.font_with(Weight::Semibold, th.small_size), self.service.color()).max_width(BUBBLE).key("sender"));
         }
         let text_lines = |text: &str, color: Rgba| -> Vec<Node> {
             text.lines().flat_map(|l| if l.trim().is_empty() { vec![String::new()] } else { wrap(l, &font, BUBBLE) }).enumerate().map(|(i, l)| Node::text(l, font.clone(), color).key(format!("t{i}"))).collect()
@@ -720,9 +833,12 @@ impl WhatsApp {
         let labelled = |symbol: &str, text: String| Node::row(vec![Node::symbol(symbol, 13.0, Weight::Semibold, th.subtext).key("symbol"), Node::text(text, font.clone(), ink).max_width(BUBBLE - 24.0).key("label")]).gap(8.0).key("what");
         // What a click on the bubble does, and its tip
         let mut click: Option<(Action, String)> = None;
-        let in_app = || (rx.action(&format!("show:{}", chat.jid)), t("Apri in WhatsApp", "Open in WhatsApp").to_string());
+        let in_app = || (rx.action(&format!("show:{}", chat.jid)), format!("{} {}", t("Apri in", "Open in"), self.service.name()));
+        // A file that isn't on the Mac: WhatsApp's opens in the app, Telegram's is downloaded
         let open = |file: &Option<String>| match file {
             Some(f) => (Action::Open(f.clone()), t("Apri", "Open").to_string()),
+            None if self.service == Service::Telegram && self.fetching.contains(&m.id) => (rx.action(&format!("fetch:{}", m.id)), t("Lo scarico…", "Downloading…").to_string()),
+            None if self.service == Service::Telegram => (rx.action(&format!("fetch:{}", m.id)), t("Scarica e apri", "Download and open").to_string()),
             None => in_app(),
         };
         match m.kind {
@@ -780,17 +896,17 @@ impl WhatsApp {
                     let playing = self.playing.as_ref().filter(|p| p.id == m.id);
                     let position = playing.map_or(0.0, |p| p.position(now));
                     let going = playing.is_some_and(|p| !p.paused);
-                    let play = Node::row(vec![Node::symbol(if going { "pause.fill" } else { "play.fill" }, 12.0, Weight::Bold, Rgba(0.0, 0.0, 0.0, 1.0)).key("symbol")])
+                    let play = Node::row(vec![Node::symbol(if going { "pause.fill" } else { "play.fill" }, 12.0, Weight::Bold, self.service.ink()).key("symbol")])
                         .size(28.0, 28.0)
                         .radius(14.0)
                         .justify(Justify::Center)
-                        .background(GREEN)
-                        .hover(GREEN.mix(Rgba(1.0, 1.0, 1.0, 1.0), 0.2))
+                        .background(self.service.color())
+                        .hover(self.service.color().mix(Rgba(1.0, 1.0, 1.0, 1.0), 0.2))
                         .click(rx.action(&format!("play:{}", m.id)))
                         .tip(if going { t("Pausa", "Pause") } else { t("Ascolta", "Play") })
                         .key("play");
                     let value = if m.seconds > 0.0 { (position / m.seconds).clamp(0.0, 1.0) } else { 0.0 };
-                    let mut bar = Node::new(Kind::Slider { value, color: GREEN, track: th.base.faded(0.4), font: None, labels: vec![] }).height(8.0).width(120.0);
+                    let mut bar = Node::new(Kind::Slider { value, color: self.service.color(), track: th.base.faded(0.4), font: None, labels: vec![] }).height(8.0).width(120.0);
                     if playing.is_some() {
                         bar = bar.click(rx.action(&format!("seek:{}", m.id)));
                     }
@@ -815,7 +931,7 @@ impl WhatsApp {
             // WhatsApp keeps it off the Mac's disk: nothing to show but that it's there
             Is::Once => {
                 inside.push(labelled("1.circle", summary(m).1));
-                inside.push(Node::text(t("Si apre solo in WhatsApp", "It opens only in WhatsApp"), th.small_font(), th.subtext).key("where"));
+                inside.push(Node::text(format!("{} {}", t("Si apre solo in", "It opens only in"), self.service.name()), th.small_font(), th.subtext).key("where"));
                 click = Some(in_app());
             }
             Is::Deleted => inside.push(Node::row(vec![Node::symbol("nosign", 11.0, Weight::Semibold, th.subtext).key("symbol"), Node::text(summary(m).1, font.clone(), th.subtext).key("label")]).gap(6.0).key("what")),
@@ -828,7 +944,7 @@ impl WhatsApp {
             click = Some((Action::Open(url.to_string()), format!("{} {}", t("Apri", "Open"), host(url))));
         }
         inside.push(Node::row(vec![Node::spacer(), Node::text(clock(m.at), th.font_with(Weight::Medium, 9.0), th.subtext).key("at")]).key("time"));
-        let color = if m.mine { GREEN.faded(0.24) } else { th.surface };
+        let color = if m.mine { self.service.color().faded(0.24) } else { th.surface };
         let mut bubble = Node::column(inside).gap(3.0).padding(6.0, 9.0, 4.0, 9.0).radius(12.0).background(color).key("bubble");
         if let Some((action, tip)) = click {
             bubble = bubble.click(action).hover(color.mix(th.text, 0.08)).tip(tip);
@@ -858,9 +974,13 @@ impl WhatsApp {
             Node::spacer(),
         ];
         if chat.unread > 0 {
-            head.push(button("checkmark.message", &format!("read:{}", chat.jid), t("Segna come letta su WhatsApp: apre la chat nell'app", "Mark as read in WhatsApp: opens the chat in the app")));
+            let tip = match self.service {
+                Service::WhatsApp => t("Segna come letta su WhatsApp: apre la chat nell'app", "Mark as read in WhatsApp: opens the chat in the app").to_string(),
+                Service::Telegram => t("Segna come letta su Telegram", "Mark as read in Telegram").to_string(),
+            };
+            head.push(button("checkmark.message", &format!("read:{}", chat.jid), &tip));
         }
-        head.push(button("arrow.up.forward.app", &format!("show:{}", chat.jid), t("Apri in WhatsApp", "Open in WhatsApp")));
+        head.push(button("arrow.up.forward.app", &format!("show:{}", chat.jid), &format!("{} {}", t("Apri in", "Open in"), self.service.name())));
         let mut rows = vec![Node::row(head).gap(8.0).padding(4.0, 4.0, 4.0, 2.0).key("head"), rx.divider().key("divider")];
 
         let mut list = Vec::new();
@@ -890,14 +1010,17 @@ impl WhatsApp {
         let ready = !draft.trim().is_empty() && !self.sending;
         let placeholder = format!("{} {}", t("Scrivi a", "Message"), chat.name);
         let field = Node::input(draft, placeholder, th.font(), th.text, th.subtext).grow().click(rx.action("draft")).key("draft");
-        let send = Node::row(vec![Node::symbol(if self.sending { "ellipsis" } else { "arrow.up" }, 12.0, Weight::Bold, Rgba(0.0, 0.0, 0.0, 1.0)).key("symbol")])
+        let send = Node::row(vec![Node::symbol(if self.sending { "ellipsis" } else { "arrow.up" }, 12.0, Weight::Bold, self.service.ink()).key("symbol")])
             .size(26.0, 26.0)
             .radius(13.0)
             .justify(Justify::Center)
-            .background(if ready { GREEN } else { GREEN.faded(0.35) })
-            .hover(if ready { GREEN.mix(Rgba(1.0, 1.0, 1.0, 1.0), 0.2) } else { GREEN.faded(0.35) })
+            .background(if ready { self.service.color() } else { self.service.color().faded(0.35) })
+            .hover(if ready { self.service.color().mix(Rgba(1.0, 1.0, 1.0, 1.0), 0.2) } else { self.service.color().faded(0.35) })
             .click(rx.action("send"))
-            .tip(t("Invia con WhatsApp: l'app passa davanti un momento e apre la chat, che segna come letta", "Send with WhatsApp: the app comes to the front for a moment and opens the chat, which it marks read"))
+            .tip(match self.service {
+                Service::WhatsApp => t("Invia con WhatsApp: l'app passa davanti un momento e apre la chat, che segna come letta", "Send with WhatsApp: the app comes to the front for a moment and opens the chat, which it marks read"),
+                Service::Telegram => t("Invia: la chat è segnata come letta", "Send: the chat is marked read"),
+            })
             .key("send");
         rows.push(Node::row(vec![field, send]).gap(8.0).padding(5.0, 5.0, 5.0, 12.0).radius(18.0).background(th.surface).key("compose"));
         if let Some(e) = &self.send_error {
@@ -912,6 +1035,7 @@ impl WhatsApp {
     fn send(&mut self, cx: &mut Cx) {
         let Some(chat) = self.opened() else { return };
         let (jid, name, phone) = (chat.jid.clone(), chat.name.clone(), chat.phone().map(String::from));
+        let chat_jid = jid.clone();
         let text = self.drafts.get(&jid).map(|d| d.trim().to_string()).unwrap_or_default();
         if text.is_empty() || self.sending {
             return;
@@ -933,6 +1057,24 @@ impl WhatsApp {
         }
         self.sending = true;
         cx.redraw();
+        if let Some(telegram) = &self.telegram {
+            let handle = cx.handle::<WhatsApp>();
+            let done = Box::new(move |result: Result<(), String>| {
+                handle.send(move |w, cx| {
+                    w.sending = false;
+                    match result {
+                        Ok(()) => drop(w.drafts.remove(&jid)),
+                        Err(e) => {
+                            crate::log(&format!("telegram: not sent: {e}"));
+                            w.send_error = Some(e);
+                        }
+                    }
+                    cx.redraw();
+                });
+            });
+            telegram.send(tg::Cmd::Send { jid: chat_jid, text, done });
+            return;
+        }
         cx.background(
             move || wa::send(&name, phone.as_deref(), &text),
             move |w: &mut WhatsApp, result, cx| {
@@ -1062,6 +1204,29 @@ impl Widget for WhatsApp {
             self.loaded(chats, cx);
             return;
         }
+        if self.service == Service::Telegram {
+            // The connection tells the chats each time they change
+            let handle = cx.handle::<WhatsApp>();
+            self.telegram = Some(tg::start(self.recent, self.channels, move |chats| {
+                handle.send(move |w, cx| match chats {
+                    Ok(chats) => w.loaded(chats, cx),
+                    Err(e) => {
+                        let state = match e {
+                            tg::Error::SignedOut => State::SignedOut,
+                            tg::Error::Other(e) => State::Failed(e),
+                        };
+                        // What was read stays on show while the connection comes back
+                        if w.state != state && (w.chats.is_empty() || state == State::SignedOut) {
+                            w.state = state;
+                            w.chats.clear();
+                            w.share(cx);
+                            cx.redraw();
+                        }
+                    }
+                });
+            }));
+            return;
+        }
         // Each write of the app, once it has been quiet for a moment: it writes in bursts
         let handle = cx.handle::<WhatsApp>();
         let ticket = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -1085,7 +1250,7 @@ impl Widget for WhatsApp {
     fn bar(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
         // What's new, in green; with none of it, what was read here and WhatsApp still counts, dimmed
-        let (n, color) = tally(th, self.total(), self.held_total());
+        let (n, color) = tally(th, self.service, self.total(), self.held_total());
         let blocked = self.state == State::Denied;
         if self.notch && n > 0 {
             // The notch has it: as the island, or in the island of another widget
@@ -1099,9 +1264,9 @@ impl Widget for WhatsApp {
         if n == 0 && !self.always && !blocked {
             return None;
         }
-        let mut children = vec![glyph(th.icon_size + 2.0).opacity(if n > 0 && color != GREEN { 0.6 } else { 1.0 })];
+        let mut children = vec![glyph(self.service, th.icon_size + 2.0).opacity(if n > 0 && color != self.service.color() { 0.6 } else { 1.0 })];
         if self.playing.as_ref().is_some_and(|p| !p.paused) {
-            children.push(listening());
+            children.push(listening(self.service));
         }
         if blocked {
             children.push(Node::text("!", th.font_with(Weight::Bold, th.font_size), th.yellow).key("blocked"));
@@ -1123,7 +1288,7 @@ impl Widget for WhatsApp {
             return None;
         }
         let island = rx.island.filter(|_| self.notch);
-        let theme = island.map(|_| notch_theme(rx.theme));
+        let theme = island.map(|_| notch_theme(rx.theme, self.service));
         let own = theme.as_ref().map(|theme| Rx { theme, ..*rx });
         let rx = own.as_ref().unwrap_or(rx);
         let th = rx.theme;
@@ -1134,7 +1299,7 @@ impl Widget for WhatsApp {
                 Node::text(&chat.name, th.font_with(Weight::Semibold, th.font_size), th.text).max_width(width - 90.0).key("name"),
                 Node::spacer(),
                 {
-                    let (n, color) = tally(th, self.unread(chat), self.held(chat));
+                    let (n, color) = tally(th, self.service, self.unread(chat), self.held(chat));
                     Node::text(count(n), th.font_with(Weight::Bold, 10.0), color).key("n")
                 },
             ])
@@ -1163,14 +1328,14 @@ impl Widget for WhatsApp {
         let m = chat.messages.iter().find(|m| m.id == a.id)?;
         // On the notch's black, as wide as the popup; or under the pill, in the theme's colors
         match rx.island.filter(|_| self.notch) {
-            Some(_) => notice_node(&notch_theme(rx.theme), rx.name, chat, m, self.preview, WIDTH),
-            None => notice_node(rx.theme, rx.name, chat, m, self.preview, 300.0).map(|n| n.padding(2.0, 12.0, 12.0, 12.0)),
+            Some(_) => notice_node(&notch_theme(rx.theme, self.service), self.service, rx.name, chat, m, self.preview, WIDTH),
+            None => notice_node(rx.theme, self.service, rx.name, chat, m, self.preview, 300.0).map(|n| n.padding(2.0, 12.0, 12.0, 12.0)),
         }
     }
 
     fn popup(&self, rx: &Rx) -> Option<Node> {
         // On the island, on the notch's black
-        let theme = rx.island.filter(|_| self.notch).map(|_| notch_theme(rx.theme));
+        let theme = rx.island.filter(|_| self.notch).map(|_| notch_theme(rx.theme, self.service));
         let own = theme.as_ref().map(|theme| Rx { theme, ..*rx });
         let rx = own.as_ref().unwrap_or(rx);
         Some(match self.opened() {
@@ -1195,6 +1360,7 @@ impl Widget for WhatsApp {
                 self.open = Some(jid.to_string());
                 self.send_error = None;
                 self.see(jid);
+                self.show_chat(jid);
                 self.share(cx);
                 if !cx.popup_open {
                     self.keep = true;
@@ -1218,6 +1384,44 @@ impl Widget for WhatsApp {
             }
             // In the app: the chat with a person by its number; a group's has no link, so through
             // Accessibility, as a reply
+            Some(("fetch", id)) => {
+                let (Ok(id), Some(jid), Some(telegram)) = (id.parse::<i64>(), self.open.clone(), &self.telegram) else { return };
+                if !self.fetching.insert(id) {
+                    return;
+                }
+                let handle = cx.handle::<WhatsApp>();
+                let done = Box::new(move |result: Result<String, String>| {
+                    handle.send(move |w, cx| {
+                        w.fetching.remove(&id);
+                        match result {
+                            Ok(file) => crate::runtime::open(&file),
+                            Err(e) => w.send_error = Some(e),
+                        }
+                        cx.redraw();
+                    });
+                });
+                telegram.send(tg::Cmd::Fetch { jid, id, done });
+            }
+            Some((verb @ ("show" | "read"), jid)) if self.service == Service::Telegram => {
+                if self.mock.is_some() {
+                    return;
+                }
+                if verb == "show" {
+                    crate::runtime::open(&tg::link(jid));
+                    cx.close_popup();
+                } else if let Some(telegram) = &self.telegram {
+                    let handle = cx.handle::<WhatsApp>();
+                    let done = Box::new(move |result: Result<(), String>| {
+                        if let Err(e) = result {
+                            handle.send(move |w, cx| {
+                                w.send_error = Some(e);
+                                cx.redraw();
+                            });
+                        }
+                    });
+                    telegram.send(tg::Cmd::Read { jid: jid.to_string(), done });
+                }
+            }
             Some((verb @ ("show" | "read"), jid)) => {
                 if self.mock.is_some() {
                     return;
@@ -1244,7 +1448,7 @@ impl Widget for WhatsApp {
                 "send" => self.send(cx),
                 "app" => {
                     if self.mock.is_none() {
-                        crate::runtime::open_app(wa::BUNDLE);
+                        crate::runtime::open_app(self.service.bundle());
                     }
                     cx.close_popup();
                 }
@@ -1263,14 +1467,19 @@ impl Widget for WhatsApp {
                 self.send_error = None;
             }
             Event::PopupClosed => {
+                if let Some(telegram) = &self.telegram {
+                    telegram.send(tg::Cmd::Close);
+                }
                 self.playing = None;
                 self.share(cx);
             }
             Event::Wake => self.load(cx),
-            Event::Trigger { name, .. } if name == "whatsapp_message" => self.mock_message(cx),
+            Event::Trigger { name, .. } if name.strip_suffix("_message") == Some(self.service.key()) => self.mock_message(cx),
+            // After `rustybar telegram login`, or a logout
+            Event::Trigger { name, .. } if name == "telegram_login" && self.service == Service::Telegram => self.load(cx),
             // `msg trigger whatsapp_chat chat=<jid, or how its name starts>`: the popup on that
             // chat, or on the list without one
-            Event::Trigger { name, args } if name == "whatsapp_chat" => {
+            Event::Trigger { name, args } if name.strip_suffix("_chat") == Some(self.service.key()) => {
                 let jid = args.get("chat").and_then(|n| self.chats.iter().find(|c| c.jid == *n || c.name.starts_with(n.as_str()))).map(|c| c.jid.clone());
                 match jid {
                     Some(jid) => self.action(&format!("chat:{jid}"), None, cx),
@@ -1350,7 +1559,7 @@ mod tests {
     }
 
     fn widget() -> WhatsApp {
-        let mut w = WhatsApp::new(&Options::default());
+        let mut w = WhatsApp::new(&Options::default(), Service::WhatsApp);
         w.mock = Some(Mock::default());
         w.seen.clear();
         w.state = State::Ready;
@@ -1366,11 +1575,11 @@ mod tests {
         // Nothing new, but WhatsApp still counts two: held, and still among those that wait
         assert_eq!((w.total(), w.held_total(), w.waiting().len()), (0, 2, 1));
         let th = Theme::from_config(&crate::config::ThemeConfig::default());
-        assert_eq!(tally(&th, w.total(), w.held_total()), (2, th.subtext));
+        assert_eq!(tally(&th, w.service, w.total(), w.held_total()), (2, th.subtext));
         // One more message: only that one waits, though WhatsApp counts three
         w.chats = vec![chat("a", 3, 6), chat("b", 0, 3)];
         assert_eq!((w.total(), w.held_total()), (1, 0));
-        assert_eq!(tally(&th, w.total(), w.held_total()), (1, GREEN));
+        assert_eq!(tally(&th, w.service, w.total(), w.held_total()), (1, w.service.color()));
         // A chat with something new comes before one read here, though written to before it
         w.chats = vec![chat("a", 3, 6), chat("c", 1, 2)];
         w.see("a");

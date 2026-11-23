@@ -27,6 +27,7 @@ processes a minute.
 | `audio` | The output and the input in use, with the battery of Bluetooth devices and a slider with the volume of each (`sliders = false` hides them), the first thing to go when the bar has no room; the Mac's own speakers and microphone, or both halves of a headset, show as one | A dashboard: the output and input volume, each with its level and a slider; tiles for the devices to switch to and for the paired Bluetooth headphones and speakers to connect or disconnect |
 | `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph and the VPN; then Details, closed until clicked: on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click |
 | `whatsapp` | WhatsApp's unread messages: its icon and how many wait. On a screen with a notch they're in the notch: around it with the picture and the name of who wrote last, or a sign in the music's island while something plays; a new message grows the island for a moment with who wrote and how it starts. Hidden with nothing unread. Not in the default layout | The chats that wait, then the latest of the others; a click shows the chat: texts, pictures, videos and documents (a click opens them), voice notes played there, links, and a field to answer, sent through WhatsApp's app |
+| `telegram` | Telegram's unread messages, as `whatsapp` shows WhatsApp's: the count, the notch, the notice of a new message. Not in the default layout; first `rustybar telegram login` | The same popup: the chats that wait, then the latest; a chat with its texts, pictures, voice notes, videos and documents (downloaded when asked), and a field to answer, sent straight to Telegram |
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | A dashboard: the next event (or the one going on, with how much of it is gone) with its calendar, place, guests who accepted and Join for its Google Meet call; the all-day events; then the whole day in the colors of its calendars, with a line at the time it is now. A click joins the call or shows the event in Calendar |
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, or to dismiss with their ✕ or all at once (a badge comes back when it goes up), the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
@@ -475,6 +476,41 @@ update of WhatsApp may move these controls: then nothing is sent, and the popup 
 
 `rustybar msg trigger whatsapp_chat chat=<jid, or how the name starts>` opens the popup on a chat;
 with the made-up data, `rustybar msg trigger whatsapp_message` brings the next made-up message.
+
+
+### Telegram
+
+The `telegram` widget is `whatsapp`'s with Telegram's chats: the same pill, island, notice, peek
+and popup, in Telegram's blue, and the same options, plus `channels = true` to follow the
+channels too (archived chats never are). Both can be in the bar, each with its sign in the notch.
+
+Telegram's Mac app keeps its messages in an encrypted database of its own, so here RustyBar is a
+Telegram client itself, with Telegram's API (MTProto, through [grammers](https://codeberg.org/Lonami/grammers)):
+it needs neither the app nor any permission of macOS. Sign in once, in a terminal:
+
+```sh
+rustybar telegram login     # api_id and api_hash (my.telegram.org → API development tools),
+                            # your number, the code Telegram sends, the two-step password if any
+rustybar telegram status    # who is signed in
+rustybar telegram logout    # ends the session at Telegram and deletes it from the Mac
+```
+
+RustyBar then shows among your devices in Telegram's settings. The session (the key Telegram gave
+it) is in `~/Library/Application Support/rustybar/telegram.json`, readable by you alone: as with
+any Telegram client's files, whoever has it reads the account. The password and the api_hash
+aren't kept.
+
+One connection stays open and Telegram tells what changes, so nothing is polled: a new message, an
+edit, a chat read on the phone. The 40 chats written to last are followed. What differs from
+`whatsapp`:
+
+- a reply goes straight to Telegram, without its app coming to the front, and marks the chat
+  read, as any Telegram does; the ✓ marks it read without a reply;
+- reading a chat in the bar still tells Telegram nothing, and the chat stays dimmed until then;
+- pictures, stickers and voice notes of a chat are downloaded when the chat opens, into
+  `~/Library/Caches/rustybar/telegram`; a video or a document with a click, then it opens;
+- a photo or a video sent to view once only says it's there, and opens in Telegram's app;
+- the ↗ opens the chat in Telegram's app (`tg://openmessage`).
 
 ### Devices
 
