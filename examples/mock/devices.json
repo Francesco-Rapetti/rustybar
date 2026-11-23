@@ -1,6 +1,6 @@
 {
   "devices": [
-    {"name": "Glide Pro", "category": "mouse", "link": "cable", "battery": 100, "charging": true, "connected": true},
+    {"name": "Glide Pro", "category": "mouse", "link": "cable", "battery": 62, "charging": true, "minutes": 48, "connected": true},
     {"name": "Tempo Keys 75", "category": "keyboard", "link": "receiver", "battery": 8, "connected": true},
     {"name": "Split 80", "category": "keyboard", "link": "receiver", "battery": 53, "second": 48, "connected": true},
     {"name": "Arcade Pad", "category": "controller", "link": "bluetooth", "battery": 91, "connected": true},

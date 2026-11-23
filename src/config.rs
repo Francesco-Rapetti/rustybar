@@ -129,8 +129,9 @@ pub struct DisplayConfig {
     /// Widgets that draw their compact form on every screen, even where the full one would fit.
     pub always_compact: Vec<String>,
     /// Widgets that leave out what the bar can do without when there's no room, in this order,
-    /// before any widget turns compact: `audio` its volume sliders, `system` the CPU and GPU,
-    /// `claude` the pills of the single accounts. Those before one that had to all the same take
+    /// before any widget turns compact: `devices` and `battery` the time until a charge is full,
+    /// `audio` its volume sliders, `system` the CPU and GPU, `claude` the pills of the single
+    /// accounts. Those before one that had to all the same take
     /// their whole form back if it left them room (see `fit`).
     pub slim_first: Vec<String>,
     /// From this width in points a screen is "large": Lua widgets can show more there
@@ -144,7 +145,7 @@ impl Default for DisplayConfig {
             compact_on_notch: false,
             hide_on_notch: vec![],
             always_compact: vec![],
-            slim_first: vec!["audio".into(), "system".into(), "claude".into()],
+            slim_first: vec!["devices".into(), "battery".into(), "audio".into(), "system".into(), "claude".into()],
             large_width: 3840.0,
         }
     }

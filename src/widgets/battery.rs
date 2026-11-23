@@ -11,6 +11,10 @@
 //! the charge at it, Optimized Battery Charging, the desktop mode); yellow is also the bolt or the
 //! plug while Charge to Full Now pauses the limit.
 //!
+//! While it charges, how long it takes and at what time it's there (`25 min · 18:45`): under the
+//! state in the popup, and in the pill where the bar has room (the first thing to go, see
+//! `slim_first`). macOS gives the time to full; up to the limit, its share of that.
+//!
 //! IOKit says when the battery changes and PowerUIAgent when the limit does, so nothing polls. The
 //! Charge Limit is PowerUIAgent's, asked through the private framework of System Settings. The
 //! temperature and the power change all the time and have no event: they're read from IOKit only
@@ -97,6 +101,21 @@ struct Adapter {
     volts: Option<f64>,
     /// `USB-C` or `MagSafe`, from its name.
     kind: Option<String>,
+}
+
+impl Status {
+    /// While it charges, the minutes until it's where it stops: full, or at the limit. macOS
+    /// gives the time to full, at the pace of now: the limit takes its share of that.
+    fn to_target(&self) -> Option<i64> {
+        if !self.charging || self.minutes <= 0 || self.percent >= 100 {
+            return None;
+        }
+        if self.limit_state != LimitState::On {
+            return Some(self.minutes);
+        }
+        let (left, limit) = (100 - self.percent, self.limit as i64 - self.percent);
+        (limit > 0).then(|| (self.minutes * limit + left / 2) / left).map(|m| m.max(1))
+    }
 }
 
 /// What changes all the time, read while the popup is open.
@@ -243,10 +262,14 @@ impl Battery {
             }
             (t("A batteria", "On Battery").to_string(), th.text)
         } else if s.charging {
-            match s.limit_state {
-                LimitState::On => details.push(t(&format!("Fino al limite ({}%)", s.limit), &format!("Up to the limit ({}%)", s.limit)).into()),
-                LimitState::Paused => details.push(t("Fino al 100%", "Up to 100%").into()),
-                _ if s.minutes > 0 => details.push(t(&format!("Completa tra {}", duration(s.minutes)), &format!("Full in {}", duration(s.minutes))).into()),
+            // How long it takes and at what time it's there
+            let when = s.to_target().map(|m| (duration(m), crate::time::clock(crate::time::now() + m as f64 * 60.0)));
+            match (s.limit_state, when) {
+                (LimitState::On, Some((d, at))) => details.push(t(&format!("{}% tra {d} · alle {at}", s.limit), &format!("{}% in {d} · at {at}", s.limit)).into()),
+                (LimitState::On, None) => details.push(t(&format!("Fino al limite ({}%)", s.limit), &format!("Up to the limit ({}%)", s.limit)).into()),
+                (LimitState::Paused, Some((d, at))) => details.push(t(&format!("100% tra {d} · alle {at}"), &format!("100% in {d} · at {at}")).into()),
+                (LimitState::Paused, None) => details.push(t("Fino al 100%", "Up to 100%").into()),
+                (_, Some((d, at))) => details.push(t(&format!("Completa tra {d} · alle {at}"), &format!("Full in {d} · at {at}")).into()),
                 _ => {}
             }
             (t("In carica", "Charging").to_string(), th.text)
@@ -518,13 +541,16 @@ impl Widget for Battery {
         let th = rx.theme;
         let s = self.status.as_ref()?;
         let (icon, color) = self.icon(rx, s);
-        Some(
-            rx.pill(vec![
-                Node::symbol(icon, th.icon_size, Weight::Semibold, color).key("icon"),
-                Node::text(format!("{}%", s.percent), th.font(), th.text).key("percent"),
-            ])
-            .click(rx.toggle_popup()),
-        )
+        let mut children = vec![
+            Node::symbol(icon, th.icon_size, Weight::Semibold, color).key("icon"),
+            Node::text(format!("{}%", s.percent), th.font(), th.text).key("percent"),
+        ];
+        // While it charges and the bar has room: how long it takes and at what time it's there
+        if let Some(m) = s.to_target().filter(|_| !rx.slim) {
+            let at = crate::time::clock(crate::time::now() + m as f64 * 60.0);
+            children.push(Node::text(format!("{} · {at}", duration(m)), th.small_font(), th.subtext).key("time"));
+        }
+        Some(rx.pill(children).click(rx.toggle_popup()))
     }
 
     fn popup(&self, rx: &Rx) -> Option<Node> {

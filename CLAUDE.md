@@ -731,6 +731,21 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Provato coi dati finti sulla barra di prova con un ritocco temporaneo di `display.rs` che
   toglieva il notch (tolto): pill che cresce col messaggio, pill della chiamata con la musica.
   Da provare su uno schermo vero senza notch.
+- Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
+  sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
+  (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del
+  tempo a 100%: `Status::to_target`) e nella pill (`25 min · 15:29`). `devices`: nessun
+  dispositivo dice quanto ci mette (nell'elenco di macOS c'è solo livello e `Is Charging`), quindi
+  dal ritmo degli ultimi 8 passi in su (`pace`, con l'orologio, che va avanti anche col Mac in
+  stop): compare dal secondo passo visto, riparte se il livello scende, se smette di caricare o
+  dopo 45 minuti senza passi; riga `Carico tra … · alle …` nel riquadro, `47 min · 15:52` nella
+  pill, ridisegnate ogni minuto solo finché c'è una stima. Sulla pill è la prima cosa a sparire:
+  `slim_first` di default ora `devices`, `battery`, `audio`, `system`, `claude`. Provato coi dati
+  finti sulla barra di prova col notch (pill intere, slim e compatte, i due popup). Sulla barra
+  vera dal 23/11/2026: 25 MB in 2 processi, 0,23% CPU, 0 processi in 30 s. Da provare dal
+  vero: il Mac in carica col limite attivo (se macOS dà già il tempo fino al limite, la quota è
+  troppo bassa), la stima di un mouse o di una tastiera in carica, e che non resti indietro
+  vicino al 100%.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

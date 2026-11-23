@@ -51,6 +51,12 @@ pub fn iso8601(s: &str) -> Option<f64> {
     Some((days * 86_400 + h * 3600 + mi * 60 + sec - offset) as f64 + frac)
 }
 
+/// `18:45`, the local time of `t`.
+pub fn clock(t: f64) -> String {
+    let tm = local(t);
+    format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
+}
+
 /// A span of time in its two largest units: `3 g 5 h`, `2 h 57 min`, `12 min`.
 pub fn span(secs: f64) -> String {
     let s = secs.max(0.0) as i64;

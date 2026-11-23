@@ -2,7 +2,10 @@
 //! tell theirs (earbuds, headphones). The pill shows the connected ones that run low (`low`, 20%),
 //! the kinds of `pinned` always (`["mouse", "keyboard", "controller"]`), or every connected one
 //! with `always = true`, side by side with a thin line between them: its kind, a short name, its
-//! level as a small bar and a number colored by how full it is, and a bolt while it charges.
+//! level as a small bar and a number colored by how full it is, and a bolt while it charges, with
+//! how long until it's full and at what time where the bar has room (the first thing to go, see
+//! `slim_first`). No device says how long it takes: it comes from the pace of its last steps up
+//! (`pace`), so it shows a couple of steps after the charge starts, in the popup too.
 //! Compact: the kinds, the bars and the bolts. The popup has a tile for each connected one, with its kind in
 //! a round badge, its name, maker, link and state, the level big and as a bar (one for each half of
 //! a split keyboard, each earbud and the case); then the others in short rows, and the Bluetooth
@@ -27,7 +30,7 @@
 //!
 //! With made-up data (see `mock`) the devices are those of `devices.json`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_char, c_int};
 use std::time::{Duration, Instant};
 
@@ -98,6 +101,8 @@ struct Device {
     /// started: the pill keeps it, dimmed, with that level, and the popup says when it was read.
     asleep: bool,
     read_at: Option<String>,
+    /// While it charges and its pace is known: when it's full, in seconds since 1970 (`Pace`).
+    full_at: Option<f64>,
 }
 
 pub struct Devices {
@@ -112,6 +117,10 @@ pub struct Devices {
     last: HashMap<String, (u8, Option<u8>, String)>,
     /// For the devices of macOS's list that don't say whether they charge, by key (`rising`).
     rises: HashMap<String, Rise>,
+    /// How fast each device charges, by key.
+    paces: HashMap<String, Pace>,
+    /// The pill and the popup are drawn again every minute while they show a time to full.
+    ticking: bool,
     /// Names of the user's for the pill, by the full name (lowercase): `names = { "Razer Naga V2
     /// Pro" = "Gioco" }`.
     names: HashMap<String, String>,
@@ -146,6 +155,8 @@ impl Devices {
             wired: Vec::new(),
             last: HashMap::new(),
             rises: HashMap::new(),
+            paces: HashMap::new(),
+            ticking: false,
             names,
             low: options.f64("low").unwrap_or(20.0).clamp(0.0, 100.0) as u8,
             always: options.bool("always").unwrap_or(false),
@@ -262,16 +273,34 @@ impl Devices {
                     connected: f.level.is_some(),
                     asleep: f.level.is_none() && last.is_some(),
                     read_at: last.filter(|_| f.level.is_none()).map(|(_, _, at)| at.clone()),
+                    full_at: None,
                 }
             })
             .collect();
         let mut bluetooth = self.bluetooth.clone();
         bluetooth.extend(self.gone.iter().cloned());
-        let devices = combine(bluetooth, &mut wired);
+        let mut devices = combine(bluetooth, &mut wired);
+        pace(&mut self.paces, &mut devices, crate::time::now());
         if devices != self.devices {
             self.devices = devices;
             cx.redraw();
         }
+        self.tick(cx);
+    }
+
+    /// While a device shows how long it takes, the time left goes down: drawn again every minute.
+    fn tick(&mut self, cx: &mut Cx) {
+        if self.ticking || self.devices.iter().all(|d| d.full_at.is_none()) {
+            return;
+        }
+        self.ticking = true;
+        cx.after::<Devices>(60.0, |w, cx| {
+            w.ticking = false;
+            if w.devices.iter().any(|d| d.full_at.is_some()) {
+                cx.redraw();
+                w.tick(cx);
+            }
+        });
     }
 
     /// The connected devices the pill shows (and those asleep behind a receiver, dimmed): the kinds
@@ -297,12 +326,17 @@ impl Devices {
         let value = level_text(d);
         let bolt = 18.0;
         let names = INNER - BADGE - 20.0 - crate::gfx::measure_text(&value, &big).width - if d.charging { bolt } else { 0.0 };
+        let mut lines = vec![
+            Node::text(d.name.as_str(), th.font(), p.text).max_width(names).key("name"),
+            Node::text(details(d), th.small_font(), th.subtext).max_width(names).key("details"),
+        ];
+        // How long until it's full and at what time, once its pace is known
+        if let Some((left, at)) = to_full(d) {
+            lines.push(Node::text(t(&format!("Carico tra {left} · alle {at}"), &format!("Full in {left} · at {at}")), th.small_font(), th.subtext).max_width(names).key("full"));
+        }
         let mut top = vec![
             badge,
-            Node::column(vec![
-                Node::text(d.name.as_str(), th.font(), p.text).max_width(names).key("name"),
-                Node::text(details(d), th.small_font(), th.subtext).max_width(names).key("details"),
-            ])
+            Node::column(lines)
             .gap(2.0)
             .align(Align::Start)
             .key("names"),
@@ -405,6 +439,10 @@ impl Widget for Devices {
             if d.charging {
                 item.push(Node::symbol("bolt.fill", 10.0, Weight::Bold, th.yellow).key("bolt"));
             }
+            // With room in the bar: how long until it's full and at what time
+            if let Some((left, at)) = to_full(d).filter(|_| !rx.slim) {
+                item.push(Node::text(format!("{left} · {at}"), th.small_font(), th.subtext).key("full"));
+            }
             children.push(Node::row(item).gap(5.0).align(Align::Center).key(format!("device-{}", d.key)));
         }
         Some(rx.pill(children).gap(8.0).click(rx.toggle_popup()))
@@ -488,8 +526,7 @@ unsafe extern "C" {
 
 /// `14:05`, now.
 fn time_now() -> String {
-    let tm = crate::time::local(crate::time::now());
-    format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
+    crate::time::clock(crate::time::now())
 }
 
 /// macOS's list of the accessories' batteries, as `pmset -g accps` shows it; the parts of one
@@ -562,6 +599,55 @@ fn rising(rises: &mut HashMap<String, Rise>, devices: &mut [Device], now: Instan
     }
 }
 
+/// The steps up of a charging device's level between two of these are one charge, in seconds: a
+/// later one starts again.
+const PACE_GAP: f64 = 45.0 * 60.0;
+/// The steps the pace is taken over: the last ones, since a battery charges slower near full.
+const PACE_STEPS: usize = 8;
+
+/// How a charging device's level went up lately: no device says how long it takes, so that comes
+/// from its pace.
+#[derive(Default)]
+struct Pace {
+    last: u8,
+    /// When the level stepped up, and to what, the oldest first. By the clock, which goes on while
+    /// the Mac sleeps, as the charge does.
+    steps: VecDeque<(f64, u8)>,
+}
+
+/// When each charging device is full (`full_at`), at the pace of its last steps up: known from
+/// the second step seen, since the first level seen was reached nobody knows when.
+fn pace(paces: &mut HashMap<String, Pace>, devices: &mut [Device], now: f64) {
+    paces.retain(|k, _| devices.iter().any(|d| d.key == *k && d.connected));
+    for d in devices.iter_mut().filter(|d| d.connected) {
+        let Some(level) = d.level else { continue };
+        let p = paces.entry(d.key.clone()).or_insert(Pace { last: level, steps: VecDeque::new() });
+        let stale = p.steps.back().is_some_and(|&(at, _)| now - at > PACE_GAP || now < at);
+        if level < p.last || stale || (d.says_charging && !d.charging) {
+            p.steps.clear();
+        }
+        if level > p.last && (d.charging || !d.says_charging) {
+            p.steps.push_back((now, level));
+            if p.steps.len() > PACE_STEPS {
+                p.steps.pop_front();
+            }
+        }
+        p.last = level;
+        d.full_at = match (p.steps.front(), p.steps.back()) {
+            (Some(&(t0, l0)), Some(&(t1, l1))) if d.charging && l1 > l0 && t1 > t0 && level < 100 => Some((t1 + (100 - l1) as f64 * (t1 - t0) / (l1 - l0) as f64).round()),
+            _ => None,
+        };
+    }
+}
+
+/// `1 h 20 min` and `18:45`: how long until a charging device is full and at what time; nothing
+/// in the last minute, or once the time has passed (it charges slower near full).
+fn to_full(d: &Device) -> Option<(String, String)> {
+    let at = d.full_at?;
+    let left = at - crate::time::now();
+    (left >= 60.0).then(|| (crate::time::span(left), crate::time::clock(at)))
+}
+
 /// One power source of macOS's list.
 struct Source {
     name: String,
@@ -617,6 +703,7 @@ fn accessory(key: String, sources: Vec<Source>) -> Device {
         connected: true,
         asleep: false,
         read_at: None,
+        full_at: None,
     }
 }
 
@@ -904,6 +991,8 @@ struct MockDevice {
     right: Option<u8>,
     case: Option<u8>,
     charging: bool,
+    /// To full, while it charges.
+    minutes: Option<f64>,
     connected: bool,
     asleep: bool,
     read: Option<String>,
@@ -940,6 +1029,7 @@ impl MockDevice {
             connected: self.connected,
             asleep: self.asleep,
             read_at: self.read,
+            full_at: self.minutes.filter(|_| self.charging).map(|m| crate::time::now() + m * 60.0),
             name: self.name,
         }
     }
@@ -950,7 +1040,7 @@ mod tests {
     use super::*;
 
     fn device(name: &str, kind: Kind, maker: Maker, link: Link, level: u8, connected: bool) -> Device {
-        Device { key: name.to_lowercase(), name: name.into(), kind, icon: kind_icon(kind), maker, link, level: Some(level), parts: Vec::new(), charging: false, says_charging: true, connected, asleep: false, read_at: None }
+        Device { key: name.to_lowercase(), name: name.into(), kind, icon: kind_icon(kind), maker, link, level: Some(level), parts: Vec::new(), charging: false, says_charging: true, connected, asleep: false, read_at: None, full_at: None }
     }
 
     fn widget() -> Devices {
@@ -980,6 +1070,29 @@ mod tests {
         assert_eq!(kind_of("Game Controller"), Kind::Controller);
         assert_eq!(kind_named("Mouse"), Some(Kind::Mouse));
         assert_eq!(kind_named("toaster"), None);
+    }
+
+    #[test]
+    fn the_time_to_full_comes_from_the_pace() {
+        let mut paces = HashMap::new();
+        let mut at = |level: u8, charging: bool, minute: f64| {
+            let mut now = vec![device("Mouse", Kind::Mouse, Maker::Apple, Link::Bluetooth, level, true)];
+            now[0].charging = charging;
+            pace(&mut paces, &mut now, minute * 60.0);
+            now[0].full_at.map(|t| t / 60.0)
+        };
+        // The first level was reached nobody knows when: nothing until the second step up
+        assert_eq!((at(10, true, 0.0), at(11, true, 1.0)), (None, None));
+        // A point every 2 minutes: 88 more take 176
+        assert_eq!(at(12, true, 3.0), Some(179.0));
+        assert_eq!(at(12, true, 4.0), Some(179.0));
+        // Slower now: the pace of all the steps kept
+        assert_eq!(at(13, true, 7.0), Some(7.0 + 87.0 * 3.0));
+        // Unplugged, then plugged in again: from the start
+        assert_eq!(at(13, false, 8.0), None);
+        assert_eq!((at(14, true, 9.0), at(15, true, 10.0)), (None, Some(10.0 + 85.0)));
+        // A step long after the last isn't the same charge
+        assert_eq!(at(17, true, 100.0), None);
     }
 
     #[test]
