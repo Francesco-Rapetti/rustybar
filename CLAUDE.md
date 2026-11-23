@@ -747,10 +747,13 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   pill, ridisegnate ogni minuto solo finché c'è una stima. Sulla pill è la prima cosa a sparire:
   `slim_first` di default ora `devices`, `battery`, `audio`, `system`, `claude`. Provato coi dati
   finti sulla barra di prova col notch (pill intere, slim e compatte, i due popup). Sulla barra
-  vera dal 23/11/2026: 25 MB in 2 processi, 0,23% CPU, 0 processi in 30 s. Da provare dal
-  vero: il Mac in carica col limite attivo (se macOS dà già il tempo fino al limite, la quota è
-  troppo bassa), la stima di un mouse o di una tastiera in carica, e che non resti indietro
-  vicino al 100%.
+  vera dal 23/11/2026: 25 MB in 2 processi, 0,23% CPU, 0 processi in 30 s. Dal vero lo stesso
+  giorno, col Magic Mouse in carica: dall'8% al 10% in ~5 minuti dopo l'avvio, poi nel popup
+  `Carico tra 6 h 29 min · alle 21:41` (saliva di un punto ogni ~4 minuti: la stima segue quel
+  ritmo; sul MacBook `devices` è compatto, quindi nella pill non si è visto). Screenshot del
+  README rifatti. Da provare dal vero: il Mac in carica col limite attivo (se macOS dà già il
+  tempo fino al limite, la quota è troppo bassa), quanto è giusta la stima verso la fine (non
+  resti indietro vicino al 100%), la pill su uno schermo dove `devices` è intero.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a
