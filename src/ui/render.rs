@@ -29,6 +29,14 @@ pub struct Hit {
     pub tip: Option<String>,
 }
 
+/// Where a text to type is (see `Kind::Input`), in surface coordinates (top-left origin), and its
+/// node.
+#[derive(Clone, Debug)]
+pub struct Input {
+    pub rect: CGRect,
+    pub node: Node,
+}
+
 /// Where Liquid Glass goes behind a glass node, in surface coordinates (top-left origin).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Glass {
@@ -156,6 +164,8 @@ pub struct Surface {
     pub highlight: Rgba,
     /// The glass nodes of the last render, for the window to put its glass views behind them.
     pub glass: Vec<Glass>,
+    /// The `Kind::Input` nodes of the last render, for the app to put its text field over.
+    pub inputs: Vec<Input>,
     /// Draws the glass nodes with this fill instead (a popup, which is glass already).
     pub glass_fill: Option<Rgba>,
     /// The stiffness and damping of the spring that changes of a notch's shape follow (see
@@ -209,6 +219,7 @@ impl Surface {
             hover_color: None,
             highlight,
             glass: Vec::new(),
+            inputs: Vec::new(),
             glass_fill: None,
             spring: None,
             entries: HashMap::new(),
@@ -234,6 +245,7 @@ impl Surface {
         self.generation += 1;
         self.hits.clear();
         self.glass.clear();
+        self.inputs.clear();
         let animate = self.animate;
         CATransaction::begin();
         CATransaction::setDisableActions(!animate);
@@ -540,6 +552,8 @@ impl Surface {
                 sh.setCornerRadius(s.radius);
             }
             Kind::Bars { color } => layout_bars(entry, &layer, *color, laid.w, laid.h, motion, scale),
+            // The app's text field is over it
+            Kind::Input { .. } => {}
             Kind::Box | Kind::Scroll { .. } => {
                 if entry.sig.is_some() {
                     unsafe { layer.setContents(None) };
@@ -591,6 +605,11 @@ impl Surface {
                 Kind::Slider { .. } if node.on_click.is_some() => Some(HitKind::Slider),
                 Kind::Slider { .. } => None,
                 Kind::Scroll { .. } => Some(HitKind::Scroll),
+                // The text field goes over it (see `Kind::Input`): no click of its own
+                Kind::Input { .. } => {
+                    self.inputs.push(Input { rect: r, node: Node { children: Vec::new(), ..node.clone() } });
+                    None
+                }
                 _ if node.on_click.is_some() => Some(HitKind::Click),
                 _ if node.tip.is_some() => Some(HitKind::Tip),
                 _ => None,
@@ -1405,6 +1424,7 @@ fn kind_tag(kind: &Kind) -> &'static str {
         Kind::Scroll { .. } => "scroll",
         Kind::Skeleton => "skeleton",
         Kind::Bars { .. } => "bars",
+        Kind::Input { .. } => "input",
     }
 }
 

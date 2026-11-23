@@ -26,6 +26,7 @@ processes a minute.
 | `clock` | Date and time in the language and format of your Mac | A calendar that scrolls through the months without end; a click on a day opens it in Calendar |
 | `audio` | The output and the input in use, with the battery of Bluetooth devices and a slider with the volume of each (`sliders = false` hides them), the first thing to go when the bar has no room; the Mac's own speakers and microphone, or both halves of a headset, show as one | A dashboard: the output and input volume, each with its level and a slider; tiles for the devices to switch to and for the paired Bluetooth headphones and speakers to connect or disconnect |
 | `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph and the VPN; then Details, closed until clicked: on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click |
+| `whatsapp` | WhatsApp's unread messages: its icon and how many wait. On a screen with a notch they're in the notch: around it with the picture and the name of who wrote last, or a sign in the music's island while something plays; a new message grows the island for a moment with who wrote and how it starts. Hidden with nothing unread. Not in the default layout | The chats that wait, then the latest of the others; a click shows the chat: texts, pictures, videos and documents (a click opens them), voice notes played there, links, and a field to answer, sent through WhatsApp's app |
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | A dashboard: the next event (or the one going on, with how much of it is gone) with its calendar, place, guests who accepted and Join for its Google Meet call; the all-day events; then the whole day in the colors of its calendars, with a line at the time it is now. A click joins the call or shows the event in Calendar |
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, or to dismiss with their ✕ or all at once (a badge comes back when it goes up), the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
@@ -67,7 +68,7 @@ function keys from Keyboard Settings' notification, what plays from the
 notifications of Music and Spotify, the sound from CoreAudio
 listeners, the batteries of the devices from powerd's notifications and IOKit's (a receiver
 plugged in or out), the network from the System Configuration store, the calendars from EventKit,
-Home Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
+WhatsApp's chats from the file its app writes them to, Home Assistant from its WebSocket API, Docker from the `/events` stream of its Engine API, the clock
 from a timer aligned to the minute. What has no event is read in-process on a timer: CPU, GPU and
 memory every 2 seconds, the Dock badges every 2 seconds (through Accessibility), the batteries
 behind a receiver or a cable every 5 minutes while one is plugged in, and only while
@@ -117,7 +118,8 @@ RustyBar asks for each permission the first time a widget needs it:
 | Calendars | `events` | Today's events (at start) |
 | Location | `network` | The nearby Wi-Fi networks and joining them (when its popup opens); the name of the current network doesn't need it |
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
-| Accessibility | `notifications`, `now_playing` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls) |
+| Accessibility | `notifications`, `now_playing`, `whatsapp` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls). Sending a reply and marking a chat read through WhatsApp's window |
+| Data of other apps | `whatsapp` | Reading WhatsApp's chats from its app's folder: macOS asks once, at the start; without it a yellow `!` shows, whose popup says how to be asked again (`tccutil reset SystemPolicyAppData io.github.francesco-rapetti.rustybar`, or Full Disk Access) |
 | Automation | `apple`, `clock`, `now_playing` | Restart, Shut Down and Log Out; showing a day in Calendar; for Music and Spotify, the position, the cover and the controls (when the popup opens or on a click); without it the bar still shows what plays |
 | Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup's details open), without which the rest works |
 
@@ -393,6 +395,57 @@ The names of the buttons can change with an update of the app. `rustybar msg tri
 writes what Accessibility sees of Slack and Teams, and the buttons the extension finds in each Meet
 tab in a call, to `~/Library/Caches/rustybar/call-<app>.txt` (`call-meet-<tab>.txt`), to see what
 changed (it has the names of people and channels: it stays on the Mac).
+
+### WhatsApp
+
+The `whatsapp` widget isn't in the default layout. It needs [WhatsApp for Mac](https://www.whatsapp.com/download)
+installed and linked to your phone: the chats come from the database the app keeps on the Mac
+(`ChatStorage.sqlite` in its group container), read in-process and read-only each time the app
+writes it. Nothing is asked of WhatsApp's servers and no process runs; what the app hasn't
+downloaded (an old picture) isn't there, and a click opens the chat in the app instead. macOS asks
+once whether RustyBar may read the data of other apps.
+
+```toml
+[layout]
+center = ["now_playing", "whatsapp"]   # after now_playing, for the notch
+```
+
+In the bar it's WhatsApp's icon with how many messages wait, and nothing while none does (`always
+= true` keeps it). Muted chats don't count (`muted = true` counts them), groups do (`groups =
+false`). On a screen with a notch, in the center group, the unread messages are in the notch: the
+widget is the island while `now_playing` has nothing to show (the picture and the name of who
+wrote last on the left, the count on the right), and a sign with the count in the music's island
+while something plays. A new message grows the island for 3 seconds, with who wrote, the group and
+the first two lines (`preview = false`: only who wrote); a click there opens the chat. Under the
+mouse it grows with the chats that wait (`hover = false`: no). `notch = false` keeps it a pill.
+
+The popup lists the chats with something unread, then the `recent` (5) latest of the others. A
+click shows the chat, its last 40 messages:
+
+- texts, with their links (a click opens the link), and the previews of links;
+- pictures, GIFs and videos: the picture, or the first frame with the length; a click opens the
+  file with its app;
+- voice notes, played there (AVFoundation reads WhatsApp's Opus), with a bar to seek;
+- documents, opened with a click; contacts, positions and polls, which open the chat in WhatsApp.
+
+Reading a chat in the bar doesn't tell WhatsApp: who wrote sees no blue ticks, a voice note isn't
+marked as played, and the chat leaves the bar's count until another message comes (WhatsApp still
+counts it). The ✓ at the top marks it read in WhatsApp, by opening the chat there.
+
+The field at the bottom writes a reply: Return, or the arrow, sends it. Nothing but the app can
+write to a chat, so the reply goes through WhatsApp's own window, with Accessibility. WhatsApp
+takes keys only while it's in front, so it comes to the front for a second or two: RustyBar opens
+the chat there (by its row in the app's list; for a person who isn't in the list, by a link),
+types the text with keys sent to WhatsApp's process alone, presses its send button, and brings
+back the app that was in front. So the chat becomes read in WhatsApp, and its window shows that
+chat afterwards; if the app isn't running or its window is closed, it's opened. Nothing is sent
+unless the app shows the chat with that very name (or that number, for someone it shows by number)
+and its field was empty; a text that didn't go is taken out of the field again, and the popup says
+why. Two chats with the same name aren't told apart: the popup says to answer in the app. An
+update of WhatsApp may move these controls: then nothing is sent, and the popup says so.
+
+`rustybar msg trigger whatsapp_chat chat=<jid, or how the name starts>` opens the popup on a chat;
+with the made-up data, `rustybar msg trigger whatsapp_message` brings the next made-up message.
 
 ### Devices
 

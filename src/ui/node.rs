@@ -103,6 +103,19 @@ pub enum Kind {
     Bars {
         color: Rgba,
     },
+    /// A line of text to type, in a popup: the app puts a text field of macOS over it, which
+    /// takes the keyboard when it's clicked, and when it first shows. Each change of the text goes
+    /// to the widget's `Widget::input` with the name of `on_click`, and Return too, to send it;
+    /// `text` is what the widget has, which the field takes when it isn't what was typed (emptied
+    /// once sent). Esc closes the popup.
+    Input {
+        text: String,
+        placeholder: String,
+        font: FontSpec,
+        color: Rgba,
+        /// The color of the placeholder.
+        dim: Rgba,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -286,6 +299,10 @@ impl Node {
 
     pub fn image(path: impl Into<String>, width: f64, height: f64, tint: Option<Rgba>) -> Node {
         Node::new(Kind::Image { path: path.into(), width, height, tint })
+    }
+
+    pub fn input(text: impl Into<String>, placeholder: impl Into<String>, font: FontSpec, color: Rgba, dim: Rgba) -> Node {
+        Node::new(Kind::Input { text: text.into(), placeholder: placeholder.into(), font, color, dim })
     }
 
     pub fn spacer() -> Node {

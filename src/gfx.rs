@@ -230,6 +230,13 @@ fn font(spec: &FontSpec) -> CFRetained<CTFont> {
     })
 }
 
+/// The font of `spec` for AppKit: the same object, as Core Text's fonts are AppKit's.
+pub fn ns_font(spec: &FontSpec) -> Retained<objc2_app_kit::NSFont> {
+    let font = font(spec);
+    let ptr = CFRetained::as_ptr(&font).as_ptr() as *mut objc2_app_kit::NSFont;
+    unsafe { Retained::retain(ptr) }.expect("a font")
+}
+
 fn line(text: &str, spec: &FontSpec, color: Rgba) -> CFRetained<CTLine> {
     let font = font(spec);
     let cg = color.cg();

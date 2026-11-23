@@ -39,6 +39,11 @@ fn info(kind: &str) -> (&'static str, &'static str, &'static str) {
             "fn",
             t("Un segno mentre F1, F2… sono tasti standard, e i modi per cambiarli al volo.", "A mark while F1, F2… are standard keys, and quick ways to switch them."),
         ),
+        "whatsapp" => (
+            "WhatsApp",
+            "phone.bubble.fill",
+            t("I messaggi non letti di WhatsApp, da leggere e a cui rispondere dalla barra; nel notch, dove c'è.", "WhatsApp's unread messages, to read and answer from the bar; in the notch, where there is one."),
+        ),
         "clock" => (t("Orologio", "Clock"), "clock.fill", t("Data e ora, con un calendario nel popup.", "Date and time, with a calendar in the popup.")),
         "audio" => ("Audio", "speaker.wave.2.fill", t("L'uscita e l'ingresso in uso, con il volume.", "The output and input in use, with their volume.")),
         "network" => (t("Rete", "Network"), "wifi", t("La VPN, la rete Wi-Fi o Ethernet.", "The VPN, the Wi-Fi network or Ethernet.")),
@@ -526,6 +531,26 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
                 true,
             );
             &["low", "always", "pinned", "receivers", "names"]
+        }
+        "whatsapp" => {
+            f.group(Some(t("Cosa conta", "What counts")));
+            f.toggle_at(t("Anche le chat silenziate", "Muted chats too"), None, &spot.k("muted"), false);
+            f.toggle_at(t("Anche i gruppi", "Groups too"), None, &spot.k("groups"), true);
+            f.toggle_at(t("Nella barra anche senza messaggi", "In the bar with no messages too"), Some(t("Per aprire le chat recenti quando non c'è niente da leggere", "To open the recent chats when there's nothing to read")), &spot.k("always"), false);
+            f.number_at(t("Chat recenti", "Recent chats"), Some(t("Quante chat senza niente da leggere il popup elenca sotto le altre", "How many chats with nothing to read the popup lists under the others")), &spot.k("recent"), 5.0, Num::new(0.0, 30.0, 1.0, 0));
+            f.group(Some(t("Opzioni", "Options")));
+            f.toggle_at(
+                t("Nel notch", "In the notch"),
+                Some(t(
+                    "Sugli schermi col notch: da sola attorno al notch, o un segno nell'isola della musica; un messaggio nuovo la allunga per un momento",
+                    "On screens with a notch: around the notch by itself, or a sign in the music's island; a new message grows it for a moment",
+                )),
+                &spot.k("notch"),
+                true,
+            );
+            f.toggle_at(t("Testo del messaggio nel notch", "The message's text in the notch"), Some(t("Spento, solo chi ha scritto", "Off, only who wrote")), &spot.k("preview"), true);
+            f.toggle_at(t("Chat sotto il mouse", "Chats under the mouse"), Some(t("Col mouse sopra si allunga con le chat da leggere", "Under the mouse it grows with the chats to read")), &spot.k("hover"), true);
+            &["muted", "groups", "always", "recent", "notch", "preview", "hover"]
         }
         "fn_keys" => {
             fn_keys(f, &spot, !side.is_empty());

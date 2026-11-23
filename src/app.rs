@@ -234,6 +234,10 @@ pub struct App {
     monitor: Option<Retained<AnyObject>>,
     watcher: Option<notify::RecommendedWatcher>,
     closing: Vec<Window>,
+    /// The text field over the popup, while it draws one (see `Kind::Input`).
+    field: Option<crate::input::Field>,
+    /// The widget and the name its text goes to.
+    field_target: Option<(String, String)>,
     started: Instant,
     first_frame_logged: bool,
 }
@@ -279,6 +283,17 @@ pub fn with(f: impl FnOnce(&mut App) + 'static) {
     });
 }
 
+/// The text of the popup's field changed, or Return was pressed in it (see `Kind::Input`).
+pub fn typed(text: String, submit: bool) {
+    with(move |app| {
+        let Some(field) = app.field.as_mut() else { return };
+        field.typed(&text);
+        let Some((widget, name)) = app.field_target.clone() else { return };
+        app.with_slot(&widget, |w, cx| w.input(&name, &text, submit, cx));
+        app.dirty = true;
+    });
+}
+
 pub fn mouse(id: SurfaceId, kind: Mouse, p: CGPoint) {
     with(move |app| app.on_mouse(id, kind, p));
 }
@@ -317,6 +332,8 @@ pub fn start(mtm: MainThreadMarker) {
         monitor: None,
         watcher: None,
         closing: Vec::new(),
+        field: None,
+        field_target: None,
         started,
         first_frame_logged: false,
     };
@@ -645,11 +662,17 @@ impl App {
             right: 0.0,
         });
         let mut island: Option<(usize, Form, Node)> = None;
-        if let (Some(room), Some(&(i, form))) = (island_room, centered.first())
-            && let Some(node) = self.item_wider(i, &d, form, 0.0, Some(room)).filter(is_island)
-        {
-            island = Some((i, form, node));
-            centered.remove(0);
+        if let Some(room) = island_room {
+            // The first of the center group that draws itself as one: one with nothing to show
+            // (no music) leaves the notch to the next (the unread chats)
+            for at in 0..centered.len() {
+                let (i, form) = centered[at];
+                if let Some(node) = self.item_wider(i, &d, form, 0.0, Some(room)).filter(is_island) {
+                    island = Some((i, form, node));
+                    centered.remove(at);
+                    break;
+                }
+            }
         }
         let least = island.as_ref().map(|(_, _, n)| wings(&layout, n));
         // The sides are drawn knowing of the island (see `Rx::notch_island`)
@@ -1011,6 +1034,7 @@ impl App {
         if self.peek.is_some() && !self.render_peek(animate) {
             self.drop_peek();
         }
+        self.sync_field();
         crate::gfx::trim_cache(256);
         if !self.first_frame_logged && !self.bars.is_empty() {
             self.first_frame_logged = true;
@@ -1372,7 +1396,14 @@ impl App {
             },
         };
         let Some(bar) = self.bars.iter().find(|b| b.display.id == display).or(self.bars.first()) else { return };
-        let Some(item) = bar.items.get(widget).copied() else { return };
+        // One with no pill there, as the island shows it (see `Rx::notch_island`): from the
+        // island's right wing, where its sign is
+        let wing = bar.island.as_ref().and_then(|i| bar.items.get(&i.widget).map(|r| CGRect::new(CGPoint::new(i.middle, r.origin.y), CGSize::new(i.x1 - i.middle, r.size.height))));
+        let (item, side) = match (bar.items.get(widget).copied(), wing) {
+            (Some(item), _) => (item, side),
+            (None, Some(wing)) => (wing, Side::Center),
+            (None, None) => return,
+        };
         let d = bar.display.clone();
         let bar_frame = bar.window.panel.frame();
         // The pill in screen coordinates (Cocoa: y up)
@@ -1429,6 +1460,7 @@ impl App {
         }
         surface.root.setOpacity(1.0);
         self.dirty = true;
+        self.sync_field();
     }
 
     /// Draws the popup and fits its window to it. False if the widget has no popup, or a `⋯` pill
@@ -1569,8 +1601,37 @@ impl App {
         }
     }
 
+    /// Puts the text field over the popup where it draws one (see `Kind::Input`), in its own
+    /// window or in its island grown; takes it away when it draws none.
+    fn sync_field(&mut self) {
+        let found = match &self.popup {
+            Some(Popup { view: Some((window, surface)), .. }) => surface.inputs.first().map(|i| (window.panel.clone(), i.clone())),
+            Some(Popup { view: None, .. }) => self.peek.as_ref().filter(|p| p.open && p.stage == Stage::Popup).and_then(|p| p.surface.inputs.first().map(|i| (p.window.panel.clone(), i.clone()))),
+            None => None,
+        };
+        let Some((panel, input)) = found else {
+            self.field = None;
+            self.field_target = None;
+            return;
+        };
+        let (wf, r) = (panel.frame(), input.rect);
+        let frame = CGRect::new(CGPoint::new(wf.origin.x + r.origin.x, wf.origin.y + wf.size.height - r.origin.y - r.size.height), r.size);
+        if !self.field.as_ref().is_some_and(|f| f.over(&panel)) {
+            self.field = None;
+            self.field = Some(crate::input::Field::new(self.mtm, &panel, frame));
+        }
+        self.field_target = match &input.node.on_click {
+            Some(Action::Widget { widget, name }) => Some((widget.clone(), name.clone())),
+            _ => None,
+        };
+        if let Some(field) = self.field.as_mut() {
+            field.place(frame, &input);
+        }
+    }
+
     pub fn close_popup(&mut self) {
         let Some(popup) = self.popup.take() else { return };
+        self.field = None;
         let name = popup.widget.clone();
         self.with_slot(&name, |w, cx| w.event(&Event::PopupClosed, cx));
         // An island's goes back to its peek if the mouse is on it, else to the island
@@ -1849,7 +1910,14 @@ impl App {
         let mouse = self.mouse_display();
         let mut displays: Vec<u32> = self.bars.iter().filter(|b| b.island.as_ref().is_some_and(|i| i.widget == widget)).map(|b| b.display.id).collect();
         displays.sort_by_key(|d| *d != mouse);
-        let Some(&display) = displays.first() else { return };
+        let Some(&display) = displays.first() else {
+            // Not an island itself: the island of another widget shows it, if that widget has it
+            // in its own notice (`now_playing` has `whatsapp`'s)
+            if let Some(host) = self.bars.iter().find_map(|b| b.island.as_ref().map(|i| i.widget.clone())).filter(|h| h != widget) {
+                self.notice(&host);
+            }
+            return;
+        };
         if self.hovered_pill.as_ref().is_some_and(|(d, w)| *d == display && w == widget) {
             return;
         }

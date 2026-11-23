@@ -31,6 +31,8 @@ pub mod network;
 pub mod notifications;
 pub mod now_playing;
 pub mod system;
+pub mod wa;
+pub mod whatsapp;
 
 /// Something that happened outside the widget.
 #[derive(Clone, Debug)]
@@ -335,13 +337,17 @@ pub trait Widget: Any {
 
     fn action(&mut self, _name: &str, _value: Option<f64>, _cx: &mut Cx) {}
 
+    /// The text typed in the field of the popup named `name` (see `Kind::Input`), at each
+    /// change; `submit`, with Return.
+    fn input(&mut self, _name: &str, _text: &str, _submit: bool, _cx: &mut Cx) {}
+
     fn event(&mut self, _event: &Event, _cx: &mut Cx) {}
 
     fn as_any(&mut self) -> &mut dyn Any;
 }
 
 /// The kinds `create` knows, in the order of the settings window's sidebar.
-pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "devices", "fn_keys", "events", "clock", "notifications"];
+pub const KINDS: &[&str] = &["apple", "aerospace", "front_app", "now_playing", "home", "system", "docker", "claude", "audio", "network", "battery", "devices", "fn_keys", "whatsapp", "events", "clock", "notifications"];
 
 /// The name among `known` that `name` is most likely a typo of: at most two letters off.
 pub fn closest<'a>(name: &str, known: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
@@ -383,6 +389,7 @@ pub fn create(kind: &str, options: &Options) -> Option<Box<dyn Widget>> {
         "fn_keys" => Box::new(fn_keys::FnKeys::new(options)),
         "claude" => Box::new(claude::Claude::new(options)),
         "system" => Box::new(system::System::new(options)),
+        "whatsapp" => Box::new(whatsapp::WhatsApp::new(options)),
         _ => return None,
     })
 }

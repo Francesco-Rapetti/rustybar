@@ -68,7 +68,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `ipc.rs`, `cache.rs` (ultimo stato su disco per l'avvio), `fnkeys.rs` (modo dei tasti F:
   `HIDFKeyMode` coi parametri di IOHIDSystem, preferenza e notifica di Impostazioni Tastiera),
   `hotkey.rs` (scorciatoie globali con gli hot key di Carbon, senza permessi), `service.rs` (LaunchAgent), `iokit.rs`,
-  `i18n.rs` (`t("italiano", "english")`), `mock.rs`, `net.rs` (WebSocket e richieste HTTP con
+  `input.rs` (il campo di testo dei popup: un `NSTextField` in un pannello figlio che prende la
+  tastiera senza attivare l'app), `i18n.rs` (`t("italiano", "english")`), `mock.rs`, `net.rs` (WebSocket e richieste HTTP con
   NSURLSession, HTTP/1.1 su socket Unix), `secret.rs` (portachiavi via `security`, e
   `rustybar secret set`), `time.rs` (ora locale, ISO 8601, durate come `2 h 57 min`).
 - `settings/`: la finestra delle impostazioni dei dotfiles (dalla mela o `msg settings`), in un
@@ -80,9 +81,10 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   oltre 120 MB su macOS 26; sfondi con un layer, non `drawRect`), poi una pagina per file
   (`rustybar.rs`, `aerospace.rs` con i bordi, `other.rs`). Dati finti: `<mock>/settings/`.
 - `widgets/`: un file per widget, registrato in `widgets::create` (più `hid.rs`, i protocolli HID
-  dei ricevitori per `devices`, e `call.rs` e `meet.rs`, le chiamate per `now_playing`, con
-  l'estensione del browser in `extension/`). Il trait `Widget` ha `start`,
-  `bar`, `popup`, `peek`, `notice`, `ready`, `action(name, value, cx)` ed `event` (`Wake`,
+  dei ricevitori per `devices`, `call.rs` e `meet.rs`, le chiamate per `now_playing`, con
+  l'estensione del browser in `extension/`, e `wa.rs`, il database e l'invio per `whatsapp`). Il trait `Widget` ha `start`,
+  `bar`, `popup`, `peek`, `notice`, `ready`, `action(name, value, cx)`, `input(name, text, submit, cx)` (il testo di un
+  `Kind::Input`) ed `event` (`Wake`,
   `ScreensChanged`, `Trigger`, `PopupOpened`, `PopupClosed`, `PeekOpened`, `PeekClosed`). `Cx` dà
   `redraw`, `close_popup`, `notice`, `after`, `every`,
   `background` (lavoro su un thread, risultato sul main thread) e `handle` (per i thread lunghi:
@@ -657,6 +659,57 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   mela, tasto e F di AeroSpace; clic su "fn" nell'isola e nell'isola cresciuta; linguetta sotto
   il mouse. Sulla barra vera: 27 MB in 2 processi, 0,22% CPU, 0 processi in 60 s. Da provare con
   l'utente: tastiere e Impostazioni Tastiera che seguono, il modo per app al cambio d'app.
+- `whatsapp` (chiesto dall'utente; scelte sue: fonte l'app del Mac, leggere dalla barra non manda
+  le spunte blu, nel notch chi scrive e l'anteprima, notch A e popup 1 dei mockup; non nel layout
+  di default, va dopo `now_playing` in `center`): i non letti di WhatsApp, da leggere e a cui
+  rispondere. `wa.rs` legge `ChatStorage.sqlite` nel group container dell'app
+  (`group.net.whatsapp.WhatsApp.shared`, Core Data: `ZWACHATSESSION`, `ZWAMESSAGE`,
+  `ZWAMEDIAITEM`, date dal 2001) con la SQLite di sistema via FFI, in sola lettura, in
+  `cx.background`, a ogni scrittura dell'app (`notify` sulla cartella, solo `ChatStorage.sqlite*`,
+  dopo 0,4 s di quiete): niente polling, niente processi. Solo chat e gruppi (tipi 0 e 1), non
+  archiviati; tipi di messaggio 0 testo, 1 foto, 2 video, 3 vocale, 4 contatto, 5 posizione,
+  7 link, 8 documento, 11 GIF, 14 eliminato, 15 sticker, 46 sondaggio; 6 e 10 (di sistema) fuori.
+  I media recenti sono già sul disco (negli ultimi 3000 messaggi dell'utente 80 foto su 82 e 97
+  vocali su 98): niente download né decifratura; per gli altri la miniatura e `Apri in WhatsApp`.
+  I vocali (Opus in Ogg) li apre `AVAudioPlayer`, con AVFAudio caricato con `dlopen` al primo
+  ascolto. Letto qui: `whatsapp.seen` nei default (jid → id dell'ultimo messaggio), fuori dal
+  conto finché non ne arriva un altro; WhatsApp non ne sa niente.
+  Notch: `bar_tree` ora prende come isola il primo del gruppo `center` che ne disegna una, quindi
+  `whatsapp` è l'isola quando `now_playing` non ha niente (foto e nome di chi ha scritto per
+  ultimo, a destra il conto), e quando c'è musica è un segno nell'ala destra della sua isola
+  (`whatsapp::island_mark`, come `fn_keys`; stato condiviso per generazione); il suo `cx.notice()`
+  senza isola propria fa crescere quella dell'altro (`App::notice`), che mostra
+  `whatsapp::guest_notice`; il popup di un widget senza pill parte dall'ala destra dell'isola.
+  Campo di testo nel motore: `Kind::Input` (`Node::input`), `Surface::inputs`, `App::sync_field`
+  a ogni render mette `input::Field` sopra il popup, anche quello dell'isola; prende la tastiera
+  alla creazione; ⌘V ⌘C ⌘X ⌘A a mano (la barra non ha il menu Composizione); Esc chiude.
+  Invio (`wa::send`, non c'è altro modo di scrivere in una chat): Accessibilità sulla finestra
+  dell'app, con gli identificatori visti nella 26.46 (`ChatListView_TableView`, righe `AXButton`
+  con `AXDescription` = nome, `NavigationBar_HeaderViewButton`, `ChatBar_ComposerTextView`,
+  `ChatBar_SendButton`, che c'è solo con un testo). Imparato dal vero: `AXValue` scritto resta nel
+  campo ma l'app non se ne accorge (niente tasto Invia); i tasti con `CGEventPostToPid` arrivano
+  solo con WhatsApp davanti (da dietro `AXFocused` non prende); un `AXPress` sul tasto appena
+  comparso si perde. Quindi: si ricorda l'app davanti, WhatsApp davanti (`open_app`, fino a 5 s
+  per la finestra), riga della chat (o link `whatsapp://send?phone=` per una persona fuori
+  elenco), intestazione uguale al nome o al numero (la chat con se stessi e i non in rubrica
+  l'app li mostra col numero: `same`), campo vuoto, `AXFocused`, testo a tasti (16 unità UTF-16
+  per evento), `AXValue` uguale al testo, 0,35 s, `AXPress` (fino a tre volte, solo finché il
+  testo è ancora lì), poi di nuovo l'app di prima; se non va, ⌘A e canc tolgono il testo. Gli
+  errori vanno nel log senza il testo. Nel database 11 righe su 14 avevano il nome di
+  `ZPARTNERNAME` (le altre il nome della rubrica).
+  Provato coi dati finti sulla barra di prova col notch vero (`examples/mock/whatsapp.json`,
+  immagini disegnate da uno script; `msg trigger whatsapp_message`, `whatsapp_chat chat=…`):
+  segno e notice nell'isola della musica, isola propria a riposo, peek, notice, popup con elenco
+  e chat (bolle, link, video, documento, vocale), testo scritto con tasti mandati al solo
+  processo (`CGEvent.postToPid`) e Invio: 13 MB a riposo, 19 con la chat aperta, 17 dopo, 0% CPU,
+  0 processi. Dal vero sulla barra di prova il 23/11/2026, con l'utente: la richiesta di macOS
+  "accedere ai dati di altre app" all'avvio (la lettura aspetta la risposta, widget in
+  `loading`), dopo il consenso `ready` e isola, 13 MB, 0% CPU, 0 processi in 30 s; un invio alla
+  chat con se stesso scritto nel campo della barra (tasti al solo processo) e arrivato nel
+  database dell'app. WhatsApp si è aggiornata da sola a metà prova (26.46.21, stessi
+  identificatori). Da provare con l'utente: un invio a una persona e a un gruppo (la riga
+  nell'elenco), se il popup resta aperto dopo l'invio, `Segna come letta`, un vocale vero, i clic
+  col mouse, un messaggio che arriva, la risposta "no" a macOS; manca lo screenshot del README.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

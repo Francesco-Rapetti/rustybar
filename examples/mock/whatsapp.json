@@ -1,0 +1,75 @@
+{
+  "chats": [
+    {
+      "jid": "15550100@s.whatsapp.net",
+      "name": "Marta Bellini",
+      "unread": 2,
+      "at": 120,
+      "picture": "whatsapp/marta.png",
+      "newest": 15,
+      "messages": [
+        {"id": 10, "at": 88000, "text": "Hai poi sentito il tipo della terrazza?"},
+        {"id": 11, "mine": true, "at": 87400, "text": "Sì, ci tiene il tavolo fino alle otto e un quarto"},
+        {"id": 12, "mine": true, "at": 3000, "text": "A che ora stasera?"},
+        {"id": 13, "at": 900, "kind": "voice", "seconds": 14, "file": "whatsapp/voice.opus"},
+        {"id": 14, "at": 300, "kind": "image", "file": "whatsapp/terrace.png", "text": "Guarda che posto"},
+        {"id": 15, "at": 120, "text": "Ci vediamo alle 8 da Nico? Prenoto io, dimmi solo se siamo in quattro o in cinque"}
+      ]
+    },
+    {
+      "jid": "120363000000000001@g.us",
+      "name": "Calcetto del giovedì",
+      "group": true,
+      "unread": 3,
+      "at": 600,
+      "picture": "whatsapp/team.png",
+      "newest": 26,
+      "messages": [
+        {"id": 21, "sender": "Davide Conti", "at": 5200, "text": "Giovedì siamo in nove, ne manca uno"},
+        {"id": 22, "mine": true, "at": 5000, "text": "Chiedo a mio cugino"},
+        {"id": 23, "sender": "Davide Conti", "at": 2400, "kind": "link", "title": "Campo 3 · giovedì 21:00", "url": "https://example.com/campi/3", "thumb": "whatsapp/pitch.png", "text": "Ho prenotato qui https://example.com/campi/3"},
+        {"id": 24, "sender": "Sara Neri", "at": 1500, "kind": "video", "seconds": 23, "thumb": "whatsapp/pitch.png", "file": "whatsapp/pitch.png", "text": "Il gol di settimana scorsa"},
+        {"id": 25, "sender": "Sara Neri", "at": 1400, "kind": "file", "title": "Turni portiere.pdf"},
+        {"id": 26, "sender": "Luca Ferri", "at": 600, "kind": "voice", "seconds": 37, "file": "whatsapp/voice.opus"}
+      ]
+    },
+    {
+      "jid": "15550101@s.whatsapp.net",
+      "name": "Davide Conti",
+      "at": 7200,
+      "newest": 31,
+      "messages": [
+        {"id": 30, "at": 7500, "text": "Mi mandi la posizione del campo?"},
+        {"id": 31, "mine": true, "at": 7200, "kind": "location"}
+      ]
+    },
+    {
+      "jid": "120363000000000002@g.us",
+      "name": "Condominio via dei Tigli",
+      "group": true,
+      "muted": true,
+      "unread": 12,
+      "at": 9000,
+      "newest": 41,
+      "messages": [
+        {"id": 40, "sender": "Amministratore", "at": 9600, "kind": "file", "title": "Verbale assemblea.pdf"},
+        {"id": 41, "sender": "Interno 7", "at": 9000, "text": "Qualcuno ha visto il gatto rosso?"}
+      ]
+    },
+    {
+      "jid": "15550102@s.whatsapp.net",
+      "name": "Studio Dentistico Aurora",
+      "at": 180000,
+      "newest": 51,
+      "messages": [
+        {"id": 50, "at": 181000, "text": "Le ricordiamo l'appuntamento di venerdì alle 9:30."},
+        {"id": 51, "mine": true, "at": 180000, "text": "Confermo, grazie"}
+      ]
+    }
+  ],
+  "incoming": [
+    {"jid": "15550101@s.whatsapp.net", "message": {"text": "Trovato, grazie! Porto io i palloni"}},
+    {"jid": "120363000000000001@g.us", "message": {"sender": "Luca Ferri", "kind": "image", "file": "whatsapp/pitch.png", "text": "Il campo è questo"}},
+    {"jid": "15550100@s.whatsapp.net", "message": {"kind": "voice", "seconds": 8, "file": "whatsapp/voice.opus"}}
+  ]
+}

@@ -9,6 +9,7 @@ mod fnkeys;
 mod gfx;
 mod hotkey;
 mod i18n;
+mod input;
 mod iokit;
 mod ipc;
 mod lua;

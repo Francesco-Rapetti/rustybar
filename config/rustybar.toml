@@ -90,6 +90,15 @@ large_width = 3840        # from this width a screen is "large"
 # names = { "Razer Naga V2 Pro" = "Desk" }       # your names for the bar, by the full name
 # receivers = true        # Razer, Logitech, ROG and the Steam Controller behind a receiver too
 #
+# [widgets.whatsapp]      # not in the layout above: after now_playing in center, for the notch
+# recent = 5              # how many chats with nothing unread the popup lists under the others
+# muted = false           # count the muted chats too
+# groups = true           # and the groups
+# preview = true          # the text of a new message in the notch, not only who wrote
+# notch = true            # in the notch on a screen that has one; false, a pill there too
+# hover = true            # under the mouse, the chats that wait
+# always = false          # in the bar with nothing unread too
+#
 # [widgets.fn_keys]       # not in the layout above: add it where you like
 # show = ["key"]          # where the mark goes while F1, F2… are standard keys: key, dot, apple,
 #                         # island, aerospace, edge (any of them; [] for none). Where the island

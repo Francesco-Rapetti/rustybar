@@ -758,7 +758,7 @@ fn open_row(rx: &Rx, p: &Player) -> Node {
 /// What the island shows of the rest of the Mac, right of the notch before its own signs: fn
 /// while F1, F2… are standard keys, if `fn_keys` asks for it there.
 fn island_marks(th: &Theme) -> Vec<Node> {
-    super::fn_keys::island_mark(th).into_iter().collect()
+    super::fn_keys::island_mark(th).into_iter().chain(super::whatsapp::island_mark(th)).collect()
 }
 
 /// How big the cover is in the island: as far from its top as from its bottom, as in the pill.
@@ -1001,6 +1001,10 @@ impl Widget for NowPlaying {
     /// bigger, the title, the artist and the album.
     fn notice(&self, rx: &Rx) -> Option<Node> {
         self.island(rx)?;
+        // A message that just came, for `whatsapp`, which has no island of its own while this is one
+        if let Some(message) = super::whatsapp::guest_notice(rx) {
+            return Some(message);
+        }
         if self.warning() && time::now() - self.warned < 4.0 {
             return Some(warning_notice(rx));
         }
