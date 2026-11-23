@@ -552,8 +552,20 @@ impl Surface {
                 sh.setCornerRadius(s.radius);
             }
             Kind::Bars { color } => layout_bars(entry, &layer, *color, laid.w, laid.h, motion, scale),
-            // The app's text field is over it
-            Kind::Input { .. } => {}
+            // The app's text field is over it, with what's typed; under it, while there's nothing,
+            // what it's for
+            Kind::Input { text, placeholder, font, dim, .. } => {
+                let shown = if text.is_empty() { super::layout::truncate_to(placeholder, font, laid.w) } else { String::new() };
+                let sig = format!("p|{shown}|{font:?}|{dim:?}|{scale}");
+                if entry.sig.as_deref() != Some(&sig) {
+                    match gfx::text(&shown, font, *dim, scale).filter(|_| !shown.is_empty()) {
+                        Some(b) => unsafe { layer.setContents(Some(b.as_contents())) },
+                        None => unsafe { layer.setContents(None) },
+                    }
+                    layer.setContentsGravity(unsafe { kCAGravityLeft });
+                    entry.sig = Some(sig);
+                }
+            }
             Kind::Box | Kind::Scroll { .. } => {
                 if entry.sig.is_some() {
                     unsafe { layer.setContents(None) };

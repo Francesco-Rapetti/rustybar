@@ -5,14 +5,13 @@
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, Sel};
-use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::{MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSBackingStoreType, NSColor, NSControl, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSFocusRingType, NSForegroundColorAttributeName,
-    NSFontAttributeName, NSLineBreakMode, NSPanel, NSTextField, NSTextFieldDelegate, NSTextView, NSWindow, NSWindowAnimationBehavior,
+    NSApplication, NSBackingStoreType, NSColor, NSControl, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSFocusRingType, NSLineBreakMode, NSPanel, NSTextField, NSTextFieldDelegate, NSTextView, NSWindow, NSWindowAnimationBehavior,
     NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_core_foundation::CGRect;
-use objc2_foundation::{NSAttributedString, NSDictionary, NSNotification, NSString};
+use objc2_foundation::{NSNotification, NSString};
 
 use crate::app;
 use crate::gfx::{self, Rgba};
@@ -94,7 +93,7 @@ pub struct Field {
     /// The text the widget and the field agree on: what was typed last, or what the widget set.
     text: String,
     /// What the field looks like, to set it again only when it changes.
-    look: Option<Kind>,
+    look: Option<(gfx::FontSpec, Rgba)>,
     frame: CGRect,
 }
 
@@ -145,23 +144,16 @@ impl Field {
             self.panel.setFrame_display(frame, true);
             self.frame = frame;
         }
-        let Kind::Input { text, placeholder, font, color: ink, dim } = &input.node.kind else { return };
+        let Kind::Input { text, font, color: ink, .. } = &input.node.kind else { return };
         if *text != self.text {
             self.field.setStringValue(&NSString::from_str(text));
             self.text = text.clone();
         }
-        // Without the text, which changes at each key
-        let look = Kind::Input { text: String::new(), placeholder: placeholder.clone(), font: font.clone(), color: *ink, dim: *dim };
+        // The placeholder is the popup's, under the field (see `Kind::Input`)
+        let look = (font.clone(), *ink);
         if self.look.as_ref() != Some(&look) {
-            let ns_font = gfx::ns_font(font);
-            self.field.setFont(Some(&ns_font));
+            self.field.setFont(Some(&gfx::ns_font(font)));
             self.field.setTextColor(Some(&color(*ink)));
-            let dim = color(*dim);
-            let attributes = unsafe {
-                NSDictionary::from_slices(&[NSFontAttributeName, NSForegroundColorAttributeName], &[&*ns_font as &objc2::runtime::AnyObject, &*dim as &objc2::runtime::AnyObject])
-            };
-            let placeholder = unsafe { NSAttributedString::initWithString_attributes(NSAttributedString::alloc(), &NSString::from_str(placeholder), Some(&attributes)) };
-            self.field.setPlaceholderAttributedString(Some(&placeholder));
             self.look = Some(look);
         }
     }

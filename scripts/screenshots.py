@@ -88,18 +88,23 @@ def save(name, left, top, right, bottom, pills, popup=None):
         canvas.alpha_composite(img, (px - left, py - top))
     canvas.convert("RGB").save(os.path.join(OUT, f"{name}.png"), optimize=True)
 
+# What opens the popup of a widget on more than its first page: whatsapp's on a chat
+OPEN = {"whatsapp": ["trigger", "whatsapp_chat", "chat=Thursday"]}
+
 os.makedirs(OUT, exist_ok=True)
 for name in [n for n in sys.argv[2:] if n != "settings"] or ([] if sys.argv[2:] else list(pos)):
     x, y, w, h = pos[name]
-    subprocess.run([RB, "msg", "popup", name], capture_output=True)
+    subprocess.run([RB, "msg", *OPEN.get(name, ["popup", name])], capture_output=True)
     time.sleep(1.6)
     # A popup hangs under its widget; another window is one still closing
     extra = [v for v in windows() if v[0] not in bars and v[1] < x + w and v[1] + v[3] > x and v[2] < y + h + 60]
     popup = None
     left, top, right, bottom = x, y, x + w, y + h
     if extra:
-        _, px, py, pw, ph = extra[0]
-        popup = (grab(extra[0]), px, py)
+        # The biggest: the field to type in is a small window of its own over the popup
+        win = max(extra, key=lambda v: v[3] * v[4])
+        _, px, py, pw, ph = win
+        popup = (grab(win), px, py)
         left, right, bottom = min(left, px), max(right, px + pw), max(bottom, py + ph)
         subprocess.run([RB, "msg", "popup", name], capture_output=True)
         time.sleep(1.0)

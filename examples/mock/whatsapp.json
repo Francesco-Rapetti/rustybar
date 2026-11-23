@@ -8,28 +8,28 @@
       "picture": "whatsapp/marta.png",
       "newest": 15,
       "messages": [
-        {"id": 10, "at": 88000, "text": "Hai poi sentito il tipo della terrazza?"},
-        {"id": 11, "mine": true, "at": 87400, "text": "Sì, ci tiene il tavolo fino alle otto e un quarto"},
-        {"id": 12, "mine": true, "at": 3000, "text": "A che ora stasera?"},
+        {"id": 10, "at": 88000, "text": "Did you hear back from the terrace place?"},
+        {"id": 11, "mine": true, "at": 87400, "text": "Yes, they hold the table until a quarter past eight"},
+        {"id": 12, "mine": true, "at": 3000, "text": "What time tonight?"},
         {"id": 13, "at": 900, "kind": "voice", "seconds": 14, "file": "whatsapp/voice.opus"},
-        {"id": 14, "at": 300, "kind": "image", "file": "whatsapp/terrace.png", "text": "Guarda che posto"},
-        {"id": 15, "at": 120, "text": "Ci vediamo alle 8 da Nico? Prenoto io, dimmi solo se siamo in quattro o in cinque"}
+        {"id": 14, "at": 300, "kind": "image", "file": "whatsapp/terrace.png", "text": "Look at this place"},
+        {"id": 15, "at": 120, "text": "See you at 8 at Nico's? I'll book, just tell me if we're four or five"}
       ]
     },
     {
       "jid": "120363000000000001@g.us",
-      "name": "Calcetto del giovedì",
+      "name": "Thursday five-a-side",
       "group": true,
       "unread": 3,
       "at": 600,
       "picture": "whatsapp/team.png",
       "newest": 26,
       "messages": [
-        {"id": 21, "sender": "Davide Conti", "at": 5200, "text": "Giovedì siamo in nove, ne manca uno"},
-        {"id": 22, "mine": true, "at": 5000, "text": "Chiedo a mio cugino"},
-        {"id": 23, "sender": "Davide Conti", "at": 2400, "kind": "link", "title": "Campo 3 · giovedì 21:00", "url": "https://example.com/campi/3", "thumb": "whatsapp/pitch.png", "text": "Ho prenotato qui https://example.com/campi/3"},
-        {"id": 24, "sender": "Sara Neri", "at": 1500, "kind": "video", "seconds": 23, "thumb": "whatsapp/pitch.png", "file": "whatsapp/pitch.png", "text": "Il gol di settimana scorsa"},
-        {"id": 25, "sender": "Sara Neri", "at": 1400, "kind": "file", "title": "Turni portiere.pdf"},
+        {"id": 21, "sender": "Davide Conti", "at": 5200, "text": "We're nine on Thursday, one short"},
+        {"id": 22, "mine": true, "at": 5000, "text": "I'll ask my cousin"},
+        {"id": 23, "sender": "Davide Conti", "at": 2400, "kind": "link", "title": "Pitch 3 · Thursday 9 PM", "url": "https://example.com/pitches/3", "thumb": "whatsapp/pitch.png", "text": "Booked here https://example.com/pitches/3"},
+        {"id": 24, "sender": "Sara Neri", "at": 1500, "kind": "video", "seconds": 23, "thumb": "whatsapp/pitch.png", "file": "whatsapp/pitch.png", "text": "Last week's goal"},
+        {"id": 25, "sender": "Sara Neri", "at": 1400, "kind": "file", "title": "Goalkeeper turns.pdf"},
         {"id": 26, "sender": "Luca Ferri", "at": 600, "kind": "voice", "seconds": 37, "file": "whatsapp/voice.opus"}
       ]
     },
@@ -39,37 +39,37 @@
       "at": 7200,
       "newest": 31,
       "messages": [
-        {"id": 30, "at": 7500, "text": "Mi mandi la posizione del campo?"},
+        {"id": 30, "at": 7500, "text": "Can you send me where the pitch is?"},
         {"id": 31, "mine": true, "at": 7200, "kind": "location"}
       ]
     },
     {
       "jid": "120363000000000002@g.us",
-      "name": "Condominio via dei Tigli",
+      "name": "Linden Street building",
       "group": true,
       "muted": true,
       "unread": 12,
       "at": 9000,
       "newest": 41,
       "messages": [
-        {"id": 40, "sender": "Amministratore", "at": 9600, "kind": "file", "title": "Verbale assemblea.pdf"},
-        {"id": 41, "sender": "Interno 7", "at": 9000, "text": "Qualcuno ha visto il gatto rosso?"}
+        {"id": 40, "sender": "Manager", "at": 9600, "kind": "file", "title": "Meeting minutes.pdf"},
+        {"id": 41, "sender": "Flat 7", "at": 9000, "text": "Has anyone seen the ginger cat?"}
       ]
     },
     {
       "jid": "15550102@s.whatsapp.net",
-      "name": "Studio Dentistico Aurora",
+      "name": "Aurora Dental Studio",
       "at": 180000,
       "newest": 51,
       "messages": [
-        {"id": 50, "at": 181000, "text": "Le ricordiamo l'appuntamento di venerdì alle 9:30."},
-        {"id": 51, "mine": true, "at": 180000, "text": "Confermo, grazie"}
+        {"id": 50, "at": 181000, "text": "A reminder of your appointment on Friday at 9:30."},
+        {"id": 51, "mine": true, "at": 180000, "text": "Confirmed, thank you"}
       ]
     }
   ],
   "incoming": [
-    {"jid": "15550101@s.whatsapp.net", "message": {"text": "Trovato, grazie! Porto io i palloni"}},
-    {"jid": "120363000000000001@g.us", "message": {"sender": "Luca Ferri", "kind": "image", "file": "whatsapp/pitch.png", "text": "Il campo è questo"}},
+    {"jid": "15550101@s.whatsapp.net", "message": {"text": "Found it, thanks! I'll bring the balls"}},
+    {"jid": "120363000000000001@g.us", "message": {"sender": "Luca Ferri", "kind": "image", "file": "whatsapp/pitch.png", "text": "This is the pitch"}},
     {"jid": "15550100@s.whatsapp.net", "message": {"kind": "voice", "seconds": 8, "file": "whatsapp/voice.opus"}}
   ]
 }

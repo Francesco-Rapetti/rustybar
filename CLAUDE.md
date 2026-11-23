@@ -731,6 +731,11 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Provato coi dati finti sulla barra di prova con un ritocco temporaneo di `display.rs` che
   toglieva il notch (tolto): pill che cresce col messaggio, pill della chiamata con la musica.
   Da provare su uno schermo vero senza notch.
+  Screenshot del README (`docs/screenshots/whatsapp.png`): `screenshots.py` apre il popup di
+  `whatsapp` su una chat (`OPEN`) e prende la finestra più grande; dati finti ora in inglese come
+  gli altri; il segnaposto del campo lo disegna il popup (`Kind::Input` in `render.rs`), non più
+  l'`NSTextField`, la cui finestrella nella cattura veniva sporca. Fatto con `notch = false` e
+  `whatsapp` a destra (col notch e la musica non ha una pill sua).
 - Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
   sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
   (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del

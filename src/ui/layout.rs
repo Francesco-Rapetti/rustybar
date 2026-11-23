@@ -270,6 +270,11 @@ pub fn wrap(text: &str, font: &gfx::FontSpec, width: f64) -> Vec<String> {
     lines
 }
 
+/// `text`, cut to fit `width` if it's wider.
+pub fn truncate_to(text: &str, font: &gfx::FontSpec, width: f64) -> String {
+    if gfx::measure_text(text, font).width <= width + 0.5 { text.to_string() } else { truncate(text, font, width) }
+}
+
 /// The longest prefix of `text` that fits `width` with "…" after it.
 pub fn truncate(text: &str, font: &gfx::FontSpec, width: f64) -> String {
     let chars: Vec<char> = text.chars().collect();

@@ -53,7 +53,7 @@ Each widget with its popup, on made-up data (see below):
 <td align="center" valign="top"><img src="docs/screenshots/battery.png" width="392" alt="The battery charging up to its limit, the Charge Limit as a slider, tiles for capacity, cycles, temperature and power, and the adapter"><br><code>battery</code></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/screenshots/notifications.png" width="370" alt="A crash report, Dock badges and Homebrew updates"><br><code>notifications</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/notifications.png" width="370" alt="A crash report, Dock badges and Homebrew updates"><br><code>notifications</code><br><br><img src="docs/screenshots/whatsapp.png" width="404" alt="WhatsApp's icon with five unread messages in the bar; in the popup a group chat: a link with its preview, a video with its length, a document, a voice note with a play button and a bar, each under the name of who sent it, and a field to write a reply with a send button"><br><code>whatsapp</code></td>
 <td align="center" valign="top"><img src="docs/screenshots/apple.png" width="244" alt="The Apple menu"><br><code>apple</code></td>
 </tr>
 <tr>
