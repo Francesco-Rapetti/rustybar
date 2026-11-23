@@ -67,7 +67,9 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `lua.rs` + `prelude.lua`,
   `ipc.rs`, `cache.rs` (ultimo stato su disco per l'avvio), `fnkeys.rs` (modo dei tasti F:
   `HIDFKeyMode` coi parametri di IOHIDSystem, preferenza e notifica di Impostazioni Tastiera),
-  `hotkey.rs` (scorciatoie globali con gli hot key di Carbon, senza permessi), `service.rs` (LaunchAgent), `iokit.rs`,
+  `hotkey.rs` (scorciatoie globali con gli hot key di Carbon, senza permessi; conta solo la prima
+  pressione finché il tasto è giù), `keymap.rs` (il tasto della dettatura preso in prestito, vedi
+  le chiamate), `service.rs` (LaunchAgent), `iokit.rs`,
   `input.rs` (il campo di testo dei popup: un `NSTextField` in un pannello figlio che prende la
   tastiera senza attivare l'app), `i18n.rs` (`t("italiano", "english")`), `mock.rs`, `net.rs` (WebSocket e richieste HTTP con
   NSURLSession, HTTP/1.1 su socket Unix), `secret.rs` (portachiavi via `security`, e
@@ -623,6 +625,26 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   chiamata trovata (codice, microfono e videocamera giusti), mano alzata dalla barra, dump con la
   mano alzata e no; durante la chiamata 28 MB in 2 processi, 0,22% CPU in 60 s, 0 processi (con gli
   Apple event la lettura costava 20–50 ms ogni secondo).
+  Tasto della dettatura (chiesto dall'utente): durante una chiamata con un microfono il tasto 🎤
+  (F5 delle tastiere Apple) lo spegne e lo riaccende, da qualunque app, e l'isola o la pill
+  crescono per un momento con `Microfono disattivato`/`attivo` (`mic_notice`, nei colori di
+  `Look`); `dictation_key` (di default acceso, interruttore nelle impostazioni). Il tasto è un
+  consumer control (pagina 0x0C, 0xCF), non un tasto che un hot key di Carbon prende, e senza
+  Monitoraggio input non c'è altro: quindi `keymap.rs` per la durata della chiamata lo mappa a F19
+  (se no F18, F17, F16: il primo che nessun'altra app ha come hot key) su ogni servizio tastiera
+  e consumer control (`UserKeyMapping` con `IOHIDServiceClientSetProperty`, come `hidutil`, senza
+  permessi né entitlement) e prende F19 come hot key; la dettatura non parte. Mai a livello del
+  client di sistema: rifarebbe la mappatura di ogni tastiera, e l'utente ha Caps Lock → F20 (lo
+  Hyper Key di Raycast) sulla tastiera interna, che resta; una tastiera che mappa già il tasto
+  della dettatura a qualcos'altro non si tocca. Una tastiera che arriva durante la chiamata lo
+  prende 1 s dopo la notifica di IOKit (`IOHIDEventService`). Imparato: i servizi sono del client
+  che li ha dati, che deve vivere finché si usano (rilasciato prima, SIGSEGV). Nei default
+  (`dictation.taken`) finché è preso: `keymap::tidy` all'avvio lo rende dopo un crash. Nei test
+  mai (`cfg!(test)`: un test di `now_playing` registrava l'hot key e andava in SIGSEGV). Provato
+  sulla barra di prova coi dati finti, con l'utente: due pressioni, muto e di nuovo attivo; fine
+  della chiamata, reload, quit e `kill -9` (reso al riavvio successivo) rendono il tasto, la
+  mappatura di Raycast resta. Col tasto preso 19 MB, 0,07% CPU, 0 processi in 30 s. Da provare:
+  in una chiamata vera di Meet, con una tastiera esterna (Magic Keyboard con Touch ID).
 - `fn_keys` (chiesto dall'utente, segni scelti dai mockup: tasto fn, pallino, mela, isola,
   AeroSpace, linguetta; uno o più, a scelta in `show`; spenti, spariscono): mentre F1, F2… sono
   tasti standard un segno lo dice. Modo letto e cambiato in-process (`fnkeys.rs`:

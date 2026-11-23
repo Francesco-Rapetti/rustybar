@@ -51,7 +51,9 @@
 //! icon and the mic when compact); under the mouse and in the popup the mic, the camera, the
 //! raised hand, the call brought to the front, and a red Leave. On the island it grows by itself
 //! for a moment when a call starts. Without Accessibility, a Slack or Teams that captures shows
-//! with what's missing and how to give it.
+//! with what's missing and how to give it. With `dictation_key` (on by default), during a call the
+//! dictation key (🎤, F5 of Apple's keyboards) mutes and unmutes the mic in place of dictation,
+//! and the island or the pill says which for a moment (see `keymap`).
 //!
 //! With made-up data (see `mock`), the players of `now_playing.json`, whose `artwork` is relative
 //! to its folder (the `other` one with `other_apps` only); the controls change them in memory only,
@@ -84,6 +86,7 @@ use super::{Cx, Event, Island, Rx, Widget};
 use crate::config::Options;
 use crate::gfx::{Rgba, Weight};
 use crate::i18n::t;
+use crate::keymap;
 use crate::palette::Palette;
 use crate::theme::Theme;
 use crate::time;
@@ -364,6 +367,13 @@ pub struct NowPlaying {
     warned: f64,
     /// The names of Meet calls from the calendar, by code: none when no event has it.
     meet_titles: HashMap<String, Option<String>>,
+    /// During a call, the dictation key is the mic's (see `take_key`).
+    dictation_key: bool,
+    mic_key: Option<keymap::Taken>,
+    /// It couldn't be taken for this call: not tried again until the next.
+    key_failed: bool,
+    /// When the dictation key last switched the mic: the island says which for a moment.
+    keyed: f64,
 }
 
 impl NowPlaying {
@@ -402,6 +412,10 @@ impl NowPlaying {
             was_warning: false,
             warned: 0.0,
             meet_titles: HashMap::new(),
+            dictation_key: options.bool("dictation_key").unwrap_or(true),
+            mic_key: None,
+            key_failed: false,
+            keyed: 0.0,
         }
     }
 
@@ -1024,6 +1038,9 @@ impl Widget for NowPlaying {
         if self.warning() && time::now() - self.warned < 4.0 {
             return Some(warning_notice(rx, island));
         }
+        if let Some(c) = self.live_call().filter(|_| time::now() - self.keyed < 4.0) {
+            return Some(mic_notice(rx, c, island));
+        }
         if let Some(c) = self.shown_call() {
             return Some(self.call_notice(rx, c, island));
         }
@@ -1219,6 +1236,8 @@ impl Widget for NowPlaying {
         self.act(name, value, cx);
         // A play or a pause from the bar, a mic from the call's controls
         self.follow(cx);
+        // Leave, with made-up data
+        self.take_key(cx);
     }
 
     fn event(&mut self, event: &Event, cx: &mut Cx) {
@@ -1874,6 +1893,41 @@ impl NowPlaying {
         if started && now - self.born > QUIET {
             cx.notice();
         }
+        self.take_key(cx);
+    }
+
+    /// Takes the dictation key while there's a call with a mic to switch, and gives it back after
+    /// (see `keymap`): while taken, it doesn't start dictation.
+    fn take_key(&mut self, cx: &mut Cx) {
+        let want = self.dictation_key && self.live_call().is_some_and(|c| c.mic.is_some() && c.blocked.is_none());
+        if !want {
+            self.key_failed = false;
+            if self.mic_key.take().is_some() {
+                crate::log("now_playing: the dictation key given back");
+            }
+            return;
+        }
+        if self.mic_key.is_some() || self.key_failed {
+            return;
+        }
+        let handle = cx.handle::<NowPlaying>();
+        match keymap::take(move || handle.send(|w, cx| w.dictation_pressed(cx))) {
+            Ok(key) => self.mic_key = Some(key),
+            Err(e) => {
+                crate::log(&format!("now_playing: the dictation key: {e}"));
+                self.key_failed = true;
+            }
+        }
+    }
+
+    /// The dictation key, during a call: the mic switches, and the island or the pill says so.
+    fn dictation_pressed(&mut self, cx: &mut Cx) {
+        if self.live_call().is_none_or(|c| c.mic.is_none()) {
+            return;
+        }
+        self.keyed = time::now();
+        self.action("call:mic", None, cx);
+        cx.notice();
     }
 
     fn call_action(&mut self, name: &str, cx: &mut Cx) {
@@ -1953,6 +2007,7 @@ impl NowPlaying {
             self.focus = Focus::Call;
             cx.notice();
         }
+        self.take_key(cx);
     }
 
     /// What Accessibility shows of Slack and Teams, and what the Meet tabs in a call have, to
@@ -2094,7 +2149,7 @@ impl NowPlaying {
         }
         lines.push(Node::text(call_line(c, time::now()), th.small_font(), th.subtext).max_width(max).key("line"));
         rows.push(Node::column(lines).gap(1.0).padding(2.0, 0.0, 2.0, 0.0).key("about"));
-        rows.push(call_note(rx, c, max).unwrap_or_else(|| call_controls(rx, c)));
+        rows.push(call_note(rx, c, max).unwrap_or_else(|| call_controls(rx, c, self.mic_key.is_some())));
         let peek = Node::column(rows).gap(8.0).padding(2.0, 12.0, 10.0, 12.0);
         if island.is_some() { peek.padding(4.0, 14.0, 12.0, 14.0).min_width(ISLAND_WIDTH) } else { peek.min_width(240.0) }
     }
@@ -2121,7 +2176,7 @@ impl NowPlaying {
         rows.extend(self.tabs(rx, "call", &active, WIDTH));
         rows.extend(self.warning().then(|| warning_row(rx, WIDTH - 16.0)));
         rows.push(header);
-        rows.push(call_note(rx, c, WIDTH - 16.0).unwrap_or_else(|| call_controls(rx, c).padding(0.0, 4.0, 0.0, 4.0)));
+        rows.push(call_note(rx, c, WIDTH - 16.0).unwrap_or_else(|| call_controls(rx, c, self.mic_key.is_some()).padding(0.0, 4.0, 0.0, 4.0)));
         let popup = rx.popup(WIDTH, rows).gap(12.0);
         if island.is_some() { popup.padding(4.0, 14.0, 14.0, 14.0) } else { popup }
     }
@@ -2242,6 +2297,33 @@ fn warning_notice(rx: &Rx, island: bool) -> Node {
     Node::row(vec![icon, Node::column(lines).gap(2.0).grow().key("lines")]).gap(12.0).align(Align::Center).padding(6.0, 14.0, 14.0, 14.0).min_width(ISLAND_WIDTH)
 }
 
+/// For a moment after the dictation key switched the mic: the mic as the controls show it, bigger,
+/// whether it's on, and the call.
+fn mic_notice(rx: &Rx, c: &Call, island: bool) -> Node {
+    let theme = if island { rx.theme.notch(None) } else { rx.theme.clone() };
+    let th = &theme;
+    let on = c.mic == Some(true);
+    let look = Look::of(th, c);
+    let (bg, fg) = if on { look.plain } else { look.off };
+    let title = if on { t("Microfono attivo", "Mic on") } else { t("Microfono disattivato", "Mic muted") };
+    let max = ISLAND_WIDTH - 28.0 - 40.0 - 12.0;
+    let lines = Node::column(vec![
+        Node::text(title, th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max).key("title"),
+        Node::text(call_name(c), th.font(), th.subtext).max_width(max).key("line"),
+    ])
+    .gap(2.0)
+    .grow()
+    .key("lines");
+    let icon = Node::row(vec![Node::symbol(if on { "mic.fill" } else { "mic.slash.fill" }, 18.0, Weight::Semibold, fg).key("symbol")])
+        .size(40.0, 40.0)
+        .radius(if c.service == Service::Meet { 14.0 } else { 20.0 })
+        .justify(Justify::Center)
+        .align(Align::Center)
+        .background(bg)
+        .key("icon");
+    Node::row(vec![icon, lines]).gap(12.0).align(Align::Center).padding(6.0, 14.0, 14.0, 14.0).min_width(ISLAND_WIDTH)
+}
+
 /// The camera and the mic, as the bar shows them: the mic red and crossed out when muted, the
 /// camera dimmed when off; the mic alone when compact. An app that captures has its mic on.
 fn call_signs(th: &Theme, c: &Call, compact: bool, warning: bool) -> Vec<Node> {
@@ -2262,8 +2344,8 @@ fn call_signs(th: &Theme, c: &Call, compact: bool, warning: bool) -> Vec<Node> {
 
 /// The controls of a call: mic, camera and hand (as the app has them), the call to the front, and
 /// a red Leave. What's off is on red, the raised hand on yellow: a clear tint, which the tiles'
-/// would not be on the notch's black.
-fn call_controls(rx: &Rx, c: &Call) -> Node {
+/// would not be on the notch's black. With `key`, the mic's tip says the dictation key does it too.
+fn call_controls(rx: &Rx, c: &Call, key: bool) -> Node {
     let th = rx.theme;
     let look = Look::of(th, c);
     let button = |symbol: &str, (bg, fg): (Rgba, Rgba), action: &str, tip: String| {
@@ -2280,7 +2362,8 @@ fn call_controls(rx: &Rx, c: &Call) -> Node {
     let mut controls = Vec::new();
     if let Some(on) = c.mic {
         let tip = if on { t("Disattiva il microfono", "Mute the mic") } else { t("Riattiva il microfono", "Unmute the mic") };
-        controls.push(button(if on { "mic.fill" } else { "mic.slash.fill" }, if on { look.plain } else { look.off }, "call:mic", tip.into()));
+        let tip = if key { format!("{tip} {}", t("(anche col tasto della dettatura)", "(the dictation key does it too)")) } else { tip.into() };
+        controls.push(button(if on { "mic.fill" } else { "mic.slash.fill" }, if on { look.plain } else { look.off }, "call:mic", tip));
     }
     if let Some(on) = c.camera {
         let tip = if on { t("Spegni la videocamera", "Turn off the camera") } else { t("Accendi la videocamera", "Turn on the camera") };
@@ -3162,6 +3245,34 @@ mod tests {
         w.focus = Focus::Call;
         assert_eq!(keys(&w.peek(&rx).expect("a peek")), ["sources", "about", "access"]);
         assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["icon", "title", "mic", "bars"]);
+    }
+
+    #[test]
+    fn the_dictation_key_switches_the_mic_and_says_so() {
+        let theme = crate::theme::Theme::from_config(&crate::config::ThemeConfig::default());
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1512.0, 982.0));
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: None, notch_height: 0.0, large: false };
+        let rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false);
+        let title = |n: &Node| match &n.children[1].children[0].kind {
+            Kind::Text { text, .. } => text.clone(),
+            _ => String::new(),
+        };
+        let mut w = NowPlaying::new(&Options::default());
+        w.mock = true;
+        let mut timers = Vec::new();
+        let mut cx = Cx { name: "now_playing", generation: 0, popup_open: false, peek_open: false, timers: &mut timers, effects: Vec::new() };
+        // Nothing without a call, or with one that has no mic to switch
+        w.dictation_pressed(&mut cx);
+        assert_eq!(w.keyed, 0.0);
+        w.call = Some(Call { service: Service::Meet, bundle: "com.google.Chrome".into(), name: "Sync".into(), mic: Some(true), leave: true, since: time::now(), ..Default::default() });
+        w.dictation_pressed(&mut cx);
+        assert_eq!(w.call.as_ref().and_then(|c| c.mic), Some(false));
+        assert_eq!(title(&w.notice(&rx).expect("a notice")), t("Microfono disattivato", "Mic muted"));
+        w.dictation_pressed(&mut cx);
+        assert_eq!(title(&w.notice(&rx).expect("a notice")), t("Microfono attivo", "Mic on"));
+        // After a moment, the call's notice as before
+        w.keyed = time::now() - 5.0;
+        assert_eq!(title(&w.notice(&rx).expect("a notice")), "Sync");
     }
 
     #[test]

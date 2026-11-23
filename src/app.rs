@@ -300,6 +300,8 @@ pub fn mouse(id: SurfaceId, kind: Mouse, p: CGPoint) {
 
 pub fn start(mtm: MainThreadMarker) {
     let started = Instant::now();
+    // The dictation key, if a bar that crashed kept it (see `keymap`)
+    crate::keymap::tidy();
     let (config, error) = match config::load() {
         Ok(c) => (c, None),
         Err(e) => (Config::default(), Some(e)),

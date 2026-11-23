@@ -3,7 +3,7 @@
 //! keyboard (Input Monitoring), as only that combination ever reaches the app.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::rc::Rc;
 
@@ -31,15 +31,18 @@ unsafe extern "C" {
     fn RegisterEventHotKey(code: u32, modifiers: u32, id: EventHotKeyId, target: *mut c_void, options: u32, out: *mut *mut c_void) -> OsStatus;
     fn UnregisterEventHotKey(key: *mut c_void) -> OsStatus;
     fn GetEventParameter(event: *mut c_void, name: u32, kind: u32, out_kind: *mut u32, size: usize, out_size: *mut usize, data: *mut c_void) -> OsStatus;
+    fn GetEventKind(event: *mut c_void) -> u32;
 }
 
 const fn code(s: &[u8; 4]) -> u32 {
     u32::from_be_bytes(*s)
 }
 
-/// `kEventClassKeyboard`, `kEventHotKeyPressed`, `kEventParamDirectObject`, `typeEventHotKeyID`.
+/// `kEventClassKeyboard`, `kEventHotKeyPressed`, `kEventHotKeyReleased`, `kEventParamDirectObject`,
+/// `typeEventHotKeyID`.
 const KEYBOARD: u32 = code(b"keyb");
 const PRESSED: u32 = 5;
+const RELEASED: u32 = 6;
 const DIRECT: u32 = code(b"----");
 const HOT_KEY_ID: u32 = code(b"hkid");
 /// Ours, in the ids we give macOS.
@@ -58,6 +61,8 @@ struct Registry {
     actions: HashMap<u32, Rc<dyn Fn()>>,
     /// The last id given.
     last: u32,
+    /// Those held down: a press that comes again while held (the key repeating) does nothing.
+    down: HashSet<u32>,
     /// The handler is installed.
     handler: bool,
 }
@@ -74,6 +79,14 @@ extern "C" fn pressed(_call: *mut c_void, event: *mut c_void, _data: *mut c_void
     if status != 0 || id.signature != SIGNATURE {
         // eventNotHandledErr: someone else's
         return -9874;
+    }
+    let released = unsafe { GetEventKind(event) } == RELEASED;
+    let again = KEYS.with(|k| {
+        let mut k = k.borrow_mut();
+        if released { !k.down.remove(&id.id) } else { !k.down.insert(id.id) }
+    });
+    if released || again {
+        return 0;
     }
     // Out of the borrow, as what it does may register or drop a key
     let f = KEYS.with(|k| k.borrow().actions.get(&id.id).cloned());
@@ -149,8 +162,8 @@ pub fn register(combo: Combo, f: impl Fn() + 'static) -> Result<HotKey, String> 
     let id = KEYS.with(|k| {
         let mut k = k.borrow_mut();
         if !k.handler {
-            let spec = EventTypeSpec { class: KEYBOARD, kind: PRESSED };
-            let status = unsafe { InstallEventHandler(GetApplicationEventTarget(), pressed, 1, &spec, std::ptr::null_mut(), std::ptr::null_mut()) };
+            let specs = [EventTypeSpec { class: KEYBOARD, kind: PRESSED }, EventTypeSpec { class: KEYBOARD, kind: RELEASED }];
+            let status = unsafe { InstallEventHandler(GetApplicationEventTarget(), pressed, specs.len() as u32, specs.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
             if status != 0 {
                 return Err(format!("InstallEventHandler: {status}"));
             }
@@ -173,7 +186,11 @@ impl Drop for HotKey {
     fn drop(&mut self) {
         unsafe { UnregisterEventHotKey(self.key) };
         // Also when the thread locals are already going, after exit
-        let _ = KEYS.try_with(|k| k.borrow_mut().actions.remove(&self.id));
+        let _ = KEYS.try_with(|k| {
+            let mut k = k.borrow_mut();
+            k.actions.remove(&self.id);
+            k.down.remove(&self.id);
+        });
     }
 }
 

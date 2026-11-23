@@ -12,6 +12,7 @@ mod i18n;
 mod input;
 mod iokit;
 mod ipc;
+mod keymap;
 mod lua;
 mod mock;
 mod net;

@@ -613,7 +613,16 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
                 &spot.k("calls"),
                 true,
             );
-            &["paused", "notch", "hover", "other_apps", "cover_colors", "calls"]
+            f.toggle_at(
+                t("Tasto della dettatura", "Dictation key"),
+                Some(t(
+                    "Durante una chiamata il tasto 🎤 disattiva e riattiva il microfono, al posto della dettatura",
+                    "During a call the 🎤 key mutes and unmutes the mic, in place of dictation",
+                )),
+                &spot.k("dictation_key"),
+                true,
+            );
+            &["paused", "notch", "hover", "other_apps", "cover_colors", "calls", "dictation_key"]
         }
         "front_app" | "battery" | "network" | "docker" => {
             f.group(Some(t("Opzioni", "Options")));

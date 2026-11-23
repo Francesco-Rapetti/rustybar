@@ -350,6 +350,7 @@ hover = true           # with the mouse on it, the pill grows down with quick co
 other_apps = false     # any app, through a perl process always running
 cover_colors = true    # the popup in the colors of the cover
 calls = true           # Google Meet, Slack and Teams calls in place of the music
+dictation_key = true   # during a call the dictation key 🎤 mutes and unmutes the mic
 ```
 
 #### Calls
@@ -370,6 +371,16 @@ of the peek and of the popup switch between the call and each app with something
 bar too. With the mic on while something plays, the mic in the bar turns yellow, the peek and the
 popup say that the others may hear it without headphones, and around the notch it grows to say so
 for a moment.
+
+During a call the dictation key (🎤, F5 on Apple's keyboards since 2021) mutes and unmutes the mic,
+from any app, and the island or the pill grows for a moment to say which; dictation comes back when
+the call ends. `dictation_key = false` leaves the key to dictation. While F1, F2… are standard keys,
+it's fn-F5, as dictation would be. An app can catch a key without asking for Input Monitoring only
+as a shortcut of the keyboard, and the dictation key isn't one: so for the length of the call every
+keyboard maps it to F19 (or F18, F17, F16, the first no other app has as a shortcut), as
+`hidutil property --set '{"UserKeyMapping": …}'` would, and RustyBar takes F19 as its shortcut. The
+rest of each keyboard's mapping stays (Raycast's Hyper Key, say), a keyboard that maps the
+dictation key already is left as it is, and a bar that crashes gives the key back at its next start.
 
 No plugin or admin is needed:
 
