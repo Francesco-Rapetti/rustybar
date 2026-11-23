@@ -33,6 +33,8 @@ pub enum Kind {
     Sticker,
     Deleted,
     Poll,
+    /// A photo, video or voice note to see once: the Mac has none of it, only that it came.
+    Once,
     /// One the bar doesn't know: it says so.
     Other,
 }
@@ -214,6 +216,7 @@ fn kind(n: i64) -> Kind {
         7 => Kind::Link,
         8 => Kind::File,
         11 => Kind::Gif,
+        12 => Kind::Once,
         14 => Kind::Deleted,
         15 => Kind::Sticker,
         46 => Kind::Poll,
@@ -238,21 +241,89 @@ fn picture(dir: &Path, path: &str) -> Option<String> {
     ["jpg", "thumb"].iter().map(|ext| dir.join(format!("{path}.{ext}"))).find(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned())
 }
 
-/// Calls `changed` (on a thread of its own) each time WhatsApp writes its chats, until the
-/// watcher is dropped. None when the folder can't be watched.
-pub fn watch(dir: &Path, changed: impl Fn() + Send + 'static) -> Option<notify::RecommendedWatcher> {
-    use notify::{RecursiveMode, Watcher};
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        let Ok(ev) = res else { return };
-        // The database is in WAL mode: what's new is in its log first
-        let chats = ev.paths.iter().any(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("ChatStorage.sqlite")));
-        if chats && !matches!(ev.kind, notify::EventKind::Access(_)) {
-            changed();
+/// A watch on the app's database, for as long as it lives (see `watch`).
+pub struct Watch {
+    /// Closed with the watch: the thread sees it and ends.
+    _stop: std::os::fd::OwnedFd,
+}
+
+/// Calls `changed` (on a thread of its own) each time WhatsApp writes its chats, until the watch
+/// is dropped.
+///
+/// With kqueue on the database and its log themselves: the app keeps them open and writes into
+/// them, and FSEvents tells of a file only once it's closed, so a watch on the folder saw nothing
+/// until the app quit. The folder is watched too, for the log that the app makes and deletes.
+pub fn watch(dir: &Path, changed: impl Fn() + Send + 'static) -> Option<Watch> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let mut ends = [0; 2];
+    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let (stopped, stop) = unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+    let dir = dir.to_path_buf();
+    // All of it on the thread: opening anything in the folder of another app waits for the
+    // user's answer to macOS, the first time
+    crate::runtime::spawn("whatsapp-watch", move || {
+        const FILES: [&str; 2] = ["ChatStorage.sqlite", "ChatStorage.sqlite-wal"];
+        const GONE: u32 = libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE;
+        let event_only = |path: &Path| -> Option<OwnedFd> {
+            let path = CString::new(path.to_string_lossy().as_bytes()).ok()?;
+            let fd = unsafe { libc::open(path.as_ptr(), libc::O_EVTONLY | libc::O_CLOEXEC) };
+            (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd) })
+        };
+        let queue = unsafe { libc::kqueue() };
+        if queue < 0 {
+            return;
         }
-    })
-    .ok()?;
-    watcher.watch(dir, RecursiveMode::NonRecursive).ok()?;
-    Some(watcher)
+        let queue = unsafe { OwnedFd::from_raw_fd(queue) };
+        let add = |fd: &OwnedFd, filter: i16, what: u32| {
+            let ev = libc::kevent { ident: fd.as_raw_fd() as usize, filter, flags: libc::EV_ADD | libc::EV_CLEAR, fflags: what, data: 0, udata: std::ptr::null_mut() };
+            unsafe { libc::kevent(queue.as_raw_fd(), &ev, 1, std::ptr::null_mut(), 0, std::ptr::null()) == 0 }
+        };
+        let Some(folder) = event_only(&dir) else {
+            crate::log("whatsapp: can't watch the app's folder");
+            return;
+        };
+        if !add(&folder, libc::EVFILT_VNODE, libc::NOTE_WRITE) || !add(&stopped, libc::EVFILT_READ, 0) {
+            return;
+        }
+        // Closing a file takes it off the queue
+        let mut files: [Option<OwnedFd>; 2] = [None, None];
+        loop {
+            // The files that are there now and aren't watched yet: at first, and after the app
+            // made its log again
+            for (file, name) in files.iter_mut().zip(FILES) {
+                if file.is_none() {
+                    *file = event_only(&dir.join(name)).filter(|fd| add(fd, libc::EVFILT_VNODE, libc::NOTE_WRITE | libc::NOTE_EXTEND | GONE));
+                }
+            }
+            let mut ev: libc::kevent = unsafe { std::mem::zeroed() };
+            let n = unsafe { libc::kevent(queue.as_raw_fd(), std::ptr::null(), 0, &mut ev, 1, std::ptr::null()) };
+            if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            if n <= 0 || ev.filter == libc::EVFILT_READ {
+                return;
+            }
+            let file = files.iter_mut().find(|f| f.as_ref().is_some_and(|fd| fd.as_raw_fd() as usize == ev.ident));
+            match file {
+                Some(file) => {
+                    if ev.fflags & GONE != 0 {
+                        *file = None;
+                    }
+                    changed();
+                }
+                // The folder: a file came or went. News only if it's one of the database's
+                // that wasn't there
+                None => {
+                    if files.iter().zip(FILES).any(|(file, name)| file.is_none() && dir.join(name).exists()) {
+                        changed();
+                    }
+                }
+            }
+        }
+    });
+    Some(Watch { _stop: stop })
 }
 
 // ---- the app, through Accessibility -------------------------------------------------------------
@@ -272,6 +343,8 @@ pub fn send(name: &str, phone: Option<&str>, text: &str) -> Result<(), String> {
     // Back to where the user was, whatever happened
     if let Some(url) = before.filter(|b| !b.contains("WhatsApp.app")) {
         open(&url);
+        // Until it is: the bar's own field takes the keyboard again only after that
+        wait(2.0, || front().as_deref() == Some(url.as_str()));
     }
     result
 }
@@ -303,8 +376,9 @@ fn type_and_send(name: &str, phone: Option<&str>, text: &str) -> Result<(), Stri
         return Err(not_taken());
     }
     // A press on the button as it comes in is lost: a moment first, and again while the text is
-    // still there (sent, the field is empty: never twice)
-    for _ in 0..3 {
+    // still there (sent, the field is empty: never twice). The second time with Return, which
+    // sends too and doesn't depend on the button
+    for attempt in 0..3 {
         std::thread::sleep(std::time::Duration::from_millis(350));
         // Still that chat and that text, a moment before sending
         if !on_chat(&window, name, phone) || ax::string(&composer, "AXValue") != text {
@@ -312,7 +386,11 @@ fn type_and_send(name: &str, phone: Option<&str>, text: &str) -> Result<(), Stri
             return Err(t("WhatsApp ha cambiato chat: non ho inviato niente.", "WhatsApp moved to another chat: nothing was sent.").into());
         }
         let Some(button) = button() else { break };
-        ax::press(&button);
+        if attempt == 1 {
+            keys::enter(pid);
+        } else {
+            ax::press(&button);
+        }
         if wait(1.2, || ax::string(&composer, "AXValue").is_empty()) {
             return Ok(());
         }
@@ -386,6 +464,11 @@ mod keys {
         }
     }
 
+    /// Return, which sends what's in the field.
+    pub fn enter(pid: i32) {
+        key(pid, 36, 0, &[]);
+    }
+
     /// Empties the field with the keyboard: ⌘A, delete.
     pub fn clear(pid: i32) {
         key(pid, 0, COMMAND, &[]);
@@ -393,8 +476,8 @@ mod keys {
     }
 }
 
-/// Opens the chat called `name` in the app: at the `front`, or where the app is, only so that it
-/// marks the chat read.
+/// Opens the chat called `name` in the app: at the `front` to stay there, or only for the moment
+/// it takes the app to mark the chat read.
 pub fn show(name: &str, phone: Option<&str>, front: bool) -> Result<(), String> {
     if front {
         // A person's chat has a link, which also opens a closed app; a group's doesn't
@@ -408,7 +491,23 @@ pub fn show(name: &str, phone: Option<&str>, front: bool) -> Result<(), String> 
         }
         return Ok(());
     }
-    reach(name, phone, false).map(|_| ())
+    // The app marks a chat read only while it is in front: there for a moment, as for a reply,
+    // until its list has the chat without a count, then back to the app that was in front
+    let before = self::front();
+    open_app();
+    let result = reach(name, phone, true).and_then(|window| {
+        let counted = || {
+            ax::find(&window, CHATS).is_some_and(|list| ax::elements(&list, "AXChildren").iter().any(|r| {
+                let shown = ax::string(r, "AXDescription");
+                row_of(&shown, name, phone) && !same(&shown, name, phone)
+            }))
+        };
+        if wait(3.0, || !counted()) { Ok(()) } else { Err(t("WhatsApp non ha segnato la chat come letta: aprila lì.", "WhatsApp didn't mark the chat read: open it there.").to_string()) }
+    });
+    if let Some(url) = before.filter(|b| !b.contains("WhatsApp.app")) {
+        open(&url);
+    }
+    result
 }
 
 const COMPOSER: &str = "ChatBar_ComposerTextView";
@@ -440,6 +539,17 @@ fn same(shown: &str, name: &str, phone: Option<&str>) -> bool {
     let number = shown.chars().all(|c| c.is_ascii_digit() || matches!(c, '+' | ' ' | '-' | '(' | ')' | '\u{a0}' | '\u{202f}'));
     let digits: String = shown.chars().filter(char::is_ascii_digit).collect();
     number && !digits.is_empty() && phone == Some(digits.as_str())
+}
+
+/// Whether a row of the app's list, which it calls `shown`, is the chat called `name`: a chat
+/// with something unread is called with the count after its name ("Dana, 2 unread messages", in
+/// the app's language, with a direction mark before the number).
+fn row_of(shown: &str, name: &str, phone: Option<&str>) -> bool {
+    if same(shown, name, phone) {
+        return true;
+    }
+    // The count is cut where it starts, the last comma before a number: the name may have commas
+    shown.rmatch_indices(',').any(|(at, _)| plain(&shown[at + 1..]).starts_with(|c: char| c.is_ascii_digit()) && same(&shown[..at], name, phone))
 }
 
 /// Whether the app's window shows the chat called `name`, or of `phone`.
@@ -480,7 +590,7 @@ fn reach(name: &str, phone: Option<&str>, link: bool) -> Result<ax::El, String> 
         return Ok(window);
     }
     let rows: Vec<ax::El> = ax::find(&window, CHATS)
-        .map(|list| ax::elements(&list, "AXChildren").into_iter().filter(|r| ax::string(r, "AXRole") == "AXButton" && same(&ax::string(r, "AXDescription"), name, phone)).collect())
+        .map(|list| ax::elements(&list, "AXChildren").into_iter().filter(|r| ax::string(r, "AXRole") == "AXButton" && row_of(&ax::string(r, "AXDescription"), name, phone)).collect())
         .unwrap_or_default();
     match (rows.as_slice(), phone.filter(|_| link)) {
         ([row], _) => ax::press(row),
@@ -728,6 +838,18 @@ mod tests {
     }
 
     #[test]
+    fn a_row_with_something_unread_has_the_count_after_the_name() {
+        assert!(row_of("Dana", "Dana", None));
+        assert!(row_of("Dana, \u{200e}2 messaggi non letti", "Dana", None));
+        assert!(row_of("Dana, Sam, 1 unread message", "Dana, Sam", None));
+        assert!(row_of("+1 555 0100, \u{200e}3 unread messages", "Someone", Some("15550100")));
+        // Another chat whose name starts the same isn't it
+        assert!(!row_of("Dana, Sam", "Dana", None));
+        assert!(!row_of("Dana, Sam, 1 unread message", "Dana", None));
+        assert!(!row_of("Dana 2", "Dana", None));
+    }
+
+    #[test]
     fn names_are_compared_without_direction_marks() {
         assert_eq!(plain("\u{200e}Dana \u{202c}"), "Dana");
         assert_eq!(plain("Five-a-side"), "Five-a-side");
@@ -766,6 +888,7 @@ mod tests {
             INSERT INTO ZWAMESSAGE VALUES (3, 2, 0, 50, 3, NULL, NULL, 1, 1);
             INSERT INTO ZWAMESSAGE VALUES (4, 1, 1, 90, 7, 'look https://example.com/a', NULL, 2, NULL);
             INSERT INTO ZWAMESSAGE VALUES (5, 1, 0, 100, 66, NULL, NULL, NULL, NULL);
+            INSERT INTO ZWAMESSAGE VALUES (6, 5, 0, 10, 12, NULL, NULL, NULL, NULL);
         ";
         let file = dir.join("ChatStorage.sqlite");
         let out = std::process::Command::new("/usr/bin/sqlite3").arg(&file).arg(sql).output().expect("sqlite3");
@@ -781,6 +904,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(read(&dir, 5), Err(Error::Missing));
         database(&dir);
+        // One to see once is an empty row, and still a message
+        let older = read(&dir, 5).unwrap().into_iter().find(|c| c.name == "Older").unwrap();
+        assert_eq!(older.messages.iter().map(|m| m.kind).collect::<Vec<_>>(), [Kind::Once]);
         let chats = read(&dir, 1).unwrap();
         // The unread one first, then one of the others, the latest: no archived chat, no status
         assert_eq!(chats.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Five-a-side", "Dana"]);
@@ -800,5 +926,32 @@ mod tests {
         assert_eq!((link.kind, link.mine, link.title.as_str(), link.url.as_str()), (Kind::Link, true, "A page", "https://example.com/a"));
         assert_eq!(link.at, 90.0 + EPOCH);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The app keeps its database open and writes to its log: that must be seen, without the
+    /// file being closed.
+    #[test]
+    fn a_write_of_an_app_that_keeps_the_database_open_is_seen() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("rustybar-wa-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        database(&dir);
+        let mut app = std::process::Command::new("/usr/bin/sqlite3").arg(dir.join("ChatStorage.sqlite")).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).spawn().unwrap();
+        let mut stdin = app.stdin.take().unwrap();
+        writeln!(stdin, "PRAGMA journal_mode=WAL; UPDATE ZWACHATSESSION SET ZUNREADCOUNT = 1 WHERE Z_PK = 1;").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _watcher = watch(&dir, move || drop(tx.send(()))).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        while rx.try_recv().is_ok() {}
+        writeln!(stdin, "UPDATE ZWACHATSESSION SET ZUNREADCOUNT = 3 WHERE Z_PK = 1;").unwrap();
+        let seen = rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok();
+        let unread = read(&dir, 5).unwrap().iter().find(|c| c.name == "Dana").map(|c| c.unread);
+        drop(stdin);
+        let _ = app.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(unread, Some(3));
+        assert!(seen);
     }
 }

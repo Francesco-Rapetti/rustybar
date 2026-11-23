@@ -119,7 +119,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Location | `network` | The nearby Wi-Fi networks and joining them (when its popup opens); the name of the current network doesn't need it |
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
 | Accessibility | `notifications`, `now_playing`, `whatsapp` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls). Sending a reply and marking a chat read through WhatsApp's window |
-| Data of other apps | `whatsapp` | Reading WhatsApp's chats from its app's folder: macOS asks once, at the start; without it a yellow `!` shows, whose popup says how to be asked again (`tccutil reset SystemPolicyAppData io.github.francesco-rapetti.rustybar`, or Full Disk Access) |
+| Data of other apps | `whatsapp` | Reading WhatsApp's chats from its app's folder: macOS asks each time the bar starts, unless RustyBar has Full Disk Access; without it a yellow `!` shows, whose popup says how to be asked again (`tccutil reset SystemPolicyAppData io.github.francesco-rapetti.rustybar`, or Full Disk Access) |
 | Automation | `apple`, `clock`, `now_playing` | Restart, Shut Down and Log Out; showing a day in Calendar; for Music and Spotify, the position, the cover and the controls (when the popup opens or on a click); without it the bar still shows what plays |
 | Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup's details open), without which the rest works |
 
@@ -415,7 +415,8 @@ installed and linked to your phone: the chats come from the database the app kee
 (`ChatStorage.sqlite` in its group container), read in-process and read-only each time the app
 writes it. Nothing is asked of WhatsApp's servers and no process runs; what the app hasn't
 downloaded (an old picture) isn't there, and a click opens the chat in the app instead. macOS asks
-once whether RustyBar may read the data of other apps.
+whether RustyBar may read the data of other apps each time the bar starts, and the widget waits
+for the answer; with Full Disk Access (Settings, Privacy & Security) it doesn't ask.
 
 ```toml
 [layout]
@@ -438,13 +439,16 @@ click shows the chat, its last 40 messages:
 - pictures, GIFs and videos: the picture, or the first frame with the length; a click opens the
   file with its app;
 - voice notes, played there (AVFoundation reads WhatsApp's Opus), with a bar to seek;
-- documents, opened with a click; contacts, positions and polls, which open the chat in WhatsApp.
+- documents, opened with a click; contacts, positions and polls, which open the chat in WhatsApp;
+- a photo, a video or a voice note to view once: only that it's there, as WhatsApp keeps none of it
+  on the Mac; a click opens the chat in the app.
 
 Reading a chat in the bar doesn't tell WhatsApp: who wrote sees no blue ticks, a voice note isn't
 marked as played, and the chat leaves the bar's green count until another message comes. While
 WhatsApp still counts it, it stays in the bar dimmed: the sign and WhatsApp's number in gray, a
 gray badge in the list, and no island growing for it; so the bar never says nothing while the app
-says one. The ✓ at the top marks it read in WhatsApp, by opening the chat there.
+says one. The ✓ at the top marks it read in WhatsApp, by opening the chat there: the app marks a
+chat read only while it's in front, so it comes to the front for a moment, as for a reply.
 
 The right side of the notch shows all there is at once, whatever the left side shows: fn (see
 `fn_keys`), WhatsApp's count with a wave while a voice note plays, the camera and the microphone of

@@ -507,6 +507,13 @@ impl App {
                     runtime::after(0.05, move |app| app.notice(&widget));
                 }
                 Effect::Notice => self.notice(widget),
+                Effect::Focus => {
+                    if self.popup.as_ref().is_some_and(|p| p.widget == widget)
+                        && let Some(field) = &self.field
+                    {
+                        field.focus();
+                    }
+                }
             }
         }
     }

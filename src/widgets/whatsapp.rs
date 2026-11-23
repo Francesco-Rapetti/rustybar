@@ -191,7 +191,7 @@ pub struct WhatsApp {
     sending: bool,
     send_error: Option<String>,
     playing: Option<Playing>,
-    watcher: Option<notify::RecommendedWatcher>,
+    watcher: Option<wa::Watch>,
     /// A read is under way; `again`, the database changed meanwhile.
     reading: bool,
     again: bool,
@@ -289,6 +289,7 @@ fn summary(m: &Message) -> (Option<&'static str>, String) {
         Is::Sticker => (Some("face.smiling"), "Sticker".into()),
         Is::Deleted => (Some("nosign"), t("Messaggio eliminato", "Deleted message").into()),
         Is::Poll => (Some("chart.bar.fill"), or(&m.text, t("Sondaggio", "Poll"))),
+        Is::Once => (Some("1.circle"), t("Visualizzabile una volta", "View once").into()),
     }
 }
 
@@ -811,6 +812,12 @@ impl WhatsApp {
                 inside.push(labelled(symbol.unwrap_or("ellipsis"), text));
                 click = Some(in_app());
             }
+            // WhatsApp keeps it off the Mac's disk: nothing to show but that it's there
+            Is::Once => {
+                inside.push(labelled("1.circle", summary(m).1));
+                inside.push(Node::text(t("Si apre solo in WhatsApp", "It opens only in WhatsApp"), th.small_font(), th.subtext).key("where"));
+                click = Some(in_app());
+            }
             Is::Deleted => inside.push(Node::row(vec![Node::symbol("nosign", 11.0, Weight::Semibold, th.subtext).key("symbol"), Node::text(summary(m).1, font.clone(), th.subtext).key("label")]).gap(6.0).key("what")),
         }
         // A text with a link opens it
@@ -930,6 +937,9 @@ impl WhatsApp {
             move || wa::send(&name, phone.as_deref(), &text),
             move |w: &mut WhatsApp, result, cx| {
                 w.sending = false;
+                // WhatsApp was in front for a moment and took the keyboard: back to the field,
+                // for the next message
+                cx.focus_input();
                 match result {
                     Ok(()) => {
                         w.drafts.remove(&jid);

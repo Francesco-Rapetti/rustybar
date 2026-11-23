@@ -158,6 +158,14 @@ impl Field {
         }
     }
 
+    /// The keyboard to the field again, after another app took it.
+    pub fn focus(&self) {
+        self.panel.makeKeyWindow();
+        if self.field.currentEditor().is_none() {
+            self.panel.makeFirstResponder(Some(&self.field));
+        }
+    }
+
     /// What was typed: the field has it already.
     pub fn typed(&mut self, text: &str) {
         self.text = text.to_string();

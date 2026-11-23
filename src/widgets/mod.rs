@@ -223,6 +223,7 @@ pub enum Effect {
     ClosePopup,
     TogglePopup,
     Notice,
+    Focus,
 }
 
 impl Cx<'_> {
@@ -245,6 +246,12 @@ impl Cx<'_> {
     /// open: in its island, in its pill, or in the island of another widget that shows it.
     pub fn notice(&mut self) {
         self.effects.push(Effect::Notice);
+    }
+
+    /// Gives the keyboard back to the text field of this widget's popup (see `Kind::Input`),
+    /// after something took it: sending through another app, which comes to the front.
+    pub fn focus_input(&mut self) {
+        self.effects.push(Effect::Focus);
     }
 
     /// Calls `f` on this widget every `secs` seconds, until a reload.

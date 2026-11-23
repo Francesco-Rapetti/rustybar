@@ -761,6 +761,25 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   gli altri; il segnaposto del campo lo disegna il popup (`Kind::Input` in `render.rs`), non più
   l'`NSTextField`, la cui finestrella nella cattura veniva sporca. Fatto con `notch = false` e
   `whatsapp` a destra (col notch e la musica non ha una pill sua).
+- `whatsapp`, bug trovati dall'utente sulla barra vera il 23/11/2026, tutti corretti e provati
+  da lui lì: (1) la barra non rileggeva il database (messaggio nuovo non mostrato, notifica che
+  restava dopo aver letto in WhatsApp): FSEvents non dice niente delle scritture su un file che
+  l'app tiene aperto (lo dice alla chiusura), quindi la cartella osservata con `notify` taceva; ora
+  `wa::watch` è un kqueue sul database e sul suo log (`NOTE_WRITE`/`EXTEND`, più la cartella per
+  il log che l'app rifà), tutto su un thread suo: aprire qualcosa in quella cartella sul main
+  thread ferma la barra finché l'utente non risponde a macOS; un test con `sqlite3` che tiene il
+  file aperto. (2) Dopo un invio il campo non prendeva più tasti: WhatsApp passa davanti e si
+  prende la tastiera; `wa::send` aspetta che l'app di prima sia di nuovo davanti, poi
+  `Cx::focus_input` (`Effect::Focus`, `Field::focus`). Il tasto Invia a volte non prende
+  l'`AXPress` (fallito tre volte alle 16:31): il secondo tentativo è Invio da tastiera. (3) Una
+  chat con non letti nell'elenco dell'app si chiama `nome, <200e>2 messaggi non letti`
+  (`row_of`): prima non si trovava proprio la chat da leggere. (4) WhatsApp segna una chat come
+  letta solo da davanti: `Segna come letta` la porta davanti finché la riga perde il conto, poi
+  torna. (5) Il tipo 12 è un messaggio da vedere una volta: riga vuota, niente file
+  (`Kind::Once`, bolla che apre l'app). Il consenso "dati di altre app" macOS lo richiede a ogni
+  avvio della barra (vale finché il processo vive), a meno dell'Accesso completo al disco: era
+  l'attesa di ~30 s in `loading`. Da provare: un invio a una chat con non letti, la bolla "una
+  volta" (non vista a schermo).
 - Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
   sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
   (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del
