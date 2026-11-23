@@ -103,6 +103,9 @@ large_width = 3840        # from this width a screen is "large"
 # [widgets.telegram]      # not in the layout above; the same as whatsapp, with the same options,
 # channels = false        # and the channels too. First, in Terminal: rustybar telegram login
 #
+# [widgets.slack]         # not in the layout above; what Slack notifies on this Mac, as whatsapp
+# [widgets.teams]         # shows its chats, and Teams the same: both need Full Disk Access
+#
 # [widgets.fn_keys]       # not in the layout above: add it where you like
 # show = ["key"]          # where the mark goes while F1, F2… are standard keys: key, dot, apple,
 #                         # island, aerospace, edge (any of them; [] for none). Where the island

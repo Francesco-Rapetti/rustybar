@@ -1,0 +1,79 @@
+{
+  "chats": [
+    {
+      "jid": "19:a1",
+      "name": "Priya Nair",
+      "unread": 1,
+      "at": 240,
+      "newest": 12,
+      "messages": [
+        {
+          "id": 11,
+          "at": 3000,
+          "text": "I've shared the budget sheet with you"
+        },
+        {
+          "id": 12,
+          "at": 240,
+          "text": "Could you look at row 14 before the call? The totals don't match"
+        }
+      ]
+    },
+    {
+      "jid": "19:b2",
+      "name": "Quarterly planning",
+      "group": true,
+      "unread": 2,
+      "at": 800,
+      "newest": 23,
+      "messages": [
+        {
+          "id": 21,
+          "sender": "Jonas Weber",
+          "at": 9000,
+          "text": "Agenda is pinned in the channel"
+        },
+        {
+          "id": 22,
+          "sender": "Jonas Weber",
+          "at": 1500,
+          "text": "We start ten minutes late, room 2 is still busy"
+        },
+        {
+          "id": 23,
+          "sender": "Chiara Monti",
+          "at": 800,
+          "text": "@you can you bring the numbers for the north region?"
+        }
+      ]
+    },
+    {
+      "jid": "19:c3",
+      "name": "Daniel Ortiz",
+      "unread": 0,
+      "at": 90000,
+      "newest": 31,
+      "messages": [
+        {
+          "id": 30,
+          "at": 91000,
+          "text": "Sent you the contract draft"
+        },
+        {
+          "id": 31,
+          "mine": true,
+          "at": 90000,
+          "text": "Got it, comments by Friday"
+        }
+      ]
+    }
+  ],
+  "incoming": [
+    {
+      "jid": "19:a1",
+      "message": {
+        "text": "Never mind, found it: a formula was off"
+      }
+    }
+  ]
+}

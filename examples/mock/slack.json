@@ -1,0 +1,97 @@
+{
+  "chats": [
+    {
+      "jid": "D100",
+      "name": "Nora Blake",
+      "unread": 2,
+      "at": 150,
+      "newest": 13,
+      "messages": [
+        {
+          "id": 11,
+          "at": 5200,
+          "text": "Morning! Did the build for the demo go through?"
+        },
+        {
+          "id": 12,
+          "at": 400,
+          "text": "The client moved the review to 3 pm, can you make it?"
+        },
+        {
+          "id": 13,
+          "at": 150,
+          "text": "If not I'll present your slides, just tell me which deck"
+        }
+      ]
+    },
+    {
+      "jid": "C200",
+      "name": "#launch",
+      "group": true,
+      "unread": 3,
+      "at": 600,
+      "newest": 24,
+      "messages": [
+        {
+          "id": 21,
+          "sender": "Omar Reyes",
+          "at": 7000,
+          "text": "Staging is up with the new onboarding"
+        },
+        {
+          "id": 22,
+          "sender": "Omar Reyes",
+          "at": 1900,
+          "text": "@you can you check the copy on the pricing page?"
+        },
+        {
+          "id": 23,
+          "sender": "Lena Fischer",
+          "at": 900,
+          "text": "Screenshots for the store are in the drive https://example.com/store"
+        },
+        {
+          "id": 24,
+          "sender": "Omar Reyes",
+          "at": 600,
+          "text": "@you last call before we freeze at 5"
+        }
+      ]
+    },
+    {
+      "jid": "D300",
+      "name": "Theo Marsh",
+      "unread": 0,
+      "at": 86000,
+      "newest": 31,
+      "messages": [
+        {
+          "id": 30,
+          "at": 87000,
+          "text": "Thanks for the review yesterday"
+        },
+        {
+          "id": 31,
+          "mine": true,
+          "at": 86000,
+          "text": "Any time. Merged this morning"
+        }
+      ]
+    }
+  ],
+  "incoming": [
+    {
+      "jid": "D100",
+      "message": {
+        "text": "Also: lunch after the review?"
+      }
+    },
+    {
+      "jid": "C200",
+      "message": {
+        "sender": "Lena Fischer",
+        "text": "@you the banner is cut off on small screens"
+      }
+    }
+  ]
+}

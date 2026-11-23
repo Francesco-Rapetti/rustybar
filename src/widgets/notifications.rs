@@ -280,6 +280,8 @@ impl Notifications {
                         (w.badges, w.crashes) = now;
                         w.settle();
                         w.tell_workspaces();
+                        // And whoever counts by a badge (`slack`, `teams`)
+                        runtime::after(0.0, |app| app.broadcast(&Event::Trigger { name: "dock".into(), args: HashMap::new() }));
                         cx.redraw();
                     });
                 }
@@ -638,6 +640,13 @@ fn attribute(element: CFTypeRef, name: &NSString) -> Option<Retained<AnyObject>>
 
 /// The badges of the Dock, in its order; None without the permission. The Dock is the only one
 /// that shows all of them, also those that iOS apps (WhatsApp) set through their notifications.
+/// The number on the Dock icon of `bundle`, now: 0 without one or with only a dot. None without
+/// the permission to read the Dock. For a thread: it asks the Dock.
+pub fn dock_count(bundle: &str) -> Option<u64> {
+    let badges = dock_badges()?;
+    Some(badges.iter().find(|b| b.bundle == bundle).and_then(|b| level(&b.label)).unwrap_or(0))
+}
+
 fn dock_badges() -> Option<Vec<Badge>> {
     if !ax_trusted() {
         return None;

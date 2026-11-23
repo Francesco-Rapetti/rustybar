@@ -28,6 +28,7 @@ processes a minute.
 | `network` | The VPN, then the Wi-Fi network and its band, or Ethernet; the icon turns yellow or red when there's no connection | A dashboard: on top Wi-Fi on and off with the nearby networks to join as tiles (the password is asked once and kept in the keychain) and the wired services with a switch; under them the connection with its signal (or Ethernet's link speed), download and upload with the last 30 seconds as a graph and the VPN; then Details, closed until clicked: on Wi-Fi the link rate and generation, channel, band and width, signal-to-noise and security, then local and public IP, router with its ping, provider, DNS, MAC address and IPv6, each copied with a click |
 | `whatsapp` | WhatsApp's unread messages: its icon and how many wait. On a screen with a notch they're in the notch: around it with the picture and the name of who wrote last, or a sign in the music's island while something plays; a new message grows the island for a moment with who wrote and how it starts. Hidden with nothing unread. Not in the default layout | The chats that wait, then the latest of the others; a click shows the chat: texts, pictures, videos and documents (a click opens them), voice notes played there, links, and a field to answer, sent through WhatsApp's app |
 | `telegram` | Telegram's unread messages, as `whatsapp` shows WhatsApp's: the count, the notch, the notice of a new message. Not in the default layout; first `rustybar telegram login` | The same popup: the chats that wait, then the latest; a chat with its texts, pictures, voice notes, videos and documents (downloaded when asked), and a field to answer, sent straight to Telegram |
+| `slack`, `teams` | What Slack and Teams notify on this Mac (direct messages, mentions), as `whatsapp` shows its chats: the count, the notch, the notice of a new message. Not in the default layout; needs Full Disk Access | The same popup: the conversations that wait, then the latest; each with the messages notified while the bar ran, and a button to answer in the app |
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | A dashboard: the next event (or the one going on, with how much of it is gone) with its calendar, place, guests who accepted and Join for its Google Meet call; the all-day events; then the whole day in the colors of its calendars, with a line at the time it is now. A click joins the call or shows the event in Calendar |
 | `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, or to dismiss with their ✕ or all at once (a badge comes back when it goes up), the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
@@ -121,6 +122,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
 | Accessibility | `notifications`, `now_playing`, `whatsapp` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls). Sending a reply and marking a chat read through WhatsApp's window |
 | Data of other apps | `whatsapp` | Reading WhatsApp's chats from its app's folder: macOS asks each time the bar starts, unless RustyBar has Full Disk Access; without it a yellow `!` shows, whose popup says how to be asked again (`tccutil reset SystemPolicyAppData io.github.francesco-rapetti.rustybar`, or Full Disk Access) |
+| Full Disk Access | `slack`, `teams` | Reading what the two apps notify from Notification Center's database, which macOS keeps from every app without it; without it a yellow `!` shows, whose popup opens the list |
 | Automation | `apple`, `clock`, `now_playing` | Restart, Shut Down and Log Out; showing a day in Calendar; for Music and Spotify, the position, the cover and the controls (when the popup opens or on a click); without it the bar still shows what plays |
 | Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup's details open), without which the rest works |
 
@@ -511,6 +513,33 @@ edit, a chat read on the phone. The 40 chats written to last are followed. What 
   `~/Library/Caches/rustybar/telegram`; a video or a document with a click, then it opens;
 - a photo or a video sent to view once only says it's there, and opens in Telegram's app;
 - the ↗ opens the chat in Telegram's app (`tg://openmessage`).
+
+### Slack and Teams
+
+The `slack` and `teams` widgets are `whatsapp`'s again, in each app's color, for the accounts
+where nothing else can be had: a company's workspace or tenant gives no token and lets no app of
+yours in, and neither Mac app keeps its messages in a file to read. But both tell macOS of every
+message meant for you (a direct message, a mention, a reply in a thread you follow), with who
+wrote it and its text. So the widgets read Notification Center's own database, in-process, each
+time macOS writes it:
+
+- the apps leave their notifications there after you read the messages, so what waits is told
+  by the number on the app's Dock icon: with a 2 there, the last two notified messages wait, and
+  the earlier ones are the conversation's history. The count, the notch, the notice of a new
+  message, the peek and the popup are then the same as `whatsapp`'s. The Dock is read as
+  `notifications` reads it, with Accessibility; without it, what came since the bar started
+  waits, until the bar restarts;
+- what isn't notified isn't there: no pictures or files (a notification says only that one
+  came), nothing that came while the app was closed or with its notifications turned off in
+  System Settings, and nothing you cleared from Notification Center;
+- Slack says who wrote and where in the notification's title (`New message from …`, `New message
+  in …`, in English or Italian); Teams gives the conversation's id, so its ↗ opens that very
+  chat, while Slack's opens the app on its workspace;
+- nothing of it is written to disk by RustyBar.
+
+macOS keeps that database from every app without **Full Disk Access** (System Settings, Privacy &
+Security): without it the pill shows a yellow `!`, and its popup has a button to the list where
+RustyBar goes; restart the bar after adding it.
 
 ### Devices
 

@@ -31,7 +31,7 @@ use objc2::{AnyThread, msg_send, sel};
 use objc2_foundation::{NSString, NSURL, NSUserDefaults, ns_string};
 use serde::Deserialize;
 
-use super::tg;
+use super::{nc, tg};
 use super::wa::{self, Chat, Kind as Is, Message};
 use super::{Cx, Event, Island, Rx, Widget};
 use crate::config::Options;
@@ -46,16 +46,20 @@ use crate::ui::{Action, Align, Justify, Kind, Node, wrap};
 pub enum Service {
     WhatsApp,
     Telegram,
+    Slack,
+    Teams,
 }
 
 impl Service {
-    const ALL: [Service; 2] = [Service::WhatsApp, Service::Telegram];
+    const ALL: [Service; 4] = [Service::WhatsApp, Service::Telegram, Service::Slack, Service::Teams];
 
     /// The name of the widget's kind: of its made-up data, its defaults and its triggers too.
     fn key(self) -> &'static str {
         match self {
             Service::WhatsApp => "whatsapp",
             Service::Telegram => "telegram",
+            Service::Slack => "slack",
+            Service::Teams => "teams",
         }
     }
 
@@ -63,14 +67,18 @@ impl Service {
         match self {
             Service::WhatsApp => "WhatsApp",
             Service::Telegram => "Telegram",
+            Service::Slack => "Slack",
+            Service::Teams => "Teams",
         }
     }
 
-    /// WhatsApp's green, Telegram's blue.
+    /// WhatsApp's green, Telegram's blue, the red of Slack's mark, Teams' violet.
     fn color(self) -> Rgba {
         match self {
             Service::WhatsApp => Rgba(0.145, 0.827, 0.4, 1.0),
             Service::Telegram => Rgba(0.165, 0.671, 0.933, 1.0),
+            Service::Slack => Rgba(0.878, 0.118, 0.353, 1.0),
+            Service::Teams => Rgba(0.482, 0.514, 0.922, 1.0),
         }
     }
 
@@ -78,7 +86,7 @@ impl Service {
     fn ink(self) -> Rgba {
         match self {
             Service::WhatsApp => Rgba(0.0, 0.0, 0.0, 1.0),
-            Service::Telegram => Rgba(1.0, 1.0, 1.0, 1.0),
+            Service::Telegram | Service::Slack | Service::Teams => Rgba(1.0, 1.0, 1.0, 1.0),
         }
     }
 
@@ -86,6 +94,8 @@ impl Service {
         match self {
             Service::WhatsApp => wa::BUNDLE,
             Service::Telegram => tg::BUNDLE,
+            Service::Slack => super::call::SLACK,
+            Service::Teams => super::call::TEAMS,
         }
     }
 
@@ -93,6 +103,17 @@ impl Service {
         match self {
             Service::WhatsApp => "phone.bubble.fill",
             Service::Telegram => "paperplane.fill",
+            Service::Slack => "number",
+            Service::Teams => "person.2.fill",
+        }
+    }
+
+    /// Slack and Teams: the messages are what the app notifies on this Mac (see `nc`).
+    fn notified(self) -> Option<nc::App> {
+        match self {
+            Service::Slack => Some(nc::App::Slack),
+            Service::Teams => Some(nc::App::Teams),
+            _ => None,
         }
     }
 }
@@ -114,6 +135,12 @@ enum State {
     /// Telegram has no session: `rustybar telegram login`.
     SignedOut,
     Failed(String),
+}
+
+/// What a read on a thread brings: WhatsApp's chats, or the notifications of Slack or Teams.
+enum Read {
+    Chats(Vec<Chat>),
+    Notes(Vec<nc::Note>, Option<u64>),
 }
 
 /// A message that just came, for the notice.
@@ -267,6 +294,8 @@ pub struct WhatsApp {
     watcher: Option<wa::Watch>,
     /// Telegram's connection.
     telegram: Option<tg::Handle>,
+    /// Slack's and Teams' conversations, made of their notifications.
+    book: nc::Book,
     /// The messages whose file Telegram is asked for, after a click.
     fetching: HashSet<i64>,
     /// A read is under way; `again`, the database changed meanwhile.
@@ -308,7 +337,7 @@ fn tally(th: &Theme, service: Service, new: i64, held: i64) -> (i64, Rgba) {
 /// The app's icon; the service's sign in its color where the app isn't installed.
 fn glyph(service: Service, size: f64) -> Node {
     thread_local! {
-        static INSTALLED: [bool; 2] = Service::ALL.map(|s| objc2_app_kit::NSWorkspace::sharedWorkspace().URLForApplicationWithBundleIdentifier(&NSString::from_str(s.bundle())).is_some());
+        static INSTALLED: [bool; 4] = Service::ALL.map(|s| objc2_app_kit::NSWorkspace::sharedWorkspace().URLForApplicationWithBundleIdentifier(&NSString::from_str(s.bundle())).is_some());
     }
     if INSTALLED.with(|i| i[service as usize]) { Node::app_icon(service.bundle(), size).key("icon") } else { Node::symbol(service.symbol(), size - 1.0, Weight::Semibold, service.color()).key("icon") }
 }
@@ -389,6 +418,7 @@ impl WhatsApp {
             service,
             channels: options.bool("channels").unwrap_or(false),
             telegram: None,
+            book: nc::Book::default(),
             fetching: HashSet::new(),
             recent: options.f64("recent").map_or(5, |n| n.max(0.0) as usize),
             muted: options.bool("muted").unwrap_or(false),
@@ -498,13 +528,22 @@ impl WhatsApp {
             return;
         }
         self.reading = true;
-        let recent = self.recent;
+        let (recent, service) = (self.recent, self.service);
         cx.background(
-            move || wa::read(&wa::container(), recent),
+            move || match service.notified() {
+                // With the number on the app's Dock icon: how many of them still wait
+                Some(_) => nc::read(&nc::database(), service.bundle()).map(|notes| Read::Notes(notes, super::notifications::dock_count(service.bundle()))),
+                None => wa::read(&wa::container(), recent).map(Read::Chats),
+            },
             |w: &mut WhatsApp, result, cx| {
                 w.reading = false;
                 match result {
-                    Ok(chats) => w.loaded(chats, cx),
+                    Ok(Read::Chats(chats)) => w.loaded(chats, cx),
+                    Ok(Read::Notes(notes, waiting)) => {
+                        let Some(app) = w.service.notified() else { return };
+                        let chats = w.book.update(app, &notes, waiting.map(|n| n as usize), w.recent);
+                        w.loaded(chats, cx);
+                    }
                     Err(e) => {
                         let state = match e {
                             wa::Error::Missing => State::Missing,
@@ -513,7 +552,7 @@ impl WhatsApp {
                         };
                         if w.state != state {
                             if let State::Failed(e) = &state {
-                                crate::log(&format!("whatsapp: {e}"));
+                                crate::log(&format!("{}: {e}", w.service.key()));
                             }
                             w.state = state;
                             w.chats.clear();
@@ -550,7 +589,12 @@ impl WhatsApp {
             self.show_chat(&jid);
         }
         let last = self.chats.iter().filter(|c| self.unread(c) > 0).filter_map(|c| c.messages.iter().rev().find(|m| !m.mine).map(|m| (m.id, c.jid.clone()))).max();
-        let highest = self.chats.iter().map(|c| c.newest).max().unwrap_or(0);
+        // Slack's and Teams' wait by the Dock's number, which may come after the notification:
+        // one that doesn't wait yet is still new when it does
+        let highest = match self.service.notified() {
+            Some(_) => last.as_ref().map_or(0, |(id, _)| *id),
+            None => self.chats.iter().map(|c| c.newest).max().unwrap_or(0),
+        };
         if let (Some(before), Some((id, jid))) = (self.newest, last)
             && id > before
         {
@@ -767,6 +811,34 @@ impl WhatsApp {
         };
         match &self.state {
             State::Loading => rows.push(note("ellipsis", th.subtext, vec![t("Leggo le chat…", "Reading the chats…").into()])),
+            State::Missing if self.service.notified().is_some() => rows.push(note(
+                "questionmark.app",
+                th.yellow,
+                vec![t("Non trovo il database delle notifiche di macOS.", "The database of macOS's notifications isn't there.").into()],
+            )),
+            State::Denied if self.service.notified().is_some() => {
+                rows.push(note(
+                    "lock.fill",
+                    th.yellow,
+                    vec![
+                        format!(
+                            "{} {} {}",
+                            t("I messaggi di", "The messages of"),
+                            self.service.name(),
+                            t("vengono dalle sue notifiche, che macOS lascia leggere solo con Accesso completo al disco.", "come from its notifications, which macOS lets read only with Full Disk Access.")
+                        ),
+                        t("Aggiungi RustyBar all'elenco, poi riavvia la barra.", "Add RustyBar to the list, then restart the bar.").into(),
+                    ],
+                ));
+                rows.push(
+                    rx.row_button(
+                        vec![Node::text(t("Apri Accesso completo al disco…", "Open Full Disk Access…"), th.font(), th.text).key("text")],
+                        vec![],
+                        Action::Open("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles".into()),
+                    )
+                    .key("privacy"),
+                );
+            }
             State::Missing => rows.push(note(
                 "questionmark.app",
                 th.yellow,
@@ -801,7 +873,11 @@ impl WhatsApp {
                     rows.push(self.chat_row(rx, c, now));
                 }
                 if waiting.is_empty() {
-                    rows.push(note("checkmark.circle.fill", self.service.color(), vec![t("Niente da leggere.", "Nothing to read.").into()]));
+                    let mut lines = vec![t("Niente da leggere.", "Nothing to read.").to_string()];
+                    if self.service.notified().is_some() {
+                        lines.push(format!("{} {} {}", t("Qui arriva ciò che", "What"), self.service.name(), t("notifica su questo Mac.", "notifies on this Mac comes here.")));
+                    }
+                    rows.push(note("checkmark.circle.fill", self.service.color(), lines));
                 }
                 let mut others: Vec<&Chat> = self.chats.iter().filter(|c| self.unread(c) == 0 && self.held(c) == 0 && (self.groups || !c.group)).collect();
                 others.sort_by(|a, b| b.at.total_cmp(&a.at));
@@ -973,10 +1049,11 @@ impl WhatsApp {
             Node::text(&chat.name, th.font_with(Weight::Semibold, th.font_size), th.text).max_width(WIDTH - 150.0).key("name"),
             Node::spacer(),
         ];
-        if chat.unread > 0 {
+        // Slack and Teams read a conversation when it's opened there: the ↗ does it
+        if chat.unread > 0 && self.service.notified().is_none() {
             let tip = match self.service {
                 Service::WhatsApp => t("Segna come letta su WhatsApp: apre la chat nell'app", "Mark as read in WhatsApp: opens the chat in the app").to_string(),
-                Service::Telegram => t("Segna come letta su Telegram", "Mark as read in Telegram").to_string(),
+                _ => t("Segna come letta su Telegram", "Mark as read in Telegram").to_string(),
             };
             head.push(button("checkmark.message", &format!("read:{}", chat.jid), &tip));
         }
@@ -1006,6 +1083,17 @@ impl WhatsApp {
                 .push(Node::column(list).gap(4.0).padding(6.0, 6.0, 6.0, 6.0)),
         );
 
+        if self.service.notified().is_some() {
+            rows.push(
+                rx.row_button(
+                    vec![Node::symbol("arrowshape.turn.up.left.fill", 12.0, Weight::Semibold, self.service.color()).key("symbol"), Node::text(format!("{} {}", t("Rispondi in", "Answer in"), self.service.name()), th.font(), th.text).key("text")],
+                    vec![],
+                    rx.action(&format!("show:{}", chat.jid)),
+                )
+                .key("answer"),
+            );
+            return rx.popup(WIDTH, rows).gap(4.0);
+        }
         let draft = self.drafts.get(&chat.jid).map(String::as_str).unwrap_or_default();
         let ready = !draft.trim().is_empty() && !self.sending;
         let placeholder = format!("{} {}", t("Scrivi a", "Message"), chat.name);
@@ -1019,7 +1107,7 @@ impl WhatsApp {
             .click(rx.action("send"))
             .tip(match self.service {
                 Service::WhatsApp => t("Invia con WhatsApp: l'app passa davanti un momento e apre la chat, che segna come letta", "Send with WhatsApp: the app comes to the front for a moment and opens the chat, which it marks read"),
-                Service::Telegram => t("Invia: la chat è segnata come letta", "Send: the chat is marked read"),
+                _ => t("Invia: la chat è segnata come letta", "Send: the chat is marked read"),
             })
             .key("send");
         rows.push(Node::row(vec![field, send]).gap(8.0).padding(5.0, 5.0, 5.0, 12.0).radius(18.0).background(th.surface).key("compose"));
@@ -1230,7 +1318,7 @@ impl Widget for WhatsApp {
         // Each write of the app, once it has been quiet for a moment: it writes in bursts
         let handle = cx.handle::<WhatsApp>();
         let ticket = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        self.watcher = wa::watch(&wa::container(), move || {
+        let changed = move || {
             let mine = ticket.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             let (ticket, handle) = (ticket.clone(), handle.clone());
             crate::runtime::spawn("whatsapp-quiet", move || {
@@ -1239,7 +1327,11 @@ impl Widget for WhatsApp {
                     handle.send(|w, cx| w.load(cx));
                 }
             });
-        });
+        };
+        self.watcher = match self.service.notified() {
+            Some(_) => wa::watch_files(&nc::database(), nc::FILES, changed),
+            None => wa::watch(&wa::container(), changed),
+        };
         self.load(cx);
     }
 
@@ -1422,6 +1514,16 @@ impl Widget for WhatsApp {
                     telegram.send(tg::Cmd::Read { jid: jid.to_string(), done });
                 }
             }
+            // Slack and Teams: the conversation where the notification leads, or just the app
+            Some(("show" | "read", jid)) if self.service.notified().is_some() => {
+                if self.mock.is_none() {
+                    match self.chat(jid).and_then(|c| c.link.clone()) {
+                        Some(link) => crate::runtime::open(&link),
+                        None => crate::runtime::open_app(self.service.bundle()),
+                    }
+                }
+                cx.close_popup();
+            }
             Some((verb @ ("show" | "read"), jid)) => {
                 if self.mock.is_some() {
                     return;
@@ -1475,6 +1577,24 @@ impl Widget for WhatsApp {
             }
             Event::Wake => self.load(cx),
             Event::Trigger { name, .. } if name.strip_suffix("_message") == Some(self.service.key()) => self.mock_message(cx),
+            // `msg trigger slack_dump`: what the app's notifications are made of, in a file
+            Event::Trigger { name, .. } if self.service.notified().is_some() && self.mock.is_none() && name.strip_suffix("_dump") == Some(self.service.key()) => {
+                let service = self.service;
+                cx.background::<WhatsApp, _>(
+                    move || {
+                        let dir = crate::config::home().join("Library/Caches/rustybar");
+                        let _ = std::fs::create_dir_all(&dir);
+                        let path = dir.join(format!("notes-{}.txt", service.key()));
+                        let text = nc::dump(&nc::database(), service.bundle());
+                        let first = text.lines().next().unwrap_or_default().to_string();
+                        let _ = std::fs::write(&path, text);
+                        format!("{}: {first} in {}", service.key(), path.display())
+                    },
+                    |_, line, _| crate::log(&line),
+                );
+            }
+            // The Dock's badges changed: read in the app, what waited doesn't any more
+            Event::Trigger { name, .. } if name == "dock" && self.service.notified().is_some() => self.load(cx),
             // After `rustybar telegram login`, or a logout
             Event::Trigger { name, .. } if name == "telegram_login" && self.service == Service::Telegram => self.load(cx),
             // `msg trigger whatsapp_chat chat=<jid, or how its name starts>`: the popup on that

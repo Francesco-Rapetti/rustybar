@@ -79,6 +79,8 @@ pub struct Chat {
     pub messages: Vec<Message>,
     /// The id of its last message, of any kind.
     pub newest: i64,
+    /// What opens it in its app, where the app says.
+    pub link: Option<String>,
 }
 
 impl Chat {
@@ -150,6 +152,7 @@ pub fn read(dir: &Path, recent: usize) -> Result<Vec<Chat>, Error> {
             picture: picture(dir, &row.text(6)),
             messages: Vec::new(),
             newest: row.int(8),
+            link: None,
         });
     })?;
     // 6 and 10 are what the app says itself (who joined, a missed call); the rest without a text
@@ -254,6 +257,11 @@ pub struct Watch {
 /// them, and FSEvents tells of a file only once it's closed, so a watch on the folder saw nothing
 /// until the app quit. The folder is watched too, for the log that the app makes and deletes.
 pub fn watch(dir: &Path, changed: impl Fn() + Send + 'static) -> Option<Watch> {
+    watch_files(dir, ["ChatStorage.sqlite", "ChatStorage.sqlite-wal"], changed)
+}
+
+/// `watch` for any database of another process: `names` are the database and its log, in `dir`.
+pub fn watch_files(dir: &Path, names: [&'static str; 2], changed: impl Fn() + Send + 'static) -> Option<Watch> {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     let mut ends = [0; 2];
     if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
@@ -263,8 +271,7 @@ pub fn watch(dir: &Path, changed: impl Fn() + Send + 'static) -> Option<Watch> {
     let dir = dir.to_path_buf();
     // All of it on the thread: opening anything in the folder of another app waits for the
     // user's answer to macOS, the first time
-    crate::runtime::spawn("whatsapp-watch", move || {
-        const FILES: [&str; 2] = ["ChatStorage.sqlite", "ChatStorage.sqlite-wal"];
+    crate::runtime::spawn("database-watch", move || {
         const GONE: u32 = libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE;
         let event_only = |path: &Path| -> Option<OwnedFd> {
             let path = CString::new(path.to_string_lossy().as_bytes()).ok()?;
@@ -281,7 +288,7 @@ pub fn watch(dir: &Path, changed: impl Fn() + Send + 'static) -> Option<Watch> {
             unsafe { libc::kevent(queue.as_raw_fd(), &ev, 1, std::ptr::null_mut(), 0, std::ptr::null()) == 0 }
         };
         let Some(folder) = event_only(&dir) else {
-            crate::log("whatsapp: can't watch the app's folder");
+            crate::log(&format!("can't watch {}", dir.display()));
             return;
         };
         if !add(&folder, libc::EVFILT_VNODE, libc::NOTE_WRITE) || !add(&stopped, libc::EVFILT_READ, 0) {
@@ -292,7 +299,7 @@ pub fn watch(dir: &Path, changed: impl Fn() + Send + 'static) -> Option<Watch> {
         loop {
             // The files that are there now and aren't watched yet: at first, and after the app
             // made its log again
-            for (file, name) in files.iter_mut().zip(FILES) {
+            for (file, name) in files.iter_mut().zip(names) {
                 if file.is_none() {
                     *file = event_only(&dir.join(name)).filter(|fd| add(fd, libc::EVFILT_VNODE, libc::NOTE_WRITE | libc::NOTE_EXTEND | GONE));
                 }
@@ -316,7 +323,7 @@ pub fn watch(dir: &Path, changed: impl Fn() + Send + 'static) -> Option<Watch> {
                 // The folder: a file came or went. News only if it's one of the database's
                 // that wasn't there
                 None => {
-                    if files.iter().zip(FILES).any(|(file, name)| file.is_none() && dir.join(name).exists()) {
+                    if files.iter().zip(names).any(|(file, name)| file.is_none() && dir.join(name).exists()) {
                         changed();
                     }
                 }
@@ -727,6 +734,7 @@ unsafe extern "C" {
     fn sqlite3_column_int64(stmt: *mut c_void, col: c_int) -> i64;
     fn sqlite3_column_double(stmt: *mut c_void, col: c_int) -> f64;
     fn sqlite3_column_text(stmt: *mut c_void, col: c_int) -> *const u8;
+    fn sqlite3_column_blob(stmt: *mut c_void, col: c_int) -> *const u8;
     fn sqlite3_column_bytes(stmt: *mut c_void, col: c_int) -> c_int;
 }
 
@@ -734,21 +742,33 @@ const SQLITE_OPEN_READONLY: c_int = 1;
 const SQLITE_ROW: c_int = 100;
 const SQLITE_DONE: c_int = 101;
 
-enum Value {
+pub(super) enum Value {
     Int(i64),
 }
 
-struct Db(*mut c_void);
+pub(super) struct Db(*mut c_void);
 
-struct Row(*mut c_void);
+pub(super) struct Row(*mut c_void);
 
 impl Row {
-    fn int(&self, col: c_int) -> i64 {
+    pub(super) fn int(&self, col: c_int) -> i64 {
         unsafe { sqlite3_column_int64(self.0, col) }
     }
 
-    fn double(&self, col: c_int) -> f64 {
+    pub(super) fn double(&self, col: c_int) -> f64 {
         unsafe { sqlite3_column_double(self.0, col) }
+    }
+
+    /// Empty for a null.
+    pub(super) fn blob(&self, col: c_int) -> Vec<u8> {
+        unsafe {
+            let p = sqlite3_column_blob(self.0, col);
+            if p.is_null() {
+                return Vec::new();
+            }
+            let n = sqlite3_column_bytes(self.0, col) as usize;
+            std::slice::from_raw_parts(p, n).to_vec()
+        }
     }
 
     /// Empty for a null.
@@ -765,7 +785,7 @@ impl Row {
 }
 
 impl Db {
-    fn open(file: &Path) -> Result<Db, Error> {
+    pub(super) fn open(file: &Path) -> Result<Db, Error> {
         let path = CString::new(file.to_string_lossy().as_bytes()).map_err(|e| Error::Other(e.to_string()))?;
         let mut db = std::ptr::null_mut();
         let rc = unsafe { sqlite3_open_v2(path.as_ptr(), &mut db, SQLITE_OPEN_READONLY, std::ptr::null()) };
@@ -785,7 +805,7 @@ impl Db {
         Error::Other(unsafe { CStr::from_ptr(sqlite3_errmsg(self.0)) }.to_string_lossy().into_owned())
     }
 
-    fn each(&self, sql: &str, args: &[Value], mut row: impl FnMut(&Row)) -> Result<(), Error> {
+    pub(super) fn each(&self, sql: &str, args: &[Value], mut row: impl FnMut(&Row)) -> Result<(), Error> {
         let sql = CString::new(sql).map_err(|e| Error::Other(e.to_string()))?;
         let mut stmt = std::ptr::null_mut();
         if unsafe { sqlite3_prepare_v2(self.0, sql.as_ptr(), -1, &mut stmt, std::ptr::null_mut()) } != 0 {

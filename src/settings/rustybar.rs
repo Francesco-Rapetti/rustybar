@@ -49,6 +49,16 @@ fn info(kind: &str) -> (&'static str, &'static str, &'static str) {
             "paperplane.fill",
             t("I messaggi non letti di Telegram, da leggere e a cui rispondere dalla barra; nel notch, dove c'è. Prima: rustybar telegram login.", "Telegram's unread messages, to read and answer from the bar; in the notch, where there is one. First: rustybar telegram login."),
         ),
+        "slack" => (
+            "Slack",
+            "number",
+            t("I messaggi che Slack notifica su questo Mac, da leggere dalla barra; nel notch, dove c'è. Serve Accesso completo al disco.", "The messages Slack notifies on this Mac, to read from the bar; in the notch, where there is one. Needs Full Disk Access."),
+        ),
+        "teams" => (
+            "Teams",
+            "person.2.fill",
+            t("I messaggi che Teams notifica su questo Mac, da leggere dalla barra; nel notch, dove c'è. Serve Accesso completo al disco.", "The messages Teams notifies on this Mac, to read from the bar; in the notch, where there is one. Needs Full Disk Access."),
+        ),
         "clock" => (t("Orologio", "Clock"), "clock.fill", t("Data e ora, con un calendario nel popup.", "Date and time, with a calendar in the popup.")),
         "audio" => ("Audio", "speaker.wave.2.fill", t("L'uscita e l'ingresso in uso, con il volume.", "The output and input in use, with their volume.")),
         "network" => (t("Rete", "Network"), "wifi", t("La VPN, la rete Wi-Fi o Ethernet.", "The VPN, the Wi-Fi network or Ethernet.")),
@@ -537,10 +547,14 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
             );
             &["low", "always", "pinned", "receivers", "names"]
         }
-        "whatsapp" | "telegram" => {
+        "whatsapp" | "telegram" | "slack" | "teams" => {
+            // Slack and Teams notify what counts themselves: nothing muted comes
+            let notified = matches!(kind.as_str(), "slack" | "teams");
             f.group(Some(t("Cosa conta", "What counts")));
-            f.toggle_at(t("Anche le chat silenziate", "Muted chats too"), None, &spot.k("muted"), false);
-            f.toggle_at(t("Anche i gruppi", "Groups too"), None, &spot.k("groups"), true);
+            if !notified {
+                f.toggle_at(t("Anche le chat silenziate", "Muted chats too"), None, &spot.k("muted"), false);
+            }
+            f.toggle_at(if notified { t("Anche canali e gruppi", "Channels and groups too") } else { t("Anche i gruppi", "Groups too") }, None, &spot.k("groups"), true);
             if kind == "telegram" {
                 f.toggle_at(t("Anche i canali", "Channels too"), Some(t("Vale al prossimo avvio della barra", "From the next start of the bar")), &spot.k("channels"), false);
             }
@@ -558,7 +572,11 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
             );
             f.toggle_at(t("Testo del messaggio nel notch", "The message's text in the notch"), Some(t("Spento, solo chi ha scritto", "Off, only who wrote")), &spot.k("preview"), true);
             f.toggle_at(t("Chat sotto il mouse", "Chats under the mouse"), Some(t("Col mouse sopra si allunga con le chat da leggere", "Under the mouse it grows with the chats to read")), &spot.k("hover"), true);
-            if kind == "telegram" { &["muted", "groups", "channels", "always", "recent", "notch", "preview", "hover"] } else { &["muted", "groups", "always", "recent", "notch", "preview", "hover"] }
+            match kind.as_str() {
+                "telegram" => &["muted", "groups", "channels", "always", "recent", "notch", "preview", "hover"],
+                "slack" | "teams" => &["groups", "always", "recent", "notch", "preview", "hover"],
+                _ => &["muted", "groups", "always", "recent", "notch", "preview", "hover"],
+            }
         }
         "fn_keys" => {
             fn_keys(f, &spot, !side.is_empty());

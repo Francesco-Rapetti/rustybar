@@ -806,6 +806,32 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   sulla barra vera dallo stesso giorno (nei dotfiles in `center` dopo `whatsapp`): 29 MB in 2
   processi, 0,30% CPU, 0 processi. Da provare: un messaggio in arrivo, invio, segna come letta,
   un video o documento al clic, `tg://openmessage`, riconnessione dopo lo stop.
+- `slack` e `teams` (chiesti dall'utente: "la stessa cosa" di `telegram`; workspace e tenant
+  aziendali, quindi niente app Slack sua, niente Graph, e lui ha scelto le notifiche di macOS
+  invece della sessione dell'app). Slack sul disco non tiene i messaggi (IndexedDB di 1 MB). `nc.rs`
+  legge il database di Centro Notifiche (`~/Library/Group Containers/group.com.apple.usernoted/db2/db`,
+  tabelle `app` e `record`, `data` è un bplist: `req.titl`, `body`, `iden`, `usda`), con un lettore
+  di bplist suo, in `cx.background`, a ogni scrittura (`wa::watch_files`, lo stesso kqueue di
+  WhatsApp). Serve Accesso completo al disco (senza: `!` giallo e tasto per l'elenco; vale dal
+  riavvio). Stesso widget (`whatsapp.rs`, `Service::Slack`/`Teams`, `notified()`), `Book` tiene le
+  conversazioni in memoria. Visto dal vero (dump con nomi e testi mascherati, `msg trigger
+  slack_dump`/`teams_dump` → `~/Library/Caches/rustybar/notes-<servizio>.txt`): Slack ha solo
+  titolo e testo, `New message from X` (diretto) o `New message in Y` (canale o gruppo, testo
+  `Chi: …`), `iden` = `T<workspace>_<ts>`, nessun id di conversazione (la ↗ apre
+  `slack://open?team=`); Teams ha il mittente nel titolo e in `usda` (NSKeyedArchiver) il
+  `convId` `19:…@unq.gbl.spaces` (a due) o altro (gruppo), la ↗ apre `msteams:/l/chat/<id>/conversations`.
+  Imparato: le app NON tolgono le notifiche quando si legge (quelle del mattino erano ancora lì
+  la sera): cosa aspetta lo dice il numero sul Dock (`notifications::dock_count`, letto col
+  database e a ogni `dock`, il trigger che `notifications` manda quando un badge cambia): le
+  ultime N notifiche aspettano, le altre sono cronologia; senza Accessibilità, quelle arrivate
+  dall'avvio. Niente risposta dalla barra (`Rispondi in Slack` apre l'app): l'utente ha detto
+  che va bene così; su Slack andrebbe cercata la chat per nome, con il rischio di scrivere al
+  collega sbagliato. Provato coi dati finti (`examples/mock/slack.json`, `teams.json`) e dal vero
+  sulla barra di prova il 23/11/2026, con l'Accesso completo al disco dato dall'utente: Slack
+  niente da leggere e tre recenti, Teams 1 (app chiusa, badge rimasto); 14 MB, 0,03% CPU,
+  0 processi in 30 s. Da provare: un messaggio che arriva (notice) e che va via leggendolo
+  nell'app, il link di Teams, titoli di Slack per thread e in altre lingue, un gruppo di Teams
+  (il titolo lì non l'ho visto); mancano gli screenshot del README.
 - Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
   sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
   (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del
