@@ -78,7 +78,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   oltre 120 MB su macOS 26; sfondi con un layer, non `drawRect`), poi una pagina per file
   (`rustybar.rs`, `aerospace.rs` con i bordi, `other.rs`). Dati finti: `<mock>/settings/`.
 - `widgets/`: un file per widget, registrato in `widgets::create` (più `hid.rs`, i protocolli HID
-  dei ricevitori per `devices`). Il trait `Widget` ha `start`,
+  dei ricevitori per `devices`, e `call.rs` e `meet.rs`, le chiamate per `now_playing`, con
+  l'estensione del browser in `extension/`). Il trait `Widget` ha `start`,
   `bar`, `popup`, `peek`, `notice`, `ready`, `action(name, value, cx)` ed `event` (`Wake`,
   `ScreensChanged`, `Trigger`, `PopupOpened`, `PopupClosed`, `PeekOpened`, `PeekClosed`). `Cx` dà
   `redraw`, `close_popup`, `notice`, `after`, `every`,
@@ -545,6 +546,79 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   working tree, con dentro il lavoro su `gfx.rs` che un'altra sessione stava facendo): sul MQ16AHE
   niente `⋯` e `home`, `network` e `clock` di nuovo interi; sull'Odyssey tutto intero,
   `now_playing` di 511 pt; 27 MB in 2 processi, 0,33% CPU nel primo minuto, 0 processi.
+- Chiamate in `now_playing` (chieste dall'utente; scelte con i mockup: a riposo nome, videocamera e
+  microfono; mic, videocamera, mano, mostra la chiamata, Esci; l'isola cresce da sola solo
+  all'inizio di una chiamata): `call.rs` (Slack, Teams) e `meet.rs` (Meet).
+  Meet con un'estensione Chromium di RustyBar (`extension/`, MV3, nell'app in
+  `Contents/Resources/extension`; caricata non pacchettizzata dall'utente): lo script nella pagina
+  di Meet trova i tasti da `data-is-muted` e dai nomi delle icone Material (`call_end`,
+  `back_hand`), indipendenti dalla lingua, e guarda la pagina con un `MutationObserver` (al più ogni
+  200 ms), quindi niente timer; la mano solo nella barra dei controlli (l'antenato di Esci con i
+  `data-is-muted`): fuori c'è un'altra `back_hand` che apre i partecipanti. La mano alzata Meet la
+  dice solo con l'etichetta (`Alza`/`Abbassa la mano`, nella lingua della pagina; niente
+  `aria-pressed`): alzata, il tasto ha altre classi al posto di alcune di quelle con cui è fatto
+  (`data-idom-class`), come il microfono da muto; visto a confronto di due dump, alzata e no.
+  Installata o ricaricata (↻ sulla scheda o Aggiorna in `chrome://extensions`), l'estensione si
+  mette da sola nelle schede di Meet aperte (`scripting`), senza ricaricare la riunione; la copia
+  vecchia si ferma (per versione: il worker ascolta la più nuova di una scheda). Ogni cambiamento
+  dell'estensione alza `version` nel manifest: alla prima linea (`hello`) la barra confronta la
+  versione con quella dell'app e, se è più vecchia, le chiede di ricaricarsi dalla sua cartella
+  (`chrome.runtime.reload`), una volta per versione; `rustybar msg trigger meet_reload` la ricarica
+  senza cambiare versione. Dia ricarica davvero solo con la ↻ della scheda dell'estensione, non con
+  quella della pagina. Nessun permesso per 127.0.0.1: Local Network Access di Chromium 158 (Dia)
+  lascia passare il WebSocket del worker anche senza. Lo script parla col worker con una porta solo
+  durante una chiamata, il worker tiene un WebSocket con la barra (`ws://127.0.0.1:47823/meet`,
+  riprova 1→10 s, un messaggio ogni 20 s perché Chrome non lo fermi) solo finché una scheda è in
+  chiamata. Nella barra `meet.rs`: un server avviato una volta per processo, un thread per linea che
+  aspetta il messaggio dopo (niente in mezzo), handshake RFC 6455 con `CC_SHA1`, solo con l'`Origin`
+  dell'estensione (id `palkoaepeohmdiehbgmiglbndcebomlk`, fisso per la `key` del manifest); il
+  browser dall'altra parte come fa `lsof` (`proc_pidfdinfo` di ogni processo, il socket TCP da
+  quella porta a 47823: ~10 ms una volta per linea), poi `call::app_of`. Un reload chiede di nuovo
+  lo stato alle linee aperte (`resend`). Una seconda barra (di prova) non ha la porta e lo scrive
+  nel log. Prima era con Apple event, lasciati perché Dia esegue JavaScript solo se avviato con
+  `--enable-applescript-javascript` (visto nel binario: il suo `execute` guarda
+  `CommandLine.arguments`, non la preferenza `browser.allow_javascript_apple_events` che ArcCore ha)
+  e l'utente non vuole avviarlo così. Nome: Meet non ne ha per una riunione fatta al momento (titolo
+  `Meet - <codice>`): quello dell'evento di oggi col link (`events::meet_title`, EventKit in
+  background, una volta per codice), se no il codice. La chiamata della barra viene da `settle`: le
+  schede di Meet più quella di Slack o Teams letta (`polled`), tenuta quella mostrata. Una linea che
+  si chiude tiene le sue chiamate fino a 20 s (`LINE_GONE`) se il browser c'è ancora (Dia ha chiuso
+  da sé la linea due volte in una chiamata, tornata dopo ~16 s), 1 s se è uscito. Controlli di Meet
+  con la grafica di Meet (chiesto dall'utente; `Look`): i colori della sua barra dei controlli presi
+  da uno screenshot (scura in ogni tema, muto rosa `#f9dedc`/`#601410`, mano alzata blu
+  `#a8c7fa`/`#062e6f`, neutri `#333537`, Esci una pillola rossa `#dc362e` con la sola icona), angoli
+  di 12; Slack e Teams restano nei colori del tema. Provati coi dati finti sulla barra di prova
+  (isola: peek e popup).
+  Slack e Teams: Accessibilità, tasti per nome (dicono cosa fa il clic: "Mute" col microfono
+  acceso), AXPress, `AXManualAccessibility` per Electron; elementi tenuti fra una lettura e l'altra.
+  L'API locale di Teams (8124) è stata ritirata da Microsoft il 30/06/2026 (MC1266901, da una sola
+  fonte); nei settaggi di Teams c'è ancora `enable_third_party_devices_service = false`. Senza
+  permessi l'app che cattura compare con cosa manca (`Blocked`). `rustybar msg trigger call_dump`
+  scrive l'albero AX di Slack e Teams in `~/Library/Caches/rustybar/call-<bundle>.txt`, e i tasti
+  che l'estensione vede in ogni scheda di Meet in `call-meet-<scheda>.txt`. Dati finti:
+  `examples/mock/call.json`, `msg trigger call service=meet|slack|teams|end`. Provato coi dati finti
+  sulla barra di prova (isola, notice, peek, popup, pill, compatto): ~20 MB, 0,03% CPU, 0 processi.
+  Da provare con l'utente, tutto dal vero: un huddle di Slack e una riunione di Teams (Accessibilità
+  a RustyBar, poi `call_dump` per scrivere i nomi veri dei tasti: quelli di `ax::classify` sono
+  ipotesi), il costo del polling durante una chiamata.
+  Chiamata e musica insieme (chiesto dall'utente): la barra mostra l'ultimo dei due che cambia
+  (`Focus`, `follow`): la chiamata quando comincia, la musica quando parte, di nuovo la chiamata
+  alla pausa o quando il microfono si accende; schede in cima a peek e popup (la chiamata e ogni app
+  con qualcosa, `source:call`/`source:<app>`), che cambiano anche la barra; peek e popup aperti
+  restano sulla loro scheda (`view`) anche se la barra cambia. Microfono acceso mentre suona
+  qualcosa: microfono giallo nella barra, avviso in peek e popup, l'isola cresce 3 s
+  (`warning_notice`). Provato coi dati finti sulla barra di prova (isola: notice, peek e popup con
+  le schede; pill e peek), con test per le regole. Dal vero, ancora con gli Apple event (Meet in Dia
+  aperto con l'argomento): stato del microfono e della videocamera giusto. Con l'estensione in Dia,
+  dal vero con l'utente: la mano alzata dalla barra, il suo stato letto dalle classi (tasto blu),
+  l'aggiornamento da sé da 1.4 in poi. Da provare: microfono, videocamera, mostra ed Esci dalla
+  barra; il nome dal calendario con una riunione in calendario. Il ponte provato con un client finto
+  (`Origin` sbagliato → 403, quello dell'estensione → 101, chiamata in barra e via, ping → pong) e
+  con un test che trova il processo dall'altra parte (`nc`). Sulla barra vera dal 23/11/2026: 25 MB
+  in 2 processi, 0,8% CPU nei primi 30 s dopo l'avvio, 0 processi. Dal vero con l'utente in Dia:
+  chiamata trovata (codice, microfono e videocamera giusti), mano alzata dalla barra, dump con la
+  mano alzata e no; durante la chiamata 28 MB in 2 processi, 0,22% CPU in 60 s, 0 processi (con gli
+  Apple event la lettura costava 20–50 ms ogni secondo).
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

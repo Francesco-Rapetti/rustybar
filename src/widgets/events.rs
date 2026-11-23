@@ -473,7 +473,7 @@ fn dot(color: Rgba, size: f64) -> Node {
 }
 
 /// MeetingBar's Google Meet logo, when it's there, else a green camera.
-fn meet_icon(rx: &Rx, size: f64) -> Node {
+pub(crate) fn meet_icon(rx: &Rx, size: f64) -> Node {
     if std::path::Path::new(MEETINGBAR).exists() {
         Node::image(format!("{MEETINGBAR}#google_meet_icon"), size, size, None)
     } else {
@@ -654,6 +654,18 @@ fn read_events(store: &EKEventStore) -> (Access, Vec<Ev>) {
     let mut events: Vec<Ev> = found.iter().filter(|e| keep(e)).map(|e| convert(&e)).collect();
     events.sort_by(|a, b| a.start.total_cmp(&b.start).then_with(|| a.title.cmp(&b.title)));
     (Access::Granted, events)
+}
+
+/// The title of today's event with the Meet call `code`, from the calendars: on a background
+/// thread, once per call (a store of its own, ~ms). None without access or such an event.
+pub(crate) fn meet_title(code: &str) -> Option<String> {
+    if unsafe { EKEventStore::authorizationStatusForEntityType(EKEntityType::Event) } != EKAuthorizationStatus::FullAccess {
+        return None;
+    }
+    let store = unsafe { EKEventStore::new() };
+    let (_, events) = read_events(&store);
+    let link = format!("https://meet.google.com/{code}");
+    events.into_iter().find(|e| e.meet.as_deref().is_some_and(|m| m.eq_ignore_ascii_case(&link))).map(|e| e.title).filter(|t| !t.trim().is_empty())
 }
 
 /// Today's midnight and the next one, in seconds since 1970.

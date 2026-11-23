@@ -570,7 +570,16 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
                 &spot.k("cover_colors"),
                 true,
             );
-            &["paused", "notch", "hover", "other_apps", "cover_colors"]
+            f.toggle_at(
+                t("Chiamate", "Calls"),
+                Some(t(
+                    "Durante una chiamata di Google Meet, Slack o Teams, al posto della musica: microfono, videocamera, mano ed Esci",
+                    "During a Google Meet, Slack or Teams call, in place of the music: mic, camera, hand and Leave",
+                )),
+                &spot.k("calls"),
+                true,
+            );
+            &["paused", "notch", "hover", "other_apps", "cover_colors", "calls"]
         }
         "front_app" | "battery" | "network" | "docker" => {
             f.group(Some(t("Opzioni", "Options")));

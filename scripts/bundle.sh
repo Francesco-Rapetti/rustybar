@@ -27,6 +27,9 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp "$binary" "$app/Contents/MacOS/rustybar"
 sed "s/@VERSION@/$version/g" resources/Info.plist > "$app/Contents/Info.plist"
+# The browser extension for Google Meet, to load from here (see the README)
+mkdir -p "$app/Contents/Resources"
+cp -R extension "$app/Contents/Resources/extension"
 
 identity="${RUSTYBAR_SIGN_IDENTITY:-}"
 if [ -z "$identity" ] && security find-identity -v -p codesigning | grep -q '"RustyBar Local"'; then

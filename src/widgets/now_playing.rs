@@ -43,10 +43,21 @@
 //! when the track changes, with the cover bigger (see `notice`): not for the first one, nor with
 //! the mouse on it.
 //!
+//! During a call of Google Meet (in a browser, with RustyBar's extension), Slack or Teams, with
+//! `calls` (on by default), the call takes the place of what plays (see `call` for how it's found
+//! and read): in the bar the
+//! app's icon, the meeting's name, the camera and the mic, red and crossed out when muted (the
+//! icon and the mic when compact); under the mouse and in the popup the mic, the camera, the
+//! raised hand, the call brought to the front, and a red Leave. On the island it grows by itself
+//! for a moment when a call starts. Without Accessibility, a Slack or Teams that captures shows
+//! with what's missing and how to give it.
+//!
 //! With made-up data (see `mock`), the players of `now_playing.json`, whose `artwork` is relative
 //! to its folder (the `other` one with `other_apps` only); the controls change them in memory only,
-//! and ⏮ ⏭ go through the tracks of its `queue`.
+//! and ⏮ ⏭ go through the tracks of its `queue`. The made-up calls of `call.json` start with
+//! `rustybar msg trigger call service=meet` (or `slack`, `teams`) and end with `service=end`.
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -66,6 +77,8 @@ use objc2_core_graphics::{CGBitmapContextCreate, CGColorSpace, CGContext, CGImag
 use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSNumber, NSObjectProtocol, NSString};
 use serde::Deserialize;
 
+use super::call::{self, Blocked, Call, Control, Found, Service, Target};
+use super::meet;
 use super::{Cx, Event, Island, Rx, Widget};
 use crate::config::Options;
 use crate::gfx::{Rgba, Weight};
@@ -306,6 +319,14 @@ impl NowPlayingObserver {
     }
 }
 
+/// What the bar shows while there's a call and something to play too (see `follow`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Focus {
+    #[default]
+    Call,
+    Media,
+}
+
 pub struct NowPlaying {
     /// Also while paused, in the bar.
     paused: bool,
@@ -337,6 +358,39 @@ pub struct NowPlaying {
     helper_starts: u32,
     /// It said MediaRemote isn't what it knows: not started again.
     helper_broken: bool,
+    /// Calls of Meet, Slack and Teams, in place of what plays (see `call`).
+    calls: bool,
+    call: Option<Call>,
+    /// Meet's calls, a tab each, as the extension says them (see `meet`).
+    meet: Vec<Call>,
+    /// The Slack or Teams call read last, or one of them that captures with what it misses.
+    polled: Option<Call>,
+    /// The apps that capture audio and may be in a call.
+    targets: Vec<Target>,
+    /// Counts the reads of calls: the reply of an older one is dropped, and its timer stops.
+    call_reads: u64,
+    /// The reads in a row that found no call while an app captures: each next one waits longer.
+    call_misses: u32,
+    /// When the widget started: a call found in the first seconds was already on (the first read,
+    /// the extension coming back), and doesn't show by itself (see `notice`).
+    born: f64,
+    /// The made-up calls (see the top).
+    mock_calls: Vec<Call>,
+    /// When the peek or the popup last opened: a click on Leave right after isn't one.
+    opened: f64,
+    /// The bar's, with a call and something to play: the latest change, or a tab's click.
+    focus: Focus,
+    /// The peek's and the popup's while open: the tab they opened on, or the one clicked in them.
+    /// The bar may move meanwhile (a pause in the popup gives the bar back to the call); they stay.
+    view: Option<Focus>,
+    /// At the last change (see `follow`): something played, the mic was on, the warning showed.
+    was_playing: bool,
+    was_mic: bool,
+    was_warning: bool,
+    /// When the warning started: the island shows it for a moment (see `notice`).
+    warned: f64,
+    /// The names of Meet calls from the calendar, by code: none when no event has it.
+    meet_titles: HashMap<String, Option<String>>,
 }
 
 impl NowPlaying {
@@ -358,6 +412,23 @@ impl NowPlaying {
             helper: None,
             helper_starts: 0,
             helper_broken: false,
+            calls: options.bool("calls").unwrap_or(true),
+            call: None,
+            meet: Vec::new(),
+            polled: None,
+            targets: Vec::new(),
+            call_reads: 0,
+            call_misses: 0,
+            born: 0.0,
+            mock_calls: Vec::new(),
+            opened: 0.0,
+            focus: Focus::Call,
+            view: None,
+            was_playing: false,
+            was_mic: false,
+            was_warning: false,
+            warned: 0.0,
+            meet_titles: HashMap::new(),
         }
     }
 
@@ -406,16 +477,19 @@ impl NowPlaying {
         for track in &mut self.queue {
             track.artwork = track.artwork.take().map(|a| dir.join(a).to_string_lossy().into_owned());
         }
+        self.mock_calls = crate::mock::load::<Vec<Call>>("call").unwrap_or_default();
         true
     }
 
     /// After a change of what plays: on a track that follows another one, the island shows it
     /// for a moment (see `notice`). Not for the first after the start, nor for a pause.
     fn watch_track(&mut self, cx: &mut Cx) {
+        self.follow(cx);
         let Some(key) = self.current().filter(|p| p.state == State::Playing).map(|p| format!("{}\u{1f}{}", p.bundle, track_key(&p.title, &p.artist, &p.album))) else {
             return;
         };
-        if self.noticed.as_ref().is_some_and(|k| *k != key) {
+        // A call takes the place of the music, and of its notices
+        if self.noticed.as_ref().is_some_and(|k| *k != key) && self.shown_call().is_none() {
             cx.notice();
         }
         self.noticed = Some(key);
@@ -675,7 +749,13 @@ impl NowPlaying {
         if let Some(t) = progress(th, p, Along::Around, Some(th.surface)) {
             sign = sign.trace(t);
         }
-        let right = Node::row(vec![sign])
+        let mut right = Vec::new();
+        if self.warning() {
+            right.push(Node::symbol("mic.fill", 12.0, Weight::Semibold, th.yellow).key("mic"));
+        }
+        right.push(sign);
+        let right = Node::row(right)
+            .gap(8.0)
             .align(Align::Center)
             .height(island.height)
             .padding(0.0, inset, 0.0, 8.0)
@@ -789,10 +869,23 @@ impl Widget for NowPlaying {
         if self.other_apps {
             self.spawn_helper(cx);
         }
+        // Who captures audio, from now on
+        if self.calls {
+            self.born = time::now();
+            call::watch(cx.handle::<NowPlaying>());
+            self.capture_changed(cx);
+            meet::serve(cx.handle::<NowPlaying>());
+        }
     }
 
     fn bar(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
+        if let Some(c) = self.shown_call() {
+            return Some(match self.island(rx) {
+                Some(island) => self.call_island(rx, c, island),
+                None => self.call_pill(rx, c),
+            });
+        }
         let p = self.current()?;
         if let Some(island) = self.island(rx) {
             return Some(self.island_bar(rx, p, island));
@@ -818,6 +911,9 @@ impl Widget for NowPlaying {
             let max = widen(&p.artist, 150.0);
             children.push(Node::text(&p.artist, font.clone(), th.subtext).max_width(max).key("artist"));
         }
+        if self.warning() {
+            children.push(Node::symbol("mic.fill", 12.0, Weight::Semibold, th.yellow).key("mic"));
+        }
         // The cover as far from the pill's edge as from its top and bottom
         let inset = ((th.pill_height - size) / 2.0).max(2.0);
         let mut pill = rx.pill(children).padding(0.0, th.pill_padding, 0.0, inset).click(rx.toggle_popup());
@@ -837,6 +933,9 @@ impl Widget for NowPlaying {
         if !self.hover {
             return None;
         }
+        if let Some(c) = self.call_in(self.tab(), self.current().is_some()) {
+            return Some(self.call_peek(rx, c));
+        }
         let p = self.current()?;
         // On the island, on the notch's black in the colors of the cover
         let island = self.island(rx);
@@ -845,6 +944,9 @@ impl Widget for NowPlaying {
         let rx = own.as_ref().unwrap_or(rx);
         let th = rx.theme;
         let mut rows = Vec::new();
+        let width = if island.is_some() { ISLAND_WIDTH - 28.0 } else { 216.0 };
+        rows.extend(self.tabs(rx, p.app.key(), &[p], width));
+        rows.extend(self.warning().then(|| warning_row(rx, width)));
         // What the island had no room for: the title, if it's cut there or compact, and the artist
         if let Some(i) = island {
             let (title_w, artist_w) = island_text(th, p, i.left);
@@ -932,6 +1034,12 @@ impl Widget for NowPlaying {
     /// bigger, the title, the artist and the album.
     fn notice(&self, rx: &Rx) -> Option<Node> {
         self.island(rx)?;
+        if self.warning() && time::now() - self.warned < 4.0 {
+            return Some(warning_notice(rx));
+        }
+        if let Some(c) = self.shown_call() {
+            return Some(self.call_notice(rx, c));
+        }
         let p = self.current()?;
         let theme = self.notch_theme(rx.theme, p);
         let rx = &Rx { theme: &theme, ..*rx };
@@ -954,6 +1062,9 @@ impl Widget for NowPlaying {
     }
 
     fn popup(&self, rx: &Rx) -> Option<Node> {
+        if let Some(c) = self.call_in(self.tab(), self.shown().is_some()) {
+            return Some(self.call_popup(rx, c));
+        }
         let Some(p) = self.shown() else { return Some(self.idle_popup(rx)) };
         // In the colors of the cover, once they're there; the hovers too, as the popup's own
         // highlight is the theme's. On the island, on the notch's black
@@ -969,33 +1080,10 @@ impl Widget for NowPlaying {
         let playing = p.state == State::Playing;
         let mut rows = Vec::new();
 
-        // More than one app has something: which one the player is for
+        // More than one thing to show, the call too: which one the player is for
         let active: Vec<&Player> = self.players.iter().filter(|q| q.active()).collect();
-        if active.len() > 1 {
-            let segments = active
-                .iter()
-                .map(|q| {
-                    let on = q.app == p.app;
-                    let mut s = Node::row(vec![
-                        Node::app_icon(&q.bundle, 14.0).key("icon"),
-                        Node::text(&q.name, th.small_font(), if on { th.on_primary } else { th.text }).max_width(WIDTH / 3.0 - 34.0).key("name"),
-                    ])
-                    .gap(5.0)
-                    .justify(Justify::Center)
-                    .height(22.0)
-                    .grow()
-                    .radius(6.0)
-                    .click(rx.action(&format!("source:{}", q.app.key())))
-                    .hover(th.highlight)
-                    .key(q.app.key());
-                    if on {
-                        s = s.hover(th.on_primary.faded(0.12));
-                    }
-                    s
-                })
-                .collect();
-            rows.push(Node::row(segments).gap(2.0).padding(2.0, 2.0, 2.0, 2.0).radius(8.0).background(th.surface).selected(Some(p.app.key().to_string()), th.primary).key("sources"));
-        }
+        rows.extend(self.tabs(rx, p.app.key(), &active, WIDTH));
+        rows.extend(self.warning().then(|| warning_row(rx, WIDTH - 16.0)));
 
         // The cover and what plays
         let text_w = WIDTH - 16.0 - COVER - 12.0 - 8.0 - if p.favorited.is_some() { 32.0 } else { 0.0 };
@@ -1141,9 +1229,80 @@ impl Widget for NowPlaying {
     }
 
     fn action(&mut self, name: &str, value: Option<f64>, cx: &mut Cx) {
+        self.act(name, value, cx);
+        // A play or a pause from the bar, a mic from the call's controls
+        self.follow(cx);
+    }
+
+    fn event(&mut self, event: &Event, cx: &mut Cx) {
+        match event {
+            Event::Wake => {
+                for app in APPS {
+                    if self.players[app as usize].access == Access::Granted {
+                        self.refresh(app, false, cx);
+                    }
+                }
+                self.read_calls(cx);
+            }
+            Event::Trigger { name, args } if name == "call" && self.mock => {
+                let service = args.get("service").map(String::as_str).unwrap_or("meet");
+                self.mock_call(service, cx);
+            }
+            Event::Trigger { name, .. } if name == "call_dump" => self.dump_calls(cx),
+            Event::Trigger { name, .. } if name == "meet_reload" => meet::reload(),
+            Event::PopupOpened => {
+                self.view.get_or_insert(self.focus);
+                self.opened = time::now();
+                self.ticking += 1;
+                self.tick(self.ticking, cx);
+                // The popup is a click: macOS may ask for the permission now (not over a call)
+                if let Some(app) = self.shown().filter(|_| self.call_in(self.tab(), true).is_none()).map(|p| p.app) {
+                    self.refresh(app, true, cx);
+                }
+            }
+            Event::PopupClosed => {
+                self.ticking += 1;
+                self.pick = None;
+                self.view = None;
+                cx.redraw();
+            }
+            Event::PeekClosed => {
+                self.view = None;
+                cx.redraw();
+            }
+            // Not a click: the permission isn't asked for, only what's allowed is read again.
+            // Its closing stops the timer by itself, which the popup opening from it needs
+            Event::PeekOpened => {
+                self.view.get_or_insert(self.focus);
+                self.opened = time::now();
+                self.ticking += 1;
+                self.tick(self.ticking, cx);
+                if let Some(app) = self.current().map(|p| p.app)
+                    && self.players[app as usize].access == Access::Granted
+                {
+                    self.refresh(app, false, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    crate::any_widget!();
+}
+
+impl NowPlaying {
+    fn act(&mut self, name: &str, value: Option<f64>, cx: &mut Cx) {
+        if name.starts_with("call:") {
+            self.call_action(name, cx);
+            return;
+        }
+        if name == "source:call" {
+            self.pick_tab(Focus::Call, cx);
+            return;
+        }
         if let Some(key) = name.strip_prefix("source:") {
             self.pick = ALL.into_iter().find(|a| a.key() == key);
-            cx.redraw();
+            self.pick_tab(Focus::Media, cx);
             return;
         }
         if let Some(key) = name.strip_prefix("open:") {
@@ -1278,52 +1437,13 @@ impl Widget for NowPlaying {
         cx.redraw();
     }
 
-    fn event(&mut self, event: &Event, cx: &mut Cx) {
-        match event {
-            Event::Wake => {
-                for app in APPS {
-                    if self.players[app as usize].access == Access::Granted {
-                        self.refresh(app, false, cx);
-                    }
-                }
-            }
-            Event::PopupOpened => {
-                self.ticking += 1;
-                self.tick(self.ticking, cx);
-                // The popup is a click: macOS may ask for the permission now
-                if let Some(app) = self.shown().map(|p| p.app) {
-                    self.refresh(app, true, cx);
-                }
-            }
-            Event::PopupClosed => {
-                self.ticking += 1;
-                self.pick = None;
-            }
-            // Not a click: the permission isn't asked for, only what's allowed is read again.
-            // Its closing stops the timer by itself, which the popup opening from it needs
-            Event::PeekOpened => {
-                self.ticking += 1;
-                self.tick(self.ticking, cx);
-                if let Some(app) = self.current().map(|p| p.app)
-                    && self.players[app as usize].access == Access::Granted
-                {
-                    self.refresh(app, false, cx);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    crate::any_widget!();
-}
-
-impl NowPlaying {
     /// Every second while the popup is open, or the pill grown, and it plays: the time moves on.
     fn tick(&mut self, ticking: u64, cx: &mut Cx) {
         if ticking != self.ticking || !(cx.popup_open || cx.peek_open) {
             return;
         }
-        if self.shown().is_some_and(|p| p.state == State::Playing) {
+        // The time goes on, of the track or of the call
+        if self.live_call().is_some() || self.shown().is_some_and(|p| p.state == State::Playing) {
             cx.redraw();
         }
         cx.after::<NowPlaying>(1.0, move |w, cx| w.tick(ticking, cx));
@@ -1491,6 +1611,771 @@ impl NowPlaying {
         }
         cx.redraw();
     }
+}
+
+// Calls (see `call`)
+
+impl NowPlaying {
+    /// The call the widget shows, in place of what plays.
+    /// The call, if there's one.
+    fn live_call(&self) -> Option<&Call> {
+        self.call.as_ref().filter(|_| self.calls)
+    }
+
+    /// The call when it has `focus`, or nothing else has anything to show (`media`).
+    fn call_in(&self, focus: Focus, media: bool) -> Option<&Call> {
+        self.live_call().filter(|_| focus == Focus::Call || !media)
+    }
+
+    /// The bar's call: in place of what plays while it has the focus.
+    fn shown_call(&self) -> Option<&Call> {
+        self.call_in(self.focus, self.current().is_some())
+    }
+
+    /// What the peek and the popup show: the tab they opened on, or the bar's.
+    fn tab(&self) -> Focus {
+        self.view.unwrap_or(self.focus)
+    }
+
+    fn playing(&self) -> bool {
+        self.players.iter().any(|p| p.active() && p.state == State::Playing)
+    }
+
+    /// The mic is on in the call while something plays: the others may hear it from the speakers.
+    fn warning(&self) -> bool {
+        self.live_call().is_some_and(|c| c.mic == Some(true)) && self.playing()
+    }
+
+    /// After a change of the call or of what plays: the latest says what the bar shows.
+    /// Something that starts playing takes it, a pause gives it back to the call, and so does the
+    /// mic going on; a call takes it as it starts (see `calls_found`). When the mic goes on while
+    /// something plays, or something plays with the mic on, the island says so for a moment.
+    fn follow(&mut self, cx: &mut Cx) {
+        let playing = self.playing();
+        let mic = self.live_call().is_some_and(|c| c.mic == Some(true));
+        let warning = self.warning();
+        let before = self.focus;
+        if playing != self.was_playing {
+            self.focus = if playing { Focus::Media } else { Focus::Call };
+        }
+        if mic && !self.was_mic {
+            self.focus = Focus::Call;
+        }
+        if warning && !self.was_warning {
+            self.warned = time::now();
+            cx.notice();
+        }
+        (self.was_playing, self.was_mic, self.was_warning) = (playing, mic, warning);
+        if self.focus != before || warning != self.was_warning {
+            cx.redraw();
+        }
+    }
+
+    /// Picks a tab of the peek or the popup: the bar shows it too.
+    fn pick_tab(&mut self, focus: Focus, cx: &mut Cx) {
+        self.focus = focus;
+        self.view = Some(focus);
+        cx.redraw();
+    }
+
+    /// CoreAudio says an app started or stopped capturing: those that may be in a call are asked.
+    pub(crate) fn capture_changed(&mut self, cx: &mut Cx) {
+        let targets: Vec<Target> = call::capturing().into_iter().filter_map(|(pid, bundle)| Some(Target { service: Service::of(&bundle)?, pid, bundle })).collect();
+        if targets != self.targets {
+            self.targets = targets;
+            self.call_misses = 0;
+            self.read_calls(cx);
+        }
+    }
+
+    /// Asks the apps that capture (Slack, Teams), and the one of the call, whether they're in one,
+    /// in the background.
+    fn read_calls(&mut self, cx: &mut Cx) {
+        if !self.calls || self.mock {
+            return;
+        }
+        self.call_reads += 1;
+        let serial = self.call_reads;
+        let mut targets = self.targets.clone();
+        if let Some(c) = self.polled.as_ref().filter(|c| c.blocked.is_none())
+            && !targets.iter().any(|t| t.pid == c.pid)
+        {
+            targets.insert(0, Target { service: c.service, pid: c.pid, bundle: c.bundle.clone() });
+        }
+        if targets.is_empty() {
+            if self.polled.take().is_some() {
+                self.settle(cx);
+            }
+            return;
+        }
+        cx.background::<NowPlaying, _>(
+            move || {
+                let found = call::read(&targets);
+                (targets, found)
+            },
+            move |w, (targets, found), cx| w.calls_found(serial, targets, found, cx),
+        );
+    }
+
+    /// What Slack and Teams said: the call polled if it goes on, else the first one, else an app
+    /// that captures with what keeps it from being read. Then the next read: every second during
+    /// a call, later and later while an app captures without one.
+    fn calls_found(&mut self, serial: u64, targets: Vec<Target>, found: Vec<Found>, cx: &mut Cx) {
+        if serial != self.call_reads {
+            return;
+        }
+        let mut calls = Vec::new();
+        let mut blocked = None;
+        for (t, f) in targets.into_iter().zip(found) {
+            match f {
+                Found::Call(c) => calls.push(c),
+                Found::Blocked(b) if blocked.is_none() => blocked = Some(Call { service: t.service, bundle: t.bundle, pid: t.pid, blocked: Some(b), ..Default::default() }),
+                _ => {}
+            }
+        }
+        let kept = calls.iter().position(|c| self.polled.as_ref().is_some_and(|o| same_call(o, c)));
+        self.polled = kept.or((!calls.is_empty()).then_some(0)).map(|i| calls.swap_remove(i)).or(blocked);
+        self.settle(cx);
+        let delay = match &self.polled {
+            Some(c) if c.blocked.is_none() => {
+                self.call_misses = 0;
+                1.0
+            }
+            // Until what's missing is given
+            Some(_) => 3.0,
+            None if !self.targets.is_empty() => {
+                self.call_misses += 1;
+                2f64.powi(self.call_misses.min(4) as i32 - 1).min(10.0)
+            }
+            None => return,
+        };
+        cx.after::<NowPlaying>(delay, move |w, cx| {
+            if w.call_reads == serial {
+                w.read_calls(cx);
+            }
+        });
+    }
+
+    /// What the extension says, from a tab of `browser` over the line `line` (see `meet`): a call
+    /// that starts, changes or ends.
+    pub(crate) fn meet_said(&mut self, line: u64, browser: &meet::Browser, said: &meet::Said, cx: &mut Cx) {
+        if !self.calls || self.mock {
+            return;
+        }
+        let (pid, bundle) = browser.clone().unwrap_or_default();
+        match said {
+            meet::Said::Call { tab, call: true, mic, camera, hand, name, code } => {
+                let c = Call {
+                    service: Service::Meet,
+                    bundle,
+                    app: call::app_name(pid),
+                    name: name.clone(),
+                    code: code.clone(),
+                    mic: *mic,
+                    camera: *camera,
+                    hand: *hand,
+                    leave: true,
+                    pid,
+                    tab: *tab,
+                    line,
+                    ..Default::default()
+                };
+                match self.meet.iter_mut().find(|o| same_call(o, &c)) {
+                    Some(o) => *o = c,
+                    None => self.meet.push(c),
+                }
+            }
+            meet::Said::Call { tab, .. } => self.meet.retain(|o| !(o.pid == pid && o.tab == *tab)),
+            meet::Said::Dump { tab, text } => {
+                let dir = crate::config::home().join("Library/Caches/rustybar");
+                let path = dir.join(format!("call-meet-{tab}.txt"));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::write(&path, text);
+                crate::log(&format!("now_playing: {} lines of a Meet tab in {}", text.lines().count(), path.display()));
+                return;
+            }
+            meet::Said::Hello { .. } | meet::Said::Other => return,
+        }
+        self.settle(cx);
+    }
+
+    /// A line to the extension closed. The browser quit: its calls go with it. Else its worker
+    /// stopped, or the bar's line broke: the extension comes back by itself in a few seconds
+    /// (each next try waits longer, up to 10 s), with its tabs, which keep their calls as they
+    /// were; until then they stay, up to `LINE_GONE`.
+    pub(crate) fn meet_closed(&mut self, line: u64, cx: &mut Cx) {
+        cx.after::<NowPlaying>(1.0, move |w, cx| w.drop_line(line, false, cx));
+        cx.after::<NowPlaying>(LINE_GONE, move |w, cx| w.drop_line(line, true, cx));
+    }
+
+    /// The calls still of `line`: those of a browser that quit, or `all`.
+    fn drop_line(&mut self, line: u64, all: bool, cx: &mut Cx) {
+        let before = self.meet.len();
+        self.meet.retain(|c| c.line != line || (!all && (c.pid == 0 || NSRunningApplication::runningApplicationWithProcessIdentifier(c.pid).is_some())));
+        if self.meet.len() != before {
+            self.settle(cx);
+        }
+    }
+
+    /// The call of the bar, from Meet's tabs and the Slack or Teams call: the one shown if it goes
+    /// on, else the first that can be read, else an app that captures with what it misses.
+    fn settle(&mut self, cx: &mut Cx) {
+        let now = time::now();
+        let mut calls: Vec<Call> = self.meet.iter().cloned().chain(self.polled.clone()).collect();
+        let readable = calls.iter().any(|c| c.blocked.is_none());
+        let kept = calls.iter().position(|c| self.call.as_ref().is_some_and(|o| same_call(o, c)) && (c.blocked.is_none() || !readable));
+        let first = calls.iter().position(|c| c.blocked.is_none());
+        let mut next = kept.or(first).or((!calls.is_empty()).then_some(0)).map(|i| calls.swap_remove(i));
+        let mut started = false;
+        if let Some(n) = &mut next {
+            if n.app.is_empty() && n.pid > 0 {
+                n.app = call::app_name(n.pid);
+            }
+            // A Meet with no name: its event's, from the calendars, looked up once
+            if n.name.is_empty() && !n.code.is_empty() {
+                match self.meet_titles.get(&n.code) {
+                    Some(title) => n.name = title.clone().unwrap_or_default(),
+                    None => {
+                        self.meet_titles.insert(n.code.clone(), None);
+                        let code = n.code.clone();
+                        cx.background::<NowPlaying, _>(
+                            {
+                                let code = code.clone();
+                                move || super::events::meet_title(&code)
+                            },
+                            move |w, title, cx| {
+                                if let Some(title) = title {
+                                    w.meet_titles.insert(code, Some(title));
+                                    w.settle(cx);
+                                }
+                            },
+                        );
+                    }
+                }
+            }
+            match self.call.as_ref().filter(|o| same_call(o, n)) {
+                Some(o) => n.since = o.since,
+                None => {
+                    n.since = now;
+                    started = n.blocked.is_none();
+                }
+            }
+        }
+        // In the log: a call that starts or ends, and what keeps one from being read
+        match (&self.call, &next) {
+            (_, Some(n)) if started => crate::log(&format!("now_playing: a {} call in {}", n.service.name(), n.app)),
+            (Some(o), Some(n)) if n.blocked.is_some() && o.blocked != n.blocked => crate::log(&format!("now_playing: {} captures, but {:?}", n.app, n.blocked)),
+            (None, Some(n)) if n.blocked.is_some() => crate::log(&format!("now_playing: {} captures, but {:?}", n.app, n.blocked)),
+            (Some(o), None) if o.blocked.is_none() => crate::log(&format!("now_playing: the {} call ended", o.service.name())),
+            _ => {}
+        }
+        let changed = match (&self.call, &next) {
+            (Some(a), Some(b)) => !same_call(a, b) || (a.name.as_str(), a.mic, a.camera, a.hand, a.blocked, a.app.as_str()) != (b.name.as_str(), b.mic, b.camera, b.hand, b.blocked, b.app.as_str()),
+            (None, None) => false,
+            _ => true,
+        };
+        self.call = next;
+        if changed {
+            cx.redraw();
+        }
+        // What else changed first: a call that starts is the latest, and takes the bar
+        self.follow(cx);
+        if started {
+            self.focus = Focus::Call;
+        }
+        // Not one already on when the bar starts
+        if started && now - self.born > QUIET {
+            cx.notice();
+        }
+    }
+
+    fn call_action(&mut self, name: &str, cx: &mut Cx) {
+        let now = time::now();
+        let mock = self.mock;
+        let Some(c) = self.call.as_mut() else { return };
+        let control = match name {
+            "call:mic" => Some(Control::Mic),
+            "call:camera" => Some(Control::Camera),
+            "call:hand" => Some(Control::Hand),
+            "call:leave" => Some(Control::Leave),
+            _ => None,
+        };
+        // A click that came as the controls grew under the mouse isn't for Leave
+        if control == Some(Control::Leave) && now - self.opened < 0.5 {
+            return;
+        }
+        // The change shows at once; the next read corrects it
+        match control {
+            Some(Control::Mic) => c.mic = c.mic.map(|on| !on),
+            Some(Control::Camera) => c.camera = c.camera.map(|on| !on),
+            Some(Control::Hand) => c.hand = c.hand.map(|on| !on),
+            _ => {}
+        }
+        // Meet's: in the tab too, which the next settle starts from
+        let meet = (c.service == Service::Meet).then_some((c.line, c.tab));
+        if let Some(o) = self.meet.iter_mut().find(|o| same_call(o, c)) {
+            (o.mic, o.camera, o.hand) = (c.mic, c.camera, c.hand);
+        }
+        let target = Target { service: c.service, pid: c.pid, bundle: c.bundle.clone() };
+        let blocked = c.blocked;
+        match (name, control, meet) {
+            (_, Some(Control::Leave), _) => {
+                cx.close_popup();
+                match meet {
+                    _ if mock => self.call = None,
+                    Some((line, tab)) => meet::press(line, tab, Control::Leave),
+                    None => cx.background::<NowPlaying, _>(move || call::press(&target, Control::Leave), |w, _, cx| w.read_calls(cx)),
+                }
+            }
+            (_, Some(control), Some((line, tab))) if !mock => meet::press(line, tab, control),
+            (_, Some(control), None) if !mock => {
+                cx.background::<NowPlaying, _>(move || call::press(&target, control), |w, _, cx| w.read_calls(cx));
+            }
+            ("call:open", _, _) => {
+                cx.close_popup();
+                let pid = target.pid;
+                match meet {
+                    _ if mock => {}
+                    Some((line, tab)) => {
+                        meet::show(line, tab);
+                        call::activate(pid);
+                    }
+                    None => cx.background::<NowPlaying, _>(move || call::show(&target), move |_, _, _| call::activate(pid)),
+                }
+            }
+            ("call:allow", _, _) if !mock && blocked == Some(Blocked::Accessibility) => {
+                super::notifications::prompt_accessibility();
+                crate::runtime::open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+            }
+            _ => {}
+        }
+        cx.redraw();
+    }
+
+    /// A made-up call (see the top): `service` starts it, `end` ends it.
+    fn mock_call(&mut self, service: &str, cx: &mut Cx) {
+        let next = self.mock_calls.iter().find(|c| c.service.key() == service).cloned().map(|mut c| {
+            c.since = time::now() - c.elapsed;
+            c
+        });
+        let started = next.is_some() && self.call.as_ref().map(|c| c.service) != next.as_ref().map(|c| c.service);
+        self.call = next;
+        cx.redraw();
+        self.follow(cx);
+        if started {
+            self.focus = Focus::Call;
+            cx.notice();
+        }
+    }
+
+    /// What Accessibility shows of Slack and Teams, and what the Meet tabs in a call have, to
+    /// learn what their calls look like: a file each in the cache folder (with the names of people
+    /// and channels: it stays on this Mac).
+    fn dump_calls(&mut self, cx: &mut Cx) {
+        let apps: Vec<(i32, &str)> = [call::SLACK, call::TEAMS]
+            .into_iter()
+            .flat_map(|b| NSRunningApplication::runningApplicationsWithBundleIdentifier(&NSString::from_str(b)).iter().map(|a| a.processIdentifier()).collect::<Vec<_>>().into_iter().map(move |pid| (pid, b)))
+            .collect();
+        let apps: Vec<(i32, String)> = apps.into_iter().map(|(pid, b)| (pid, b.to_string())).collect();
+        // And what the Meet tabs in a call have: they write it when they answer (see `meet_said`)
+        meet::dump();
+        cx.background::<NowPlaying, _>(
+            move || {
+                let dir = crate::config::home().join("Library/Caches/rustybar");
+                let _ = std::fs::create_dir_all(&dir);
+                apps.iter()
+                    .map(|(pid, bundle)| {
+                        let path = dir.join(format!("call-{bundle}.txt"));
+                        let started = std::time::Instant::now();
+                        let tree = call::dump(*pid);
+                        let lines = tree.lines().count();
+                        let _ = std::fs::write(&path, tree);
+                        format!("now_playing: {lines} elements of {bundle} in {} ({} ms)", path.display(), started.elapsed().as_millis())
+                    })
+                    .collect::<Vec<_>>()
+            },
+            |_, lines, _| {
+                for line in lines {
+                    crate::log(&line);
+                }
+            },
+        );
+    }
+
+    /// The tabs of the peek and the popup when there's more than one thing to show: the call,
+    /// then the apps that have something (`players`). `on` is the key of the one shown, `width`
+    /// the room they have.
+    fn tabs(&self, rx: &Rx, on: &str, players: &[&Player], width: f64) -> Option<Node> {
+        let th = rx.theme;
+        let call = self.live_call();
+        let count = players.len() + usize::from(call.is_some());
+        if count < 2 {
+            return None;
+        }
+        let name_w = width / count as f64 - 34.0;
+        let segment = |key: &str, icon: Node, name: &str, action: String| {
+            let selected = key == on;
+            let s = Node::row(vec![icon.key("icon"), Node::text(name, th.small_font(), if selected { th.on_primary } else { th.text }).max_width(name_w).key("name")])
+                .gap(5.0)
+                .justify(Justify::Center)
+                .height(22.0)
+                .grow()
+                .radius(6.0)
+                .click(rx.action(&action))
+                .hover(th.highlight)
+                .key(key.to_string());
+            if selected { s.hover(th.on_primary.faded(0.12)) } else { s }
+        };
+        let mut segments = Vec::new();
+        if let Some(c) = call {
+            segments.push(segment("call", call_icon(rx, c, 14.0), c.service.short(), "source:call".into()));
+        }
+        for q in players {
+            segments.push(segment(q.app.key(), Node::app_icon(&q.bundle, 14.0), &q.name, format!("source:{}", q.app.key())));
+        }
+        Some(Node::row(segments).gap(2.0).padding(2.0, 2.0, 2.0, 2.0).radius(8.0).background(th.surface).selected(Some(on.to_string()), th.primary).key("sources"))
+    }
+
+    /// The bar's call around the notch: left of it the app's icon and the meeting's name, which
+    /// takes the room the bar leaves there; right of it the camera and the mic. Compact, the icon
+    /// and the mic.
+    fn call_island(&self, rx: &Rx, c: &Call, island: Island) -> Node {
+        let theme = rx.theme.notch(None);
+        let rx = &Rx { theme: &theme, ..*rx };
+        let th = rx.theme;
+        let size = island_cover(island);
+        let inset = ((island.height - size) / 2.0).round();
+        let mut left = vec![call_icon(rx, c, size).key("icon")];
+        if !rx.compact {
+            let name = call_name(c);
+            let whole = crate::gfx::measure_text(&name, &th.font()).width.ceil();
+            let least = whole.min(ISLAND_TEXT);
+            left.push(Node::text(&name, th.font(), th.text).max_width(least + (whole - least).clamp(0.0, island.left.max(0.0))).marquee(true).key("title"));
+        }
+        let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
+        let right = Node::row(call_signs(th, c, rx.compact, self.warning())).gap(8.0).align(Align::Center).height(island.height).padding(0.0, inset + 2.0, 0.0, 8.0).key("wing");
+        rx.island(vec![left], vec![right]).click(rx.toggle_popup()).hover(crate::gfx::Rgba(0.0, 0.0, 0.0, 0.0))
+    }
+
+    /// The bar's call in a pill: the app's icon, the meeting's name, the camera and the mic.
+    fn call_pill(&self, rx: &Rx, c: &Call) -> Node {
+        let th = rx.theme;
+        let size = (th.pill_height - 8.0).max(12.0);
+        let mut children = vec![call_icon(rx, c, size).key("icon")];
+        if !rx.compact {
+            let name = call_name(c);
+            let whole = crate::gfx::measure_text(&name, &th.font()).width.ceil();
+            let max = 160.0 + (whole - 160.0).clamp(0.0, rx.spare.max(0.0));
+            children.push(Node::text(&name, th.font(), th.text).max_width(max).marquee(true).key("title"));
+        }
+        children.extend(call_signs(th, c, rx.compact, self.warning()));
+        let inset = ((th.pill_height - size) / 2.0).max(2.0);
+        let pill = rx.pill(children).padding(0.0, th.pill_padding, 0.0, inset).click(rx.toggle_popup());
+        if self.hover { pill.hover(crate::gfx::Rgba(0.0, 0.0, 0.0, 0.0)) } else { pill }
+    }
+
+    /// Under the pill or the island as it grows: the name if the bar cut it, the service, the app
+    /// and how long it's been on, then the controls, or what's missing to have them.
+    fn call_peek(&self, rx: &Rx, c: &Call) -> Node {
+        let island = self.island(rx);
+        let theme = island.map(|_| rx.theme.notch(None));
+        let own = theme.as_ref().map(|theme| Rx { theme, ..*rx });
+        let rx = own.as_ref().unwrap_or(rx);
+        let th = rx.theme;
+        let max = if island.is_some() { ISLAND_WIDTH - 28.0 } else { 216.0 };
+        let mut rows = Vec::new();
+        rows.extend(self.tabs(rx, "call", &self.current().into_iter().collect::<Vec<_>>(), max));
+        rows.extend(self.warning().then(|| warning_row(rx, max)));
+        let mut lines = Vec::new();
+        if rx.compact || island.is_some() {
+            lines.push(Node::text(call_name(c), th.font_with(Weight::Semibold, th.font_size), th.text).max_width(max).marquee(true).key("title"));
+        }
+        lines.push(Node::text(call_line(c, time::now()), th.small_font(), th.subtext).max_width(max).key("line"));
+        rows.push(Node::column(lines).gap(1.0).padding(2.0, 0.0, 2.0, 0.0).key("about"));
+        rows.push(call_note(rx, c, max).unwrap_or_else(|| call_controls(rx, c)));
+        let peek = Node::column(rows).gap(8.0).padding(2.0, 12.0, 10.0, 12.0);
+        if island.is_some() { peek.padding(4.0, 14.0, 12.0, 14.0).min_width(ISLAND_WIDTH) } else { peek.min_width(240.0) }
+    }
+
+    /// The popup of a call: the app's icon bigger, the name, the service, the app and the time,
+    /// then the controls, or what's missing to have them.
+    fn call_popup(&self, rx: &Rx, c: &Call) -> Node {
+        let island = self.island(rx);
+        let theme = island.map(|_| rx.theme.notch(None));
+        let own = theme.as_ref().map(|theme| Rx { theme, ..*rx });
+        let rx = own.as_ref().unwrap_or(rx);
+        let th = rx.theme;
+        let max = WIDTH - 16.0 - 36.0 - 12.0 - 8.0;
+        let lines = Node::column(vec![
+            Node::text(call_name(c), th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max).key("title"),
+            Node::text(call_line(c, time::now()), th.small_font(), th.subtext).max_width(max).key("line"),
+        ])
+        .gap(2.0)
+        .grow()
+        .key("lines");
+        let header = Node::row(vec![call_icon(rx, c, 36.0).key("icon"), lines]).gap(12.0).align(Align::Center).padding(4.0, 4.0, 2.0, 4.0).key("header");
+        let active: Vec<&Player> = self.players.iter().filter(|q| q.active()).collect();
+        let mut rows = Vec::new();
+        rows.extend(self.tabs(rx, "call", &active, WIDTH));
+        rows.extend(self.warning().then(|| warning_row(rx, WIDTH - 16.0)));
+        rows.push(header);
+        rows.push(call_note(rx, c, WIDTH - 16.0).unwrap_or_else(|| call_controls(rx, c).padding(0.0, 4.0, 0.0, 4.0)));
+        let popup = rx.popup(WIDTH, rows).gap(12.0);
+        if island.is_some() { popup.padding(4.0, 14.0, 14.0, 14.0) } else { popup }
+    }
+
+    /// On the island, for a moment when a call starts: the app's icon bigger, the name and the
+    /// service.
+    fn call_notice(&self, rx: &Rx, c: &Call) -> Node {
+        let theme = rx.theme.notch(None);
+        let rx = &Rx { theme: &theme, ..*rx };
+        let th = rx.theme;
+        let max = ISLAND_WIDTH - 28.0 - 40.0 - 12.0;
+        let service = if c.service == Service::Meet && !c.app.is_empty() { format!("{} · {}", c.service.name(), c.app) } else { c.service.name().to_string() };
+        let lines = Node::column(vec![
+            Node::text(call_name(c), th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max).marquee(true).key("title"),
+            Node::text(service, th.font(), th.subtext).max_width(max).key("line"),
+        ])
+        .gap(2.0)
+        .grow()
+        .key("lines");
+        Node::row(vec![call_icon(rx, c, 40.0).key("icon"), lines]).gap(12.0).align(Align::Center).padding(6.0, 14.0, 14.0, 14.0).min_width(ISLAND_WIDTH)
+    }
+}
+
+/// Whether two reads are of the same call: the app, and the tab for Meet.
+fn same_call(a: &Call, b: &Call) -> bool {
+    (a.service, a.pid, a.tab) == (b.service, b.pid, b.tab)
+}
+
+/// How long the calls of a line that closed wait for the extension to come back (see
+/// `meet_closed`): its worker tries again after 1, 2, 4, 8 s.
+const LINE_GONE: f64 = 20.0;
+
+/// The seconds after the widget starts when a call found was already on (see `born`): the
+/// extension tries again within 10 s.
+const QUIET: f64 = 12.0;
+
+/// The icon of a call: Meet's logo, else the app's.
+fn call_icon(rx: &Rx, c: &Call, size: f64) -> Node {
+    match c.service {
+        Service::Meet => super::events::meet_icon(rx, size),
+        _ => Node::app_icon(&c.bundle, size),
+    }
+}
+
+/// What the call is called: the meeting, or what it is when the app doesn't say.
+fn call_name(c: &Call) -> String {
+    if !c.name.is_empty() {
+        return c.name.clone();
+    }
+    match c.service {
+        // A meeting with no name of its own (one made on the spot), by its code
+        Service::Meet if !c.code.is_empty() => c.code.clone(),
+        Service::Meet => "Google Meet".into(),
+        Service::Slack => "Huddle".into(),
+        Service::Teams => t("Riunione", "Meeting").into(),
+    }
+}
+
+/// The service, the browser for Meet, and how long the call has been on: `Google Meet · Dia · 12:34`.
+fn call_line(c: &Call, now: f64) -> String {
+    let mut parts = Vec::new();
+    if call_name(c) != c.service.name() {
+        parts.push(c.service.name().to_string());
+    }
+    if (c.service == Service::Meet || c.blocked.is_some()) && !c.app.is_empty() {
+        parts.push(c.app.clone());
+    }
+    if c.blocked.is_none() {
+        parts.push(clock(now - c.since));
+    }
+    parts.join(" · ")
+}
+
+/// What the warning says (see `NowPlaying::warning`).
+fn warning_text() -> (&'static str, &'static str) {
+    (
+        t("Il microfono è acceso", "Your mic is on"),
+        t("Chi è nella riunione potrebbe sentire quello che suona, se non hai le cuffie", "The others in the meeting may hear what's playing, unless you're on headphones"),
+    )
+}
+
+/// The warning in the peek and the popup, `width` wide.
+fn warning_row(rx: &Rx, width: f64) -> Node {
+    let th = rx.theme;
+    let (title, detail) = warning_text();
+    // Less the symbol, the gap and the padding
+    let width = width - 13.0 - 10.0 - 20.0;
+    let mut lines = vec![Node::text(title, th.font(), th.text).key("title")];
+    for (i, line) in crate::ui::wrap(detail, &th.small_font(), width).into_iter().enumerate() {
+        lines.push(Node::text(line, th.small_font(), th.subtext).key(format!("detail{i}")));
+    }
+    Node::row(vec![Node::symbol("mic.fill", 13.0, Weight::Semibold, th.yellow).key("symbol"), Node::column(lines).gap(1.0).grow().key("lines")])
+        .gap(10.0)
+        .align(Align::Center)
+        .padding(8.0, 10.0, 8.0, 10.0)
+        .radius(10.0)
+        .background(th.tile(th.yellow, true))
+        .key("warning")
+}
+
+/// On the island, for a moment as the warning starts.
+fn warning_notice(rx: &Rx) -> Node {
+    let theme = rx.theme.notch(None);
+    let th = &theme;
+    let (title, detail) = warning_text();
+    let max = ISLAND_WIDTH - 28.0 - 40.0 - 12.0;
+    let mut lines = vec![Node::text(title, th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max).key("title")];
+    for (i, line) in crate::ui::wrap(detail, &th.small_font(), max).into_iter().enumerate() {
+        lines.push(Node::text(line, th.small_font(), th.subtext).key(format!("detail{i}")));
+    }
+    let icon = Node::row(vec![Node::symbol("mic.fill", 18.0, Weight::Semibold, th.yellow).key("symbol")])
+        .size(40.0, 40.0)
+        .radius(20.0)
+        .justify(Justify::Center)
+        .align(Align::Center)
+        .background(th.yellow.faded(0.24))
+        .key("icon");
+    Node::row(vec![icon, Node::column(lines).gap(2.0).grow().key("lines")]).gap(12.0).align(Align::Center).padding(6.0, 14.0, 14.0, 14.0).min_width(ISLAND_WIDTH)
+}
+
+/// The camera and the mic, as the bar shows them: the mic red and crossed out when muted, the
+/// camera dimmed when off; the mic alone when compact. An app that captures has its mic on.
+fn call_signs(th: &Theme, c: &Call, compact: bool, warning: bool) -> Vec<Node> {
+    let mut signs = Vec::new();
+    if let Some(on) = c.camera.filter(|_| !compact) {
+        signs.push(Node::symbol(if on { "video.fill" } else { "video.slash.fill" }, 12.0, Weight::Semibold, if on { th.text } else { th.subtext }).key("camera"));
+    }
+    if let Some(on) = c.mic.or(c.blocked.map(|_| true)) {
+        let color = match on {
+            true if warning => th.yellow,
+            true => th.text,
+            false => th.red,
+        };
+        signs.push(Node::symbol(if on { "mic.fill" } else { "mic.slash.fill" }, 12.0, Weight::Semibold, color).key("mic"));
+    }
+    signs
+}
+
+/// The controls of a call: mic, camera and hand (as the app has them), the call to the front, and
+/// a red Leave. What's off is on red, the raised hand on yellow: a clear tint, which the tiles'
+/// would not be on the notch's black.
+fn call_controls(rx: &Rx, c: &Call) -> Node {
+    let th = rx.theme;
+    let look = Look::of(th, c);
+    let button = |symbol: &str, (bg, fg): (Rgba, Rgba), action: &str, tip: String| {
+        Node::row(vec![Node::symbol(symbol, 15.0, Weight::Semibold, fg).key("symbol")])
+            .size(40.0, 36.0)
+            .justify(Justify::Center)
+            .radius(look.radius)
+            .background(bg)
+            .hover(look.hover.unwrap_or(bg.mix(fg, 0.12)))
+            .click(rx.action(action))
+            .tip(tip)
+            .key(action)
+    };
+    let mut controls = Vec::new();
+    if let Some(on) = c.mic {
+        let tip = if on { t("Disattiva il microfono", "Mute the mic") } else { t("Riattiva il microfono", "Unmute the mic") };
+        controls.push(button(if on { "mic.fill" } else { "mic.slash.fill" }, if on { look.plain } else { look.off }, "call:mic", tip.into()));
+    }
+    if let Some(on) = c.camera {
+        let tip = if on { t("Spegni la videocamera", "Turn off the camera") } else { t("Accendi la videocamera", "Turn on the camera") };
+        controls.push(button(if on { "video.fill" } else { "video.slash.fill" }, if on { look.plain } else { look.off }, "call:camera", tip.into()));
+    }
+    if let Some(up) = c.hand {
+        let tip = if up { t("Abbassa la mano", "Lower your hand") } else { t("Alza la mano", "Raise your hand") };
+        controls.push(button("hand.raised.fill", if up { look.up } else { look.plain }, "call:hand", tip.into()));
+    }
+    let app = if c.app.is_empty() { c.service.name().to_string() } else { c.app.clone() };
+    controls.push(button("arrow.up.forward.app.fill", look.plain, "call:open", format!("{} {app}", t("Mostra la chiamata in", "Show the call in"))));
+    if c.leave {
+        let (bg, fg) = look.leave;
+        let mut leave = vec![Node::symbol("phone.down.fill", if look.label { 13.0 } else { 16.0 }, Weight::Semibold, fg).key("symbol")];
+        if look.label {
+            leave.push(Node::text(t("Esci", "Leave"), th.font_with(Weight::Semibold, th.font_size), fg).key("label"));
+        }
+        let leave = Node::row(leave).gap(6.0).height(36.0).align(Align::Center).radius(18.0).background(bg);
+        let leave = if look.label { leave.padding(0.0, 14.0, 0.0, 12.0) } else { leave.width(56.0).justify(Justify::Center) };
+        controls.push(leave.hover(bg.mix(fg, 0.18)).click(rx.action("call:leave")).tip(t("Esci dalla chiamata", "Leave the call")).key("call:leave"));
+    }
+    Node::row(controls).gap(6.0).justify(Justify::Between).align(Align::Center).key("controls")
+}
+
+/// How a call's buttons look: as in Meet's own control bar for a Meet (dark, whatever the theme,
+/// as Meet is during a call: muted in pink, the raised hand in blue, Leave a red pill with its
+/// icon alone), else in the theme's colors. Each is its background and its icon's color.
+struct Look {
+    plain: (Rgba, Rgba),
+    off: (Rgba, Rgba),
+    up: (Rgba, Rgba),
+    leave: (Rgba, Rgba),
+    radius: f64,
+    /// Under the mouse; None: a veil of the icon's color, as Meet does.
+    hover: Option<Rgba>,
+    /// Leave says so in words too.
+    label: bool,
+}
+
+impl Look {
+    fn of(th: &Theme, c: &Call) -> Look {
+        let rgb = |v: u32| Rgba(((v >> 16) & 0xff) as f64 / 255.0, ((v >> 8) & 0xff) as f64 / 255.0, (v & 0xff) as f64 / 255.0, 1.0);
+        match c.service {
+            Service::Meet => Look {
+                plain: (rgb(0x333537), rgb(0xe3e3e3)),
+                off: (rgb(0xf9dedc), rgb(0x601410)),
+                up: (rgb(0xa8c7fa), rgb(0x062e6f)),
+                leave: (rgb(0xdc362e), rgb(0xffffff)),
+                radius: 12.0,
+                hover: None,
+                label: false,
+            },
+            _ => Look {
+                plain: (th.surface, th.text),
+                off: (th.red.faded(0.24), th.red),
+                up: (th.yellow.faded(0.24), th.yellow),
+                leave: (th.red, th.on_primary),
+                radius: 18.0,
+                hover: Some(th.highlight),
+                label: true,
+            },
+        }
+    }
+}
+
+/// What keeps the call from being read or controlled, and a click that gives it, on as many
+/// lines as it takes in `width`.
+fn call_note(rx: &Rx, c: &Call, width: f64) -> Option<Node> {
+    let th = rx.theme;
+    let (symbol, color, text, detail) = match c.blocked? {
+        Blocked::Accessibility => (
+            "hand.raised.fill",
+            th.primary,
+            t("Consenti Accessibilità a RustyBar", "Allow Accessibility for RustyBar").to_string(),
+            format!("{} {}", t("Per leggere e comandare la chiamata di", "To read and control the call in"), c.service.name()),
+        ),
+    };
+    // Less the symbol, the gap and the padding
+    let width = width - 13.0 - 10.0 - 20.0;
+    let mut lines = Vec::new();
+    for (i, line) in crate::ui::wrap(&text, &th.font(), width).into_iter().enumerate() {
+        lines.push(Node::text(line, th.font(), th.text).key(format!("text{i}")));
+    }
+    for (i, line) in crate::ui::wrap(&detail, &th.small_font(), width).into_iter().enumerate() {
+        lines.push(Node::text(line, th.small_font(), th.subtext).key(format!("detail{i}")));
+    }
+    let lines = Node::column(lines).gap(1.0).grow().key("lines");
+    Some(
+        Node::row(vec![Node::symbol(symbol, 13.0, Weight::Semibold, color).key("symbol"), lines])
+            .gap(10.0)
+            .padding(8.0, 10.0, 8.0, 10.0)
+            .radius(10.0)
+            .background(th.tile(color, true))
+            .click(rx.action("call:allow"))
+            .hover(th.highlight)
+            .key("access"),
+    )
 }
 
 /// The helper (see `now_playing.m`), compiled by build.rs.
@@ -2205,6 +3090,92 @@ mod tests {
         w.action("repeat", None, &mut cx);
         assert_eq!(w.players[1].repeat, Some(Repeat::Off));
         assert_eq!(music(&w).repeat, Some(Repeat::Off));
+    }
+
+    #[test]
+    fn a_call_takes_the_place_of_the_music() {
+        let theme = crate::theme::Theme::from_config(&crate::config::ThemeConfig::default());
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1512.0, 982.0));
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: None, notch_height: 0.0, large: false };
+        let rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false);
+        let keys = |n: &Node| n.children.iter().filter_map(|c| c.key.clone()).collect::<Vec<_>>();
+        let mut w = NowPlaying::new(&Options::default());
+        w.mock = true;
+        let mut timers = Vec::new();
+        let mut cx = Cx { name: "now_playing", generation: 0, popup_open: false, peek_open: true, timers: &mut timers, effects: Vec::new() };
+        let music = Player { app: App::Music, state: State::Playing, title: "A".into(), duration: 200.0, at: time::now(), pid: Some(1), ..Default::default() };
+        w.players = [music, Player::new(App::Spotify), Player::new(App::Other)];
+        w.follow(&mut cx);
+        // A call that starts takes the bar (see `calls_found`)
+        w.call = Some(Call { service: Service::Teams, bundle: call::TEAMS.into(), name: "Sync".into(), mic: Some(true), camera: Some(false), hand: Some(false), leave: true, since: time::now() - 60.0, ..Default::default() });
+        w.focus = Focus::Call;
+        // The pill: icon, name, camera and mic; the peek: the tabs of the call and the music, the
+        // warning (the mic is on while the music plays), what it is, then the controls
+        assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["icon", "title", "camera", "mic"]);
+        let peek = w.peek(&rx).expect("a peek");
+        assert_eq!(keys(&peek), ["sources", "warning", "about", "controls"]);
+        assert_eq!(keys(&peek.children[0]), ["call", "music"]);
+        assert_eq!(keys(&peek.children[3]), ["call:mic", "call:camera", "call:hand", "call:open", "call:leave"]);
+        let compact = Rx::new("now_playing", &theme, &display, crate::fit::Form::Compact, false);
+        assert_eq!(keys(&w.bar(&compact).expect("a pill")), ["icon", "mic"]);
+        // The controls change it at once; Leave right after the peek opened isn't a click for it
+        w.action("call:mic", None, &mut cx);
+        w.action("call:hand", None, &mut cx);
+        let c = w.call.clone().expect("the call");
+        assert_eq!((c.mic, c.camera, c.hand), (Some(false), Some(false), Some(true)));
+        w.opened = time::now();
+        w.action("call:leave", None, &mut cx);
+        assert!(w.call.is_some());
+        w.opened = time::now() - 1.0;
+        w.action("call:leave", None, &mut cx);
+        assert!(w.call.is_none());
+        assert_eq!(keys(&w.bar(&rx).expect("the music again")).first().map(String::as_str), Some("cover"));
+        // Without what it needs, what's missing instead of the controls
+        w.call = Some(Call { service: Service::Slack, bundle: call::SLACK.into(), blocked: Some(Blocked::Accessibility), ..Default::default() });
+        w.focus = Focus::Call;
+        assert_eq!(keys(&w.peek(&rx).expect("a peek")), ["sources", "about", "access"]);
+        assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["icon", "title", "mic"]);
+    }
+
+    #[test]
+    fn the_bar_shows_the_latest_of_the_call_and_the_music() {
+        let mut w = NowPlaying::new(&Options::default());
+        w.mock = true;
+        let music = Player { app: App::Music, state: State::Paused, title: "A".into(), duration: 200.0, at: time::now(), pid: Some(1), ..Default::default() };
+        w.players = [music, Player::new(App::Spotify), Player::new(App::Other)];
+        w.call = Some(Call { service: Service::Meet, bundle: "com.google.Chrome".into(), mic: Some(false), camera: Some(false), hand: Some(false), leave: true, ..Default::default() });
+        let mut timers = Vec::new();
+        let mut cx = Cx { name: "now_playing", generation: 0, popup_open: false, peek_open: false, timers: &mut timers, effects: Vec::new() };
+        let mut set = |w: &mut NowPlaying, state: State, cx: &mut Cx| {
+            w.players[0].state = state;
+            w.follow(cx);
+        };
+        // A call with the music paused: the call
+        w.follow(&mut cx);
+        assert!(w.shown_call().is_some());
+        // The music plays: it takes the bar; paused, the call has it again
+        set(&mut w, State::Playing, &mut cx);
+        assert_eq!(w.focus, Focus::Media);
+        assert!(w.shown_call().is_none());
+        set(&mut w, State::Paused, &mut cx);
+        assert_eq!(w.focus, Focus::Call);
+        set(&mut w, State::Playing, &mut cx);
+        // The mic goes on: the call, with the warning, on the island for a moment
+        assert!(!w.warning());
+        w.call.as_mut().expect("the call").mic = Some(true);
+        w.follow(&mut cx);
+        assert_eq!(w.focus, Focus::Call);
+        assert!(w.warning() && time::now() - w.warned < 1.0);
+        // A tab: the bar shows it too, and the popup stays on it while the music pauses and plays
+        w.action("source:music", None, &mut cx);
+        assert_eq!((w.focus, w.tab()), (Focus::Media, Focus::Media));
+        w.action("source:call", None, &mut cx);
+        set(&mut w, State::Paused, &mut cx);
+        set(&mut w, State::Playing, &mut cx);
+        assert_eq!((w.focus, w.tab()), (Focus::Media, Focus::Call));
+        // Closed, it's the bar's again
+        w.event(&Event::PopupClosed, &mut cx);
+        assert_eq!(w.tab(), Focus::Media);
     }
 
     fn helped(line: &str) -> Helped {

@@ -1,0 +1,34 @@
+[
+  {
+    "service": "meet",
+    "bundle": "com.google.Chrome",
+    "app": "Google Chrome",
+    "name": "Weekly sync",
+    "mic": true,
+    "camera": true,
+    "hand": false,
+    "leave": true,
+    "elapsed": 754
+  },
+  {
+    "service": "slack",
+    "bundle": "com.tinyspeck.slackmacgap",
+    "app": "Slack",
+    "name": "#design-review",
+    "mic": false,
+    "camera": false,
+    "leave": true,
+    "elapsed": 312
+  },
+  {
+    "service": "teams",
+    "bundle": "com.microsoft.teams2",
+    "app": "Microsoft Teams",
+    "name": "Sprint planning",
+    "mic": true,
+    "camera": false,
+    "hand": true,
+    "leave": true,
+    "elapsed": 1925
+  }
+]

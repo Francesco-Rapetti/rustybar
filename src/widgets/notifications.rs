@@ -623,7 +623,7 @@ fn ask_accessibility() {
 
 /// macOS's dialog, which also puts RustyBar in the list of the setting, where it only has to be
 /// switched on.
-fn prompt_accessibility() {
+pub(crate) fn prompt_accessibility() {
     let options = objc2_foundation::NSDictionary::from_slices(&[ns_string!("AXTrustedCheckOptionPrompt")], &[&*objc2_foundation::NSNumber::new_bool(true) as &AnyObject]);
     unsafe { AXIsProcessTrustedWithOptions(cf(&*options)) };
 }

@@ -688,7 +688,7 @@ impl Widget for Audio {
 
 // CoreAudio
 
-mod ca {
+pub(crate) mod ca {
     use std::ffi::c_void;
 
     use objc2_foundation::NSString;
@@ -729,6 +729,10 @@ mod ca {
     pub const MAIN_VOLUME: u32 = fc(b"vmvc");
     pub const VOLUME: u32 = fc(b"volm");
     pub const MUTE: u32 = fc(b"mute");
+    /// The processes that play or capture audio, and of each its pid and whether it captures.
+    pub const PROCESSES: u32 = fc(b"prs#");
+    pub const PROCESS_PID: u32 = fc(b"ppid");
+    pub const PROCESS_INPUT: u32 = fc(b"piri");
 
     pub type Listener = extern "C" fn(u32, u32, *const Address, *mut c_void) -> i32;
 

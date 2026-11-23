@@ -18,7 +18,7 @@ processes a minute.
 | `apple` | The Apple logo | The Apple menu: About This Mac, Force Quit, Sleep, Restart, Shut Down, Lock Screen, Log Out, and last Dotfiles Settings (see [Settings window](#settings-window)) |
 | `aerospace` | [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspaces with the icons of their windows in on-screen order, the focused one under a sliding highlight, the binding mode | — (clicks switch workspace, focus a window, leave the mode) |
 | `front_app` | The app in front | — |
-| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then), with a line along the bottom for where the track is; hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music in a ring of where the track is | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track |
+| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then), with a line along the bottom for where the track is; hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music in a ring of where the track is. During a Google Meet, Slack or Teams call, the call instead: the meeting, the camera and the mic | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track. During a call: the mic, the camera, the raised hand, the call brought to the front and Leave |
 | `system` | CPU, GPU and memory, colored by load and memory pressure | A dashboard: CPU and GPU with the last minute as a graph; memory split into app, wired and compressed; each disk with its used, available and purgeable space (a click opens it in the Finder); the apps that use the most CPU, GPU or memory; Activity Monitor and Storage settings |
 | `battery` | The charge, with an icon for its state | A dashboard: the state with a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `devices` | The batteries of the mice, trackpads, keyboards, controllers and headphones that run low, or of the kinds you pin, side by side: the kind, a short name, a small bar and the level, colored by how full it is, and a bolt while it charges; one asleep behind its receiver stays dimmed. Not in the default layout | A tile for each connected device: its kind, name, maker, how it's connected and whether it charges, the level big and as a bar (one for each half of a split keyboard, each earbud and the case), tinted when it runs low; then the others, and Bluetooth settings |
@@ -115,7 +115,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Calendars | `events` | Today's events (at start) |
 | Location | `network` | The nearby Wi-Fi networks and joining them (when its popup opens); the name of the current network doesn't need it |
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
-| Accessibility | `notifications` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works |
+| Accessibility | `notifications`, `now_playing` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls) |
 | Automation | `apple`, `clock`, `now_playing` | Restart, Shut Down and Log Out; showing a day in Calendar; for Music and Spotify, the position, the cover and the controls (when the popup opens or on a click); without it the bar still shows what plays |
 | Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup's details open), without which the rest works |
 
@@ -344,7 +344,53 @@ notch = true           # on a screen with a notch, black around it as an extensi
 hover = true           # with the mouse on it, the pill grows down with quick controls
 other_apps = false     # any app, through a perl process always running
 cover_colors = true    # the popup in the colors of the cover
+calls = true           # Google Meet, Slack and Teams calls in place of the music
 ```
+
+#### Calls
+
+During a call of Google Meet (in the browser), a Slack huddle or a Teams meeting, `now_playing`
+shows the call: around the notch, or in the pill, the app's icon, the meeting's name, the camera
+(dimmed when off) and the mic (red and crossed out when muted); compact, the icon and the mic. Under
+the mouse and in the popup: the mic, the camera, the raised hand (Meet and Teams), the call brought
+to the front (its tab or window) and a red Leave, each with a tip; for a Meet in Meet's own colors,
+as in its control bar (muted in pink, the raised hand in blue, Leave a red pill). Around the notch it grows by
+itself for a moment when a call starts, not for one already on when the bar starts. `calls = false`
+turns it off. A Meet with no name of its own takes the title of today's event with its link, from
+the calendars, or else shows its code.
+
+With something to play too, the bar shows the latest of the two to change: the call as it starts,
+the music when it starts playing, the call again at a pause or when the mic goes on. Tabs at the top
+of the peek and of the popup switch between the call and each app with something to play, in the
+bar too. With the mic on while something plays, the mic in the bar turns yellow, the peek and the
+popup say that the others may hear it without headphones, and around the notch it grows to say so
+for a moment.
+
+No plugin or admin is needed:
+
+- **Google Meet**, in a browser built on Chromium (Dia, Chrome, Arc, Brave, Edge, Vivaldi), through
+  RustyBar's extension: the Meet page tells the bar when its call starts, changes and ends, and
+  presses its own buttons when the bar asks, so nothing is read on a timer and macOS asks for no
+  permission. The extension talks only to the bar, over a WebSocket on this Mac (`127.0.0.1:47823`,
+  open only while a tab is in a call), and the bar takes only the extension. It finds Meet's
+  buttons by what doesn't change with Meet's language. To install it, in the browser's extensions
+  page (`chrome://extensions`, or Dia's *Extensions*) turn on *Developer mode*, click *Load
+  unpacked* and pick the `extension` folder of this repository, or the one in the app: ⌘⇧G and
+  `/Applications/RustyBar.app/Contents/Resources/extension`. It's an unpacked extension, so the
+  browser keeps it across restarts and updates of RustyBar, and when RustyBar brings a newer
+  version of it the bar has the browser load it again from its folder, even during a call.
+- **Slack** and **Teams**, through Accessibility: macOS tells RustyBar which apps capture audio
+  (CoreAudio, from macOS 14.2, without any permission), so it asks Slack or Teams whether it's in a
+  call only while it captures, and during a call reads its state every second, in-process, since
+  neither says when it changes. The buttons of the call are found by their names and pressed
+  without keystrokes, so the app stays where it is. Slack, built on Electron, shows the content of
+  its window to Accessibility only when asked, which RustyBar does while Slack captures. (Teams had
+  a local API for this, which Microsoft retired in June 2026.)
+
+The names of the buttons can change with an update of the app. `rustybar msg trigger call_dump`
+writes what Accessibility sees of Slack and Teams, and the buttons the extension finds in each Meet
+tab in a call, to `~/Library/Caches/rustybar/call-<app>.txt` (`call-meet-<tab>.txt`), to see what
+changed (it has the names of people and channels: it stays on the Mac).
 
 ### Devices
 
