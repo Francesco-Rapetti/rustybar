@@ -429,8 +429,19 @@ click shows the chat, its last 40 messages:
 - documents, opened with a click; contacts, positions and polls, which open the chat in WhatsApp.
 
 Reading a chat in the bar doesn't tell WhatsApp: who wrote sees no blue ticks, a voice note isn't
-marked as played, and the chat leaves the bar's count until another message comes (WhatsApp still
-counts it). The ✓ at the top marks it read in WhatsApp, by opening the chat there.
+marked as played, and the chat leaves the bar's green count until another message comes. While
+WhatsApp still counts it, it stays in the bar dimmed: the sign and WhatsApp's number in gray, a
+gray badge in the list, and no island growing for it; so the bar never says nothing while the app
+says one. The ✓ at the top marks it read in WhatsApp, by opening the chat there.
+
+The right side of the notch shows all there is at once, whatever the left side shows: fn (see
+`fn_keys`), WhatsApp's count with a wave while a voice note plays, the camera and the microphone of
+a call, and the music's bars, or its pause sign, in the ring of where the track is.
+
+On a screen without a notch it's the same with pills: WhatsApp's pill beside the music's, with the
+count, green or gray, and the wave; it grows down by itself for 3 seconds with a new message, as
+under the mouse. The music's pill has the call's camera and microphone while a call goes on, and
+the call's pill the music's bars or its pause sign.
 
 The field at the bottom writes a reply: Return, or the arrow, sends it. Nothing but the app can
 write to a chat, so the reply goes through WhatsApp's own window, with Accessibility. WhatsApp

@@ -710,6 +710,27 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   identificatori). Da provare con l'utente: un invio a una persona e a un gruppo (la riga
   nell'elenco), se il popup resta aperto dopo l'invio, `Segna come letta`, un vocale vero, i clic
   col mouse, un messaggio che arriva, la risposta "no" a macOS; manca lo screenshot del README.
+- `whatsapp`, letto solo nella barra (l'utente non vedeva niente nel notch mentre l'app diceva
+  una notifica: l'unica chat non letta era già stata aperta nel popup): una chat letta qui che
+  WhatsApp conta ancora (`held`) resta nella barra attenuata, segno e numero di WhatsApp in grigio
+  (`tally`), badge grigio nell'elenco in cima con le altre, isola propria attenuata, nessun
+  notice; verde solo il nuovo. Ala destra dell'isola con tutto insieme (chiesto dall'utente):
+  `island_marks` (fn, WhatsApp con un'onda mentre suona un vocale), i segni della chiamata anche
+  quando a sinistra c'è la musica, e `music_sign` (barre o pausa nell'anello) anche quando a
+  sinistra c'è la chiamata. Provato coi dati finti sulla barra di prova col notch: musica,
+  chiamata Meet finta e WhatsApp insieme, verde poi grigio dopo aver aperto le chat. Da provare:
+  l'onda del vocale (serve un clic), la larghezza dell'ala con tutto su uno schermo stretto.
+- Le stesse cose senza notch (chiesto dall'utente): `Widget::notice` vale anche per una pill, che
+  cresce da sola come col peek (`App::notice` sceglie lo schermo del mouse fra quelli dove il
+  widget è isola o pill; `pill_tree` prende lo stadio: peek o notice; `peek_tree` lo riceve anche
+  da chiusa, per la misura della finestra). Un `cx.notice()` con la barra da ridisegnare aspetta
+  0,05 s: il primo messaggio non letto è anche ciò che mette `whatsapp` nella barra (prima, senza
+  isola già sua, il notice si perdeva). `now_playing` in pill: i segni della chiamata nella pill
+  della musica, barre o pausa in quella della chiamata; l'onda del vocale nella pill di
+  `whatsapp`. I notice di `now_playing` (traccia nuova, chiamata) restano solo dell'isola.
+  Provato coi dati finti sulla barra di prova con un ritocco temporaneo di `display.rs` che
+  toglieva il notch (tolto): pill che cresce col messaggio, pill della chiamata con la musica.
+  Da provare su uno schermo vero senza notch.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

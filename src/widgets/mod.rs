@@ -241,8 +241,8 @@ impl Cx<'_> {
         self.effects.push(Effect::TogglePopup);
     }
 
-    /// Shows the widget's notice for a moment (see `Widget::notice`), if it's an island and
-    /// nothing else of it is open.
+    /// Shows the widget's notice for a moment (see `Widget::notice`), if nothing else of it is
+    /// open: in its island, in its pill, or in the island of another widget that shows it.
     pub fn notice(&mut self) {
         self.effects.push(Effect::Notice);
     }
@@ -323,8 +323,9 @@ pub trait Widget: Any {
         None
     }
 
-    /// What its island shows for a moment, grown down by itself, when the widget calls
-    /// `Cx::notice`: something new (the next track). Only for a widget drawn as an island.
+    /// What shows for a moment under the widget, grown down by itself as with its peek, when it
+    /// calls `Cx::notice`: something new (the next track, a message). `rx.island` says whether
+    /// it's an island there, on the notch's black, or a pill.
     fn notice(&self, _rx: &Rx) -> Option<Node> {
         None
     }

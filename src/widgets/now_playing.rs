@@ -699,22 +699,13 @@ impl NowPlaying {
             }
         }
         let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
-        // Smaller in the ring of where the track is, so as not to touch it
-        let ring = p.duration > 0.0;
-        let sign = match playing {
-            true if ring => Node::new(Kind::Bars { color: th.primary }).size(13.0, 10.0).key("bars"),
-            true => Node::new(Kind::Bars { color: th.primary }).key("bars"),
-            false => Node::symbol("pause.fill", if ring { 10.0 } else { 12.0 }, Weight::Bold, th.subtext).key("paused"),
-        };
-        let mut sign = Node::row(vec![sign]).size(size, size).radius(size / 2.0).justify(Justify::Center).align(Align::Center).key("sign");
-        if let Some(t) = progress(th, p, Along::Around, Some(th.surface)) {
-            sign = sign.trace(t);
-        }
+        // Right of the notch, all there is at once: the rest of the Mac, the call that goes on
+        // while the music shows, and the music
         let mut right = island_marks(th);
-        if self.warning() {
-            right.push(Node::symbol("mic.fill", 12.0, Weight::Semibold, th.yellow).key("mic"));
+        if let Some(c) = self.live_call() {
+            right.extend(call_signs(th, c, rx.compact, self.warning()));
         }
-        right.push(sign);
+        right.push(music_sign(th, p, size));
         let right = Node::row(right)
             .gap(8.0)
             .align(Align::Center)
@@ -755,8 +746,28 @@ fn open_row(rx: &Rx, p: &Player) -> Node {
     .key(key)
 }
 
+/// What plays, as the island's right wing has it, `size` wide and high: bars that move to the
+/// music in the accent of `th` (the cover's liveliest color), or the pause sign, in a ring of
+/// where the track is.
+fn music_sign(th: &Theme, p: &Player, size: f64) -> Node {
+    let playing = p.state == State::Playing;
+    // Smaller in the ring of where the track is, so as not to touch it
+    let ring = p.duration > 0.0;
+    let sign = match playing {
+        true if ring => Node::new(Kind::Bars { color: th.primary }).size(13.0, 10.0).key("bars"),
+        true => Node::new(Kind::Bars { color: th.primary }).key("bars"),
+        false => Node::symbol("pause.fill", if ring { 10.0 } else { 12.0 }, Weight::Bold, th.subtext).key("paused"),
+    };
+    let mut sign = Node::row(vec![sign]).size(size, size).radius(size / 2.0).justify(Justify::Center).align(Align::Center).key("sign");
+    if let Some(t) = progress(th, p, Along::Around, Some(th.surface)) {
+        sign = sign.trace(t);
+    }
+    sign
+}
+
 /// What the island shows of the rest of the Mac, right of the notch before its own signs: fn
-/// while F1, F2… are standard keys, if `fn_keys` asks for it there.
+/// while F1, F2… are standard keys, if `fn_keys` asks for it there; WhatsApp's unread messages
+/// and the voice note that plays, if `whatsapp` wants the notch.
 fn island_marks(th: &Theme) -> Vec<Node> {
     super::fn_keys::island_mark(th).into_iter().chain(super::whatsapp::island_mark(th)).collect()
 }
@@ -878,8 +889,10 @@ impl Widget for NowPlaying {
             let max = widen(&p.artist, 150.0);
             children.push(Node::text(&p.artist, font.clone(), th.subtext).max_width(max).key("artist"));
         }
-        if self.warning() {
-            children.push(Node::symbol("mic.fill", 12.0, Weight::Semibold, th.yellow).key("mic"));
+        // The call that goes on while the music shows: its camera and its microphone, as around
+        // the notch
+        if let Some(c) = self.live_call() {
+            children.extend(call_signs(th, c, rx.compact, self.warning()));
         }
         // The cover as far from the pill's edge as from its top and bottom
         let inset = ((th.pill_height - size) / 2.0).max(2.0);
@@ -2024,9 +2037,14 @@ impl NowPlaying {
             left.push(Node::text(&name, th.font(), th.text).max_width(least + (whole - least).clamp(0.0, island.left.max(0.0))).marquee(true).key("title"));
         }
         let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
+        // Right of the notch, all there is at once: the music that plays or waits behind the
+        // call too, in the colors of its cover
         let mut right = island_marks(th);
         right.extend(call_signs(th, c, rx.compact, self.warning()));
-        let right = Node::row(right).gap(8.0).align(Align::Center).height(island.height).padding(0.0, inset + 2.0, 0.0, 8.0).key("wing");
+        let music = self.current().map(|p| music_sign(&self.notch_theme(rx.theme, p), p, size));
+        let end = if music.is_some() { inset } else { inset + 2.0 };
+        right.extend(music);
+        let right = Node::row(right).gap(8.0).align(Align::Center).height(island.height).padding(0.0, end, 0.0, 8.0).key("wing");
         rx.island(vec![left], vec![right]).click(rx.toggle_popup()).hover(crate::gfx::Rgba(0.0, 0.0, 0.0, 0.0))
     }
 
@@ -2042,6 +2060,14 @@ impl NowPlaying {
             children.push(Node::text(&name, th.font(), th.text).max_width(max).marquee(true).key("title"));
         }
         children.extend(call_signs(th, c, rx.compact, self.warning()));
+        // The music that plays or waits behind the call, as around the notch
+        if let Some(p) = self.current() {
+            let playing = p.state == State::Playing;
+            children.push(match playing {
+                true => Node::new(Kind::Bars { color: th.primary }).size(13.0, 10.0).key("bars"),
+                false => Node::symbol("pause.fill", 10.0, Weight::Bold, th.subtext).key("paused"),
+            });
+        }
         let inset = ((th.pill_height - size) / 2.0).max(2.0);
         let pill = rx.pill(children).padding(0.0, th.pill_padding, 0.0, inset).click(rx.toggle_popup());
         if self.hover { pill.hover(crate::gfx::Rgba(0.0, 0.0, 0.0, 0.0)) } else { pill }
@@ -3077,15 +3103,20 @@ mod tests {
         // A call that starts takes the bar (see `calls_found`)
         w.call = Some(Call { service: Service::Teams, bundle: call::TEAMS.into(), name: "Sync".into(), mic: Some(true), camera: Some(false), hand: Some(false), leave: true, since: time::now() - 60.0, ..Default::default() });
         w.focus = Focus::Call;
-        // The pill: icon, name, camera and mic; the peek: the tabs of the call and the music, the
-        // warning (the mic is on while the music plays), what it is, then the controls
-        assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["icon", "title", "camera", "mic"]);
+        // The pill: icon, name, camera and mic, and the music that plays behind it; the peek: the
+        // tabs of the call and the music, the warning (the mic is on while the music plays), what
+        // it is, then the controls
+        assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["icon", "title", "camera", "mic", "bars"]);
         let peek = w.peek(&rx).expect("a peek");
         assert_eq!(keys(&peek), ["sources", "warning", "about", "controls"]);
         assert_eq!(keys(&peek.children[0]), ["call", "music"]);
         assert_eq!(keys(&peek.children[3]), ["call:mic", "call:camera", "call:hand", "call:open", "call:leave"]);
         let compact = Rx::new("now_playing", &theme, &display, crate::fit::Form::Compact, false);
-        assert_eq!(keys(&w.bar(&compact).expect("a pill")), ["icon", "mic"]);
+        assert_eq!(keys(&w.bar(&compact).expect("a pill")), ["icon", "mic", "bars"]);
+        // And the call's signs in the music's pill, when the music has the bar
+        w.focus = Focus::Media;
+        assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["cover", "title", "camera", "mic"]);
+        w.focus = Focus::Call;
         // The controls change it at once; Leave right after the peek opened isn't a click for it
         w.action("call:mic", None, &mut cx);
         w.action("call:hand", None, &mut cx);
@@ -3102,7 +3133,7 @@ mod tests {
         w.call = Some(Call { service: Service::Slack, bundle: call::SLACK.into(), blocked: Some(Blocked::Accessibility), ..Default::default() });
         w.focus = Focus::Call;
         assert_eq!(keys(&w.peek(&rx).expect("a peek")), ["sources", "about", "access"]);
-        assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["icon", "title", "mic"]);
+        assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["icon", "title", "mic", "bars"]);
     }
 
     #[test]

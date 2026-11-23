@@ -8,8 +8,9 @@
 //! app writes it: no polling, nothing asked of WhatsApp. The popup lists the chats with something
 //! unread, then the latest of the others; a click shows the chat: texts, pictures, videos and
 //! documents (a click opens them), voice notes (played here), links. Reading a chat here doesn't
-//! tell WhatsApp: who wrote sees no blue ticks, and the chat leaves the bar's count until
-//! something new comes. A reply typed here is sent through the app, with Accessibility: the app
+//! tell WhatsApp: who wrote sees no blue ticks, and the chat leaves the bar's green count until
+//! something new comes; while WhatsApp still counts it, it stays in the bar dimmed (gray, with
+//! WhatsApp's number), so that the bar doesn't say nothing while the app says one. A reply typed here is sent through the app, with Accessibility: the app
 //! comes to the front for a moment and opens the chat, so WhatsApp marks it read.
 //!
 //! Options: `recent` (how many chats without anything unread the popup lists, 5), `muted` (count
@@ -106,6 +107,10 @@ struct Shared {
     generation: u64,
     widget: String,
     unread: i64,
+    /// The messages WhatsApp still counts of the chats read here (see `WhatsApp::held`).
+    held: i64,
+    /// A voice note plays.
+    playing: bool,
     /// The chat of the message that just came, with that message alone, and when it came.
     arrival: Option<(Chat, f64)>,
     preview: bool,
@@ -120,12 +125,22 @@ fn shared() -> Option<Shared> {
 }
 
 /// The unread count in the island of another widget, right of the notch: the app's icon and the
-/// number; a click opens the chats. None with nothing unread, or without a `whatsapp` that wants
-/// the notch.
+/// number, dimmed when all of it was read in the bar and only WhatsApp still counts it, and a
+/// wave while a voice note plays; a click opens the chats. None with nothing unread and nothing
+/// playing, or without a `whatsapp` that wants the notch.
 pub fn island_mark(th: &Theme) -> Option<Node> {
-    let s = shared().filter(|s| s.unread > 0)?;
+    let s = shared().filter(|s| s.unread + s.held > 0 || s.playing)?;
+    let (n, color) = tally(th, s.unread, s.held);
+    let mut signs = Vec::new();
+    if s.playing {
+        signs.push(listening());
+    }
+    signs.push(sign(12.0, if n > 0 { color } else { GREEN }));
+    if n > 0 {
+        signs.push(Node::text(count(n), th.font_with(Weight::Bold, 12.0), color).key("count"));
+    }
     Some(
-        Node::row(vec![sign(12.0), Node::text(count(s.unread), th.font_with(Weight::Bold, 12.0), GREEN).key("count")])
+        Node::row(signs)
             .key("whatsapp")
             .gap(4.0)
             .padding(1.0, 4.0, 1.0, 4.0)
@@ -143,7 +158,7 @@ pub fn guest_notice(rx: &Rx) -> Option<Node> {
         return None;
     }
     let theme = notch_theme(rx.theme);
-    notice_node(&theme, &s.widget, chat, chat.messages.last()?, s.preview)
+    notice_node(&theme, &s.widget, chat, chat.messages.last()?, s.preview, WIDTH)
 }
 
 /// The notch's colors with WhatsApp's green.
@@ -195,8 +210,19 @@ fn count(n: i64) -> String {
 }
 
 /// WhatsApp's sign on the notch's black, where the app's icon (dark, as macOS draws it now) is lost.
-fn sign(size: f64) -> Node {
-    Node::symbol("phone.bubble.fill", size, Weight::Semibold, GREEN).key("icon")
+fn sign(size: f64, color: Rgba) -> Node {
+    Node::symbol("phone.bubble.fill", size, Weight::Semibold, color).key("icon")
+}
+
+/// A voice note plays: for the notch.
+fn listening() -> Node {
+    Node::symbol("waveform", 12.0, Weight::Semibold, GREEN).key("listening")
+}
+
+/// The number the bar shows and its color: the `new` messages in green, or with none of them
+/// those `held` (read here, unread for WhatsApp), dimmed.
+fn tally(th: &Theme, new: i64, held: i64) -> (i64, Rgba) {
+    if new > 0 { (new, GREEN) } else { (held, th.subtext) }
 }
 
 /// WhatsApp's icon; a green bubble where the app isn't installed.
@@ -332,10 +358,23 @@ impl WhatsApp {
         self.chats.iter().map(|c| self.unread(c)).sum()
     }
 
-    /// The chats with something unread, the one written to last first.
+    /// How many messages of `chat` WhatsApp still counts though the chat was read here, up to
+    /// its last message: they show dimmed, so that the bar doesn't say nothing while the app
+    /// says one. 0 for a chat with something new, or that doesn't count.
+    fn held(&self, chat: &Chat) -> i64 {
+        let counts = chat.unread > 0 && (!chat.muted || self.muted) && (!chat.group || self.groups);
+        if counts && self.unread(chat) == 0 { chat.unread } else { 0 }
+    }
+
+    fn held_total(&self) -> i64 {
+        self.chats.iter().map(|c| self.held(c)).sum()
+    }
+
+    /// The chats with something unread, those with something new first, then those read only
+    /// here; among each, the one written to last first.
     fn waiting(&self) -> Vec<&Chat> {
-        let mut chats: Vec<&Chat> = self.chats.iter().filter(|c| self.unread(c) > 0).collect();
-        chats.sort_by(|a, b| b.at.total_cmp(&a.at));
+        let mut chats: Vec<&Chat> = self.chats.iter().filter(|c| self.unread(c) > 0 || self.held(c) > 0).collect();
+        chats.sort_by(|a, b| (self.unread(b) > 0).cmp(&(self.unread(a) > 0)).then(b.at.total_cmp(&a.at)));
         chats
     }
 
@@ -416,7 +455,7 @@ impl WhatsApp {
         if cx.popup_open && let Some(jid) = self.open.clone() {
             self.see(&jid);
         }
-        let last = self.waiting().iter().filter_map(|c| c.messages.iter().rev().find(|m| !m.mine).map(|m| (m.id, c.jid.clone()))).max();
+        let last = self.chats.iter().filter(|c| self.unread(c) > 0).filter_map(|c| c.messages.iter().rev().find(|m| !m.mine).map(|m| (m.id, c.jid.clone()))).max();
         let highest = self.chats.iter().map(|c| c.newest).max().unwrap_or(0);
         if let (Some(before), Some((id, jid))) = (self.newest, last)
             && id > before
@@ -437,6 +476,8 @@ impl WhatsApp {
             generation: cx.generation,
             widget: cx.name.to_string(),
             unread: self.total(),
+            held: self.held_total(),
+            playing: self.playing.as_ref().is_some_and(|p| !p.paused),
             arrival: self.arrival.as_ref().and_then(|a| {
                 let chat = self.chat(&a.jid)?;
                 let message = chat.messages.iter().find(|m| m.id == a.id)?.clone();
@@ -467,10 +508,10 @@ fn avatar(th: &Theme, chat: &Chat, size: f64) -> Node {
 
 /// The notice of the message `m` of `chat`, on the notch's black (`th`): who wrote, in which group,
 /// and how it starts (with `preview`). A click opens its chat in the popup of `widget`.
-fn notice_node(th: &Theme, widget: &str, chat: &Chat, m: &Message, preview: bool) -> Option<Node> {
-    let max = WIDTH - 28.0 - 44.0 - 12.0;
+fn notice_node(th: &Theme, widget: &str, chat: &Chat, m: &Message, preview: bool, width: f64) -> Option<Node> {
+    let max = width - 28.0 - 44.0 - 12.0;
     let title = if chat.group && !m.sender.is_empty() { m.sender.as_str() } else { chat.name.as_str() };
-    let mut head = vec![Node::text(title, th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max - if chat.group { 160.0 } else { 24.0 }).key("name"), Node::spacer(), sign(13.0)];
+    let mut head = vec![Node::text(title, th.font_with(Weight::Semibold, th.font_size + 1.0), th.text).max_width(max - if chat.group { 160.0 } else { 24.0 }).key("name"), Node::spacer(), sign(13.0, GREEN)];
     if chat.group {
         head.insert(1, Node::text(format!("  {}", chat.name), th.small_font(), th.subtext).max_width(130.0).key("group"));
     }
@@ -495,7 +536,7 @@ fn notice_node(th: &Theme, widget: &str, chat: &Chat, m: &Message, preview: bool
             .gap(12.0)
             .align(Align::Center)
             .padding(6.0, 14.0, 14.0, 14.0)
-            .min_width(WIDTH)
+            .min_width(width)
             .click(Action::Widget { widget: widget.to_string(), name: format!("chat:{}", chat.jid) })
             .hover(Rgba(0.0, 0.0, 0.0, 0.0)),
     )
@@ -538,17 +579,23 @@ impl WhatsApp {
         let th = rx.theme;
         let size = (island.height - 12.0).clamp(12.0, 28.0);
         let inset = ((island.height - size) / 2.0).round();
-        let mut left = vec![avatar(th, chat, size)];
+        // Nothing new, only what was read here: dimmed
+        let (n, color) = tally(th, self.total(), self.held_total());
+        let dim = color != GREEN;
+        let mut left = vec![avatar(th, chat, size).opacity(if dim { 0.6 } else { 1.0 })];
         if !rx.compact {
             let font = th.font();
             let whole = crate::gfx::measure_text(&chat.name, &font).width.ceil();
             let width = whole.min(64.0) + (whole - whole.min(64.0)).clamp(0.0, island.left.max(0.0));
-            left.push(Node::text(&chat.name, font, th.text).max_width(width).key("name"));
+            left.push(Node::text(&chat.name, font, if dim { th.subtext } else { th.text }).max_width(width).key("name"));
         }
         let left = Node::row(left).gap(8.0).align(Align::Center).height(island.height).padding(0.0, 8.0, 0.0, inset).key("wing");
         let mut right: Vec<Node> = super::fn_keys::island_mark(th).into_iter().collect();
-        right.push(sign(13.0));
-        right.push(Node::text(count(self.total()), th.font_with(Weight::Bold, 12.0), GREEN).key("count"));
+        if self.playing.as_ref().is_some_and(|p| !p.paused) {
+            right.push(listening());
+        }
+        right.push(sign(13.0, color));
+        right.push(Node::text(count(n), th.font_with(Weight::Bold, 12.0), color).key("count"));
         let right = Node::row(right).gap(6.0).align(Align::Center).height(island.height).padding(0.0, inset + 2.0, 0.0, 8.0).key("wing");
         rx.island(vec![left], vec![right]).click(rx.toggle_popup()).hover(Rgba(0.0, 0.0, 0.0, 0.0))
     }
@@ -565,17 +612,19 @@ impl WhatsApp {
         }
         top.push(Node::text(when(chat.at, now), th.small_font(), if lit { GREEN } else { th.subtext }).key("when"));
         let mut bottom = vec![self.preview_line(th, chat, WIDTH - 120.0, if lit { th.text } else { th.subtext }), Node::spacer()];
-        if lit {
-            bottom.push(
-                Node::row(vec![Node::text(count(unread), th.font_with(Weight::Bold, 10.0), Rgba(0.0, 0.0, 0.0, 1.0)).key("n")])
-                    .height(16.0)
-                    .min_width(16.0)
-                    .padding(0.0, 5.0, 0.0, 5.0)
-                    .justify(Justify::Center)
-                    .radius(8.0)
-                    .background(GREEN)
-                    .key("badge"),
-            );
+        // Green for what's new; gray for what was read here and WhatsApp still counts
+        let held = self.held(chat);
+        if lit || held > 0 {
+            let (ink, fill) = if lit { (Rgba(0.0, 0.0, 0.0, 1.0), GREEN) } else { (th.subtext, th.surface) };
+            let badge = Node::row(vec![Node::text(count(if lit { unread } else { held }), th.font_with(Weight::Bold, 10.0), ink).key("n")])
+                .height(16.0)
+                .min_width(16.0)
+                .padding(0.0, 5.0, 0.0, 5.0)
+                .justify(Justify::Center)
+                .radius(8.0)
+                .background(fill)
+                .key("badge");
+            bottom.push(if lit { badge } else { badge.tip(t("Letta qui, non ancora su WhatsApp", "Read here, not yet in WhatsApp")) });
         }
         let lines = Node::column(vec![Node::row(top).key("top"), Node::row(bottom).key("bottom")]).gap(2.0).grow().key("lines");
         Node::row(vec![avatar(th, chat, 34.0), lines])
@@ -640,7 +689,7 @@ impl WhatsApp {
                 if waiting.is_empty() {
                     rows.push(note("checkmark.circle.fill", GREEN, vec![t("Niente da leggere.", "Nothing to read.").into()]));
                 }
-                let mut others: Vec<&Chat> = self.chats.iter().filter(|c| self.unread(c) == 0 && (self.groups || !c.group)).collect();
+                let mut others: Vec<&Chat> = self.chats.iter().filter(|c| self.unread(c) == 0 && self.held(c) == 0 && (self.groups || !c.group)).collect();
                 others.sort_by(|a, b| b.at.total_cmp(&a.at));
                 others.truncate(self.recent);
                 if !others.is_empty() {
@@ -926,6 +975,7 @@ impl WhatsApp {
             let length = sound.as_ref().map_or(length, |s| s.length()).max(1.0);
             self.playing = Some(Playing { id, sound, from: 0.0, at: now, length, paused: false });
         }
+        self.share(cx);
         cx.redraw();
         self.tick(id, cx);
     }
@@ -944,6 +994,7 @@ impl WhatsApp {
             };
             if ended || !cx.popup_open {
                 w.playing = None;
+                w.share(cx);
             } else {
                 w.tick(id, cx);
             }
@@ -1023,7 +1074,8 @@ impl Widget for WhatsApp {
 
     fn bar(&self, rx: &Rx) -> Option<Node> {
         let th = rx.theme;
-        let n = self.total();
+        // What's new, in green; with none of it, what was read here and WhatsApp still counts, dimmed
+        let (n, color) = tally(th, self.total(), self.held_total());
         let blocked = self.state == State::Denied;
         if self.notch && n > 0 {
             // The notch has it: as the island, or in the island of another widget
@@ -1037,11 +1089,14 @@ impl Widget for WhatsApp {
         if n == 0 && !self.always && !blocked {
             return None;
         }
-        let mut children = vec![glyph(th.icon_size + 2.0)];
+        let mut children = vec![glyph(th.icon_size + 2.0).opacity(if n > 0 && color != GREEN { 0.6 } else { 1.0 })];
+        if self.playing.as_ref().is_some_and(|p| !p.paused) {
+            children.push(listening());
+        }
         if blocked {
             children.push(Node::text("!", th.font_with(Weight::Bold, th.font_size), th.yellow).key("blocked"));
         } else if n > 0 {
-            children.push(Node::text(count(n), th.font_with(Weight::Bold, th.font_size), GREEN).key("count"));
+            children.push(Node::text(count(n), th.font_with(Weight::Bold, th.font_size), color).key("count"));
         }
         let pill = rx.pill(children).click(rx.toggle_popup());
         Some(if self.hover && n > 0 { pill.hover(Rgba(0.0, 0.0, 0.0, 0.0)) } else { pill })
@@ -1068,7 +1123,10 @@ impl Widget for WhatsApp {
             let top = Node::row(vec![
                 Node::text(&chat.name, th.font_with(Weight::Semibold, th.font_size), th.text).max_width(width - 90.0).key("name"),
                 Node::spacer(),
-                Node::text(count(self.unread(chat)), th.font_with(Weight::Bold, 10.0), GREEN).key("n"),
+                {
+                    let (n, color) = tally(th, self.unread(chat), self.held(chat));
+                    Node::text(count(n), th.font_with(Weight::Bold, 10.0), color).key("n")
+                },
             ])
             .key("top");
             let lines = Node::column(vec![top, self.preview_line(th, chat, width - 50.0, th.subtext)]).gap(1.0).grow().key("lines");
@@ -1090,10 +1148,14 @@ impl Widget for WhatsApp {
     }
 
     fn notice(&self, rx: &Rx) -> Option<Node> {
-        rx.island.filter(|_| self.notch)?;
         let a = self.arrival.as_ref()?;
         let chat = self.chat(&a.jid)?;
-        notice_node(&notch_theme(rx.theme), rx.name, chat, chat.messages.iter().find(|m| m.id == a.id)?, self.preview)
+        let m = chat.messages.iter().find(|m| m.id == a.id)?;
+        // On the notch's black, as wide as the popup; or under the pill, in the theme's colors
+        match rx.island.filter(|_| self.notch) {
+            Some(_) => notice_node(&notch_theme(rx.theme), rx.name, chat, m, self.preview, WIDTH),
+            None => notice_node(rx.theme, rx.name, chat, m, self.preview, 300.0).map(|n| n.padding(2.0, 12.0, 12.0, 12.0)),
+        }
     }
 
     fn popup(&self, rx: &Rx) -> Option<Node> {
@@ -1167,6 +1229,7 @@ impl Widget for WhatsApp {
                     self.open = None;
                     self.send_error = None;
                     self.playing = None;
+                    self.share(cx);
                 }
                 "send" => self.send(cx),
                 "app" => {
@@ -1189,7 +1252,10 @@ impl Widget for WhatsApp {
                 }
                 self.send_error = None;
             }
-            Event::PopupClosed => self.playing = None,
+            Event::PopupClosed => {
+                self.playing = None;
+                self.share(cx);
+            }
             Event::Wake => self.load(cx),
             Event::Trigger { name, .. } if name == "whatsapp_message" => self.mock_message(cx),
             // `msg trigger whatsapp_chat chat=<jid, or how its name starts>`: the popup on that
@@ -1287,10 +1353,21 @@ mod tests {
         w.chats = vec![chat("a", 2, 5), chat("b", 0, 3)];
         assert_eq!(w.total(), 2);
         w.see("a");
-        assert_eq!((w.total(), w.waiting().len()), (0, 0));
+        // Nothing new, but WhatsApp still counts two: held, and still among those that wait
+        assert_eq!((w.total(), w.held_total(), w.waiting().len()), (0, 2, 1));
+        let th = Theme::from_config(&crate::config::ThemeConfig::default());
+        assert_eq!(tally(&th, w.total(), w.held_total()), (2, th.subtext));
         // One more message: only that one waits, though WhatsApp counts three
         w.chats = vec![chat("a", 3, 6), chat("b", 0, 3)];
-        assert_eq!(w.total(), 1);
+        assert_eq!((w.total(), w.held_total()), (1, 0));
+        assert_eq!(tally(&th, w.total(), w.held_total()), (1, GREEN));
+        // A chat with something new comes before one read here, though written to before it
+        w.chats = vec![chat("a", 3, 6), chat("c", 1, 2)];
+        w.see("a");
+        assert_eq!(w.waiting().iter().map(|c| c.jid.as_str()).collect::<Vec<_>>(), ["c", "a"]);
+        // Read in WhatsApp too: gone
+        w.chats = vec![chat("a", 0, 6)];
+        assert_eq!((w.total(), w.held_total(), w.waiting().len()), (0, 0, 0));
     }
 
     #[test]
@@ -1336,14 +1413,20 @@ mod tests {
         assert!(w.bar(&beside).is_none());
         let plain = Rx::new("whatsapp", &theme, &display, crate::fit::Form::Full, false);
         assert_eq!(keys(&w.bar(&plain).expect("a pill")), ["icon", "count"]);
-        // Nothing unread: no island, and no pill unless asked
+        // Read here, and WhatsApp still counts it: still in the notch, dimmed
         w.see("a");
+        let dimmed = w.bar(&rx).expect("an island");
+        assert_eq!(dimmed.children[0].children[0].children[0].style.opacity, 0.6);
+        assert!(w.bar(&beside).is_none() && w.bar(&plain).is_some());
+        // Nothing unread for WhatsApp either: no island, and no pill unless asked
+        w.chats = vec![chat("a", 0, 5), chat("b", 0, 3)];
         assert!(w.bar(&rx).is_none() && w.bar(&plain).is_none() && w.peek(&plain).is_none());
         w.always = true;
         assert_eq!(keys(&w.bar(&plain).expect("a pill")), ["icon"]);
         // `notch = false`: a pill there too
         w.always = false;
         w.seen.clear();
+        w.chats = vec![chat("a", 2, 5), chat("b", 0, 3)];
         w.notch = false;
         assert!(w.bar(&rx).expect("a pill").style.notch.is_none() && w.bar(&beside).is_some());
     }
