@@ -442,7 +442,9 @@ a call, and the music's bars, or its pause sign, in the ring of where the track 
 On a screen without a notch it's the same with pills: WhatsApp's pill beside the music's, with the
 count, green or gray, and the wave; it grows down by itself for 3 seconds with a new message, as
 under the mouse. The music's pill has the call's camera and microphone while a call goes on, and
-the call's pill the music's bars or its pause sign.
+the call's pill the music's bars or its pause sign. The music's pill grows by itself too, as
+the island does: with the cover, the title, the artist and the album when the track changes, with
+the call that starts, and when the microphone is on while something plays.
 
 The field at the bottom writes a reply: Return, or the arrow, sends it. Nothing but the app can
 write to a chat, so the reply goes through WhatsApp's own window, with Accessibility. WhatsApp
@@ -687,7 +689,7 @@ rustybar msg query                   the widgets, their state, where they are an
 rustybar msg trigger <event> k=v…    send an event to every widget (Lua: event(self, name, args))
 rustybar msg popup <widget>          open or close a popup
 rustybar msg peek <widget>           grow a pill with its quick controls, as under the mouse, or back
-rustybar msg notice <widget>         grow an island with its notice for a moment (the next track)
+rustybar msg notice <widget>         grow an island or a pill with its notice for a moment (the next track)
 rustybar msg settings [page]         open the settings window, on a page
 rustybar settings [page]             the same, without the bar
 rustybar msg quit

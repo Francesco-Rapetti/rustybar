@@ -730,7 +730,10 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `whatsapp`. I notice di `now_playing` (traccia nuova, chiamata) restano solo dell'isola.
   Provato coi dati finti sulla barra di prova con un ritocco temporaneo di `display.rs` che
   toglieva il notch (tolto): pill che cresce col messaggio, pill della chiamata con la musica.
-  Da provare su uno schermo vero senza notch.
+  Da provare su uno schermo vero senza notch. Poi, chiesti dall'utente, anche i notice di
+  `now_playing` sotto la pill (traccia nuova, chiamata che comincia, microfono acceso mentre
+  suona qualcosa), nei colori del tema e non sul nero del notch; provati coi dati finti con
+  `notch = false` (`msg notice now_playing`, `msg trigger call service=meet`).
   Screenshot del README (`docs/screenshots/whatsapp.png`): `screenshots.py` apre il popup di
   `whatsapp` su una chat (`OPEN`) e prende la finestra più grande; dati finti ora in inglese come
   gli altri; il segnaposto del campo lo disegna il popup (`Kind::Input` in `render.rs`), non più

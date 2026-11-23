@@ -1010,22 +1010,25 @@ impl Widget for NowPlaying {
         Some(if island.is_some() { peek.padding(4.0, 14.0, 12.0, 14.0).min_width(ISLAND_WIDTH) } else { peek.min_width(240.0) })
     }
 
-    /// On the island, for a moment when the track changes (see `watch_track`): its cover
-    /// bigger, the title, the artist and the album.
+    /// For a moment when the track changes (see `watch_track`), on the island or under the pill:
+    /// its cover bigger, the title, the artist and the album. Or the call that starts, or the
+    /// mic that's on while something plays.
     fn notice(&self, rx: &Rx) -> Option<Node> {
-        self.island(rx)?;
-        // A message that just came, for `whatsapp`, which has no island of its own while this is one
-        if let Some(message) = super::whatsapp::guest_notice(rx) {
+        // On the notch's black around the notch; under the pill, in the theme's colors
+        let island = self.island(rx).is_some();
+        // A message that just came, for `whatsapp`, which has no island of its own while this is
+        // one (its own pill grows, without a notch)
+        if island && let Some(message) = super::whatsapp::guest_notice(rx) {
             return Some(message);
         }
         if self.warning() && time::now() - self.warned < 4.0 {
-            return Some(warning_notice(rx));
+            return Some(warning_notice(rx, island));
         }
         if let Some(c) = self.shown_call() {
-            return Some(self.call_notice(rx, c));
+            return Some(self.call_notice(rx, c, island));
         }
         let p = self.current()?;
-        let theme = self.notch_theme(rx.theme, p);
+        let theme = if island { self.notch_theme(rx.theme, p) } else { rx.theme.clone() };
         let rx = &Rx { theme: &theme, ..*rx };
         let th = rx.theme;
         let max = ISLAND_WIDTH - 28.0 - 56.0 - 12.0;
@@ -2125,8 +2128,8 @@ impl NowPlaying {
 
     /// On the island, for a moment when a call starts: the app's icon bigger, the name and the
     /// service.
-    fn call_notice(&self, rx: &Rx, c: &Call) -> Node {
-        let theme = rx.theme.notch(None);
+    fn call_notice(&self, rx: &Rx, c: &Call, island: bool) -> Node {
+        let theme = if island { rx.theme.notch(None) } else { rx.theme.clone() };
         let rx = &Rx { theme: &theme, ..*rx };
         let th = rx.theme;
         let max = ISLAND_WIDTH - 28.0 - 40.0 - 12.0;
@@ -2220,8 +2223,8 @@ fn warning_row(rx: &Rx, width: f64) -> Node {
 }
 
 /// On the island, for a moment as the warning starts.
-fn warning_notice(rx: &Rx) -> Node {
-    let theme = rx.theme.notch(None);
+fn warning_notice(rx: &Rx, island: bool) -> Node {
+    let theme = if island { rx.theme.notch(None) } else { rx.theme.clone() };
     let th = &theme;
     let (title, detail) = warning_text();
     let max = ISLAND_WIDTH - 28.0 - 40.0 - 12.0;
@@ -2988,7 +2991,8 @@ mod tests {
         // Without the option, the pill
         w.notch = false;
         assert!(drawn(&w, 0.0).style.notch.is_none());
-        assert!(w.notice(&rx).is_none());
+        // And its notice under the pill (see `a_new_track_shows_under_the_pill_too`)
+        assert!(w.notice(&rx).is_some());
     }
 
     #[test]
@@ -3024,6 +3028,30 @@ mod tests {
         // A stream has no length: nothing
         w.players[0].duration = 0.0;
         assert!(pill(&w).is_none() && ring(&w).is_none());
+    }
+
+    #[test]
+    fn a_new_track_shows_under_the_pill_too() {
+        let theme = crate::theme::Theme::from_config(&crate::config::ThemeConfig::default());
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1512.0, 982.0));
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: None, notch_height: 0.0, large: false };
+        let keys = |n: &Node| n.children.iter().filter_map(|c| c.key.clone()).collect::<Vec<_>>();
+        let mut w = NowPlaying::new(&Options::default());
+        w.players = [
+            Player { app: App::Music, state: State::Playing, title: "A".into(), artist: "B".into(), album: "C".into(), pid: Some(1), ..Default::default() },
+            Player::new(App::Spotify),
+            Player::new(App::Other),
+        ];
+        // No notch: under the pill, in the theme's colors, not on the notch's black
+        let rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false);
+        let n = w.notice(&rx).expect("a notice");
+        assert_eq!(keys(&n), ["cover", "lines"]);
+        assert_eq!(keys(&n.children[1]), ["title", "artist", "album"]);
+        assert!(matches!(&n.children[1].children[0].kind, Kind::Text { color, .. } if *color == theme.text));
+        // A call that has the bar shows as it starts
+        w.call = Some(Call { service: Service::Teams, bundle: call::TEAMS.into(), name: "Sync".into(), since: time::now(), ..Default::default() });
+        w.focus = Focus::Call;
+        assert_eq!(keys(&w.notice(&rx).expect("a notice")), ["icon", "lines"]);
     }
 
     #[test]
