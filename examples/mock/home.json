@@ -6,22 +6,29 @@
     {"title": "Other", "entities": ["switch.printer", "vacuum.robot", "script.good_night", "scene.movie_night", "scene.all_off"]}
   ],
   "printer": {
-    "plug": "switch.printer", "off": "script.printer_off",
-    "status": "sensor.printer_status", "progress": "sensor.printer_progress", "remaining": "sensor.printer_remaining"
+    "plug": "switch.printer", "off": "script.printer_off", "status": "sensor.printer_status", "progress": "sensor.printer_progress", "remaining": "sensor.printer_remaining",
+    "entities": {
+      "end_time": "sensor.printer_end", "start_time": "sensor.printer_start", "current_layer": "sensor.printer_layer",
+      "total_layers": "sensor.printer_layers", "nozzle_temp": "sensor.printer_nozzle", "target_nozzle_temp": "sensor.printer_nozzle_target",
+      "bed_temp": "sensor.printer_bed", "target_bed_temp": "sensor.printer_bed_target", "stage": "sensor.printer_stage",
+      "subtask_name": "sensor.printer_job", "print_weight": "sensor.printer_weight", "print_length": "sensor.printer_length",
+      "speed_profile": "sensor.printer_speed", "cooling_fan_speed": "sensor.printer_fan_cooling", "aux_fan_speed": "sensor.printer_fan_aux",
+      "chamber_fan_speed": "sensor.printer_fan_chamber", "heatbreak_fan_speed": "sensor.printer_fan_heatbreak", "wifi_signal": "sensor.printer_wifi",
+      "nozzle_diameter": "sensor.printer_nozzle_size", "nozzle_type": "sensor.printer_nozzle_type", "print_bed_type": "sensor.printer_plate",
+      "total_usage_hours": "sensor.printer_hours", "active_tray": "sensor.printer_tray", "hms": "binary_sensor.printer_hms",
+      "print_error": "binary_sensor.printer_error", "chamber_light": "light.printer_chamber", "cover_image": "image.printer_cover"
+    }
   },
+  "nozzle_history": [120, 131, 142, 153, 164, 176, 187, 198, 209, 220, 221, 221, 220, 219, 219, 221, 221, 220, 219, 219, 221, 221, 220, 219, 220, 221, 221, 219, 219, 220],
+  "bed_history": [42, 43, 45, 46, 47, 48, 50, 51, 52, 54, 55, 56, 57, 59, 60, 60, 60, 59, 60, 60, 61, 61, 60, 59, 59, 60, 60, 61, 60, 60],
+  "cover": "home/cover.png",
+  "camera": "home/camera.png",
   "states": {
     "light.living_room": {"state": "on", "attributes": {"friendly_name": "Living Room", "brightness": 178, "supported_color_modes": ["brightness"]}},
     "switch.bedroom_lamp": {"state": "off", "attributes": {"friendly_name": "Bedroom Lamp"}},
     "switch.coffee_machine": {"state": "on", "attributes": {"friendly_name": "Coffee Machine"}},
     "cover.living_room_blind": {"state": "open", "attributes": {"friendly_name": "Blind", "current_position": 60}},
-    "climate.living_room": {
-      "state": "cool",
-      "attributes": {
-        "friendly_name": "Air Conditioner", "current_temperature": 26.5, "temperature": 24,
-        "min_temp": 16, "max_temp": 30, "target_temp_step": 0.5,
-        "hvac_modes": ["off", "cool", "heat", "dry", "fan_only", "auto"]
-      }
-    },
+    "climate.living_room": {"state": "cool", "attributes": {"friendly_name": "Air Conditioner", "current_temperature": 26.5, "temperature": 24, "min_temp": 16, "max_temp": 30, "target_temp_step": 0.5, "hvac_modes": ["off", "cool", "heat", "dry", "fan_only", "auto"]}},
     "switch.printer": {"state": "on", "attributes": {"friendly_name": "3D Printer"}},
     "vacuum.robot": {"state": "docked", "attributes": {"friendly_name": "Vacuum"}},
     "script.good_night": {"state": "off", "attributes": {"friendly_name": "Good Night"}},
@@ -29,6 +36,33 @@
     "scene.all_off": {"state": "2026-10-30T08:00:00+00:00", "attributes": {"friendly_name": "All Off"}},
     "sensor.printer_status": {"state": "running", "attributes": {}},
     "sensor.printer_progress": {"state": "45", "attributes": {}},
-    "sensor.printer_remaining": {"state": "1.33", "attributes": {}}
+    "sensor.printer_remaining": {"state": "1.33", "attributes": {}},
+    "sensor.printer_end": {"state": "2026-10-30T19:45:00+00:00", "attributes": {}},
+    "sensor.printer_start": {"state": "2026-10-30T17:20:00+00:00", "attributes": {}},
+    "sensor.printer_layer": {"state": "112", "attributes": {}},
+    "sensor.printer_layers": {"state": "248", "attributes": {}},
+    "sensor.printer_nozzle": {"state": "219", "attributes": {}},
+    "sensor.printer_nozzle_target": {"state": "220", "attributes": {}},
+    "sensor.printer_bed": {"state": "60", "attributes": {}},
+    "sensor.printer_bed_target": {"state": "60", "attributes": {}},
+    "sensor.printer_stage": {"state": "printing", "attributes": {}},
+    "sensor.printer_job": {"state": "Cable_Organizer_v3", "attributes": {}},
+    "sensor.printer_weight": {"state": "48.6", "attributes": {}},
+    "sensor.printer_length": {"state": "16.3", "attributes": {}},
+    "sensor.printer_speed": {"state": "standard", "attributes": {"modifier": 100}},
+    "sensor.printer_fan_cooling": {"state": "100", "attributes": {}},
+    "sensor.printer_fan_aux": {"state": "40", "attributes": {}},
+    "sensor.printer_fan_chamber": {"state": "0", "attributes": {}},
+    "sensor.printer_fan_heatbreak": {"state": "100", "attributes": {}},
+    "sensor.printer_wifi": {"state": "-52", "attributes": {}},
+    "sensor.printer_nozzle_size": {"state": "0.4", "attributes": {}},
+    "sensor.printer_nozzle_type": {"state": "hardened_steel", "attributes": {}},
+    "sensor.printer_plate": {"state": "textured_plate", "attributes": {}},
+    "sensor.printer_hours": {"state": "312.4", "attributes": {}},
+    "sensor.printer_tray": {"state": "PLA Matte", "attributes": {"color": "#74C7ECFF", "type": "PLA", "remain": 64}},
+    "binary_sensor.printer_hms": {"state": "off", "attributes": {}},
+    "binary_sensor.printer_error": {"state": "off", "attributes": {}},
+    "light.printer_chamber": {"state": "on", "attributes": {}},
+    "image.printer_cover": {"state": "2026-10-30T17:20:04", "attributes": {}}
   }
 }

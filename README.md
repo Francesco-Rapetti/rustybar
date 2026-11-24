@@ -31,7 +31,7 @@ processes a minute.
 | `slack`, `teams` | What Slack and Teams notify on this Mac (direct messages, mentions), as `whatsapp` shows its chats: the count, the notch, the notice of a new message. Not in the default layout; needs Full Disk Access | The same popup: the conversations that wait, then the latest; each with the messages notified while the bar ran, and a button to answer in the app |
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | A dashboard: the next event (or the one going on, with how much of it is gone) with its calendar, place, guests who accepted and Join for its Google Meet call; the all-day events; then the whole day in the colors of its calendars, with a line at the time it is now. A click joins the call or shows the event in Calendar |
 | `notifications` | Two counts: new RustyBar crash reports (green) and Homebrew updates (red). Each app of its `apps` is a widget of its own before it, with what the app notifies, as `slack` (see [Slack and Teams](#slack-and-teams)); an entry that is no app's name stays here as a Dock badge | The crash reports and badged apps to open, or to dismiss with their ✕ or all at once (a badge comes back when it goes up), the packages to update one by one or all at once |
-| `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
+| `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress and time left while it prints, in a pill that opens all about the printer | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
 | `claude` | How much of the Claude plan each account has used: the 5-hour session and the week, as numbers and drawn on the pill in the account's color, the session along its bottom and the week, fainter, along its top (`usage` picks `veil`, `solid` or `mark` as for `audio`, or `none`; `bars = "session"` draws the session alone, over all of the pill; `numbers = false` leaves the spark and the reset time) | For each account its plan and two tiles, the session and the week, with a bar, when they reset and how long until then; how old the numbers are, ↻ to read them again, log in and log out; the usage page on claude.ai |
 | `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | A dashboard: the engine and what the containers use; every container, by Compose project, with its state, CPU, memory, image, ports (links to localhost) and uptime, and buttons to start, stop, restart and remove it (a project's at once too); disk usage of images, containers, volumes and build cache, unused networks and a system prune, each cleaned up only after saying what it would remove; Docker Desktop |
 
@@ -40,11 +40,11 @@ Each widget with its popup, on made-up data (see below):
 <table>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/home.png" width="372" alt="A dashboard of Home Assistant tiles: lights, a blind, the air conditioner, a 3D printer, a vacuum and scenes"><br><code>home</code></td>
-<td align="center" valign="top"><img src="docs/screenshots/system.png" width="376" alt="CPU and GPU with a graph of the last minute, memory, the disks and the apps that use the most CPU"><br><code>system</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/printer.png" width="372" alt="The 3D printer's popup, opened from its pill: the model's picture and name, printing at 45% with the time left, when it ends, the layer and when it started; a frame of the camera; nozzle and bed with their temperature, target and the last minutes as bars; the fans; the filament with its color and how much the print takes; speed, nozzle, plate, Wi-Fi and hours printed"><br><code>home</code>, the 3D printer</td>
 </tr>
 <tr>
+<td align="center" valign="top"><img src="docs/screenshots/system.png" width="376" alt="CPU and GPU with a graph of the last minute, memory, the disks and the apps that use the most CPU"><br><code>system</code></td>
 <td align="center" valign="top"><img src="docs/screenshots/claude.png" width="440" alt="Three Claude accounts, each with its session and weekly usage and when they reset"><br><code>claude</code></td>
-<td align="center" valign="top"><img src="docs/screenshots/clock.png" width="290" alt="A calendar that scrolls through the months"><br><code>clock</code></td>
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/network.png" width="392" alt="The Wi-Fi networks to join and Ethernet, then the connection with its signal, download and upload graphs and the VPN, and the details open: the link and the addresses"><br><code>network</code></td>
@@ -56,7 +56,7 @@ Each widget with its popup, on made-up data (see below):
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/notifications.png" width="370" alt="A crash report, the Dock badge of an app and Homebrew updates"><br><code>notifications</code><br><br><img src="docs/screenshots/whatsapp.png" width="404" alt="WhatsApp's icon with five unread messages in the bar; in the popup a group chat: a link with its preview, a video with its length, a document, a voice note with a play button and a bar, each under the name of who sent it, and a field to write a reply with a send button"><br><code>whatsapp</code><br><br><img src="docs/screenshots/telegram.png" width="404" alt="Telegram's icon with six unread messages in the bar, in Telegram's blue; in the popup a chat: a document, a voice note with a play button and a bar, a picture with its caption, a text, and a field to write a reply with a send button"><br><code>telegram</code><br><br><img src="docs/screenshots/slack.png" width="404" alt="Slack's icon with five waiting messages in the bar, in the red of Slack's mark; in the popup a channel: the messages Slack notified, each under the name of who wrote it, one with the site of its link, and a button to answer in Slack"><br><code>slack</code><br><br><img src="docs/screenshots/teams.png" width="404" alt="Teams' icon with three waiting messages in the bar, in Teams' violet; in the popup a group chat: the messages Teams notified, each under the name of who wrote it, and a button to answer in Teams"><br><code>teams</code></td>
-<td align="center" valign="top"><img src="docs/screenshots/apple.png" width="244" alt="The Apple menu"><br><code>apple</code></td>
+<td align="center" valign="top"><img src="docs/screenshots/apple.png" width="244" alt="The Apple menu"><br><code>apple</code><br><br><img src="docs/screenshots/clock.png" width="290" alt="A calendar that scrolls through the months"><br><code>clock</code></td>
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/events.png" width="392" alt="The next event in a tile, with its calendar, room, guests and Join Google Meet, an all-day event as a chip, then the day: a past standup, a red line at the time it is now, the design review and lunch, each with the color of its calendar"><br><code>events</code><br><br><img src="docs/screenshots/aerospace.png" width="348" alt="AeroSpace workspaces with the icons of their windows"><br><code>aerospace</code><br><br><img src="docs/screenshots/front_app.png" width="121" alt="The app in front"><br><code>front_app</code></td>
@@ -191,7 +191,7 @@ island of `now_playing` around the notch (the cover alone on the left of it). Th
 more room than that. When the sides give way all the same, it keeps its own form and takes the
 room they leave. Next the widgets of
 `slim_first` (in `[displays]`) leave out what the bar can do without, in that order: by default
-the time until a charge is full goes from `devices` and `battery`, then the volume sliders of
+the time a print has left goes from `home`, the time until a charge is full from `devices` and `battery`, then the volume sliders of
 `audio`, then `system` shows the memory alone, then `claude` shows one
 pill for all its accounts. Then the widgets farthest from their edge give way, one at a time:
 first they switch to their compact form (icons, short times; AeroSpace keeps the icons of the
@@ -243,7 +243,11 @@ entities = ["climate.living_room", "vacuum.robot", "scene.movie_night"]
 
 Lights, switches, fans, `input_boolean`, covers, climates, vacuums, scripts and scenes each get a
 tile of their kind (scripts and scenes are chips). A 3D printer, e.g. from the Bambu Lab
-integration, gets a wide tile with its progress and a pill in the bar while it prints:
+integration, gets a wide tile with its progress and, while it prints, a pill in the bar with the
+progress and how long is left. The pill (or the chevron on the tile) opens a popup all about the
+printer: the model's picture and name, what it's doing, when it ends, the layer, a frame of its
+camera every 5 s, nozzle and bed with their targets and the last 5 minutes, the fans, the filament,
+speed, nozzle, plate, Wi-Fi and hours printed, its errors, and the chamber light to toggle:
 
 ```toml
 [widgets.home.printer]
@@ -253,6 +257,15 @@ status = "sensor.printer_status"
 progress = "sensor.printer_progress"  # %
 remaining = "sensor.printer_remaining" # hours
 ```
+
+With the Bambu Lab integration that's all: the other entities are the ones of the same device,
+found in Home Assistant's entity registry by their unique ids. For another printer, or one of
+them by hand, `[widgets.home.printer.entities]` names them: `nozzle_temp`, `target_nozzle_temp`,
+`bed_temp`, `target_bed_temp`, `chamber_temp`, `stage`, `subtask_name`, `start_time`, `end_time`,
+`current_layer`, `total_layers`, `cooling_fan_speed`, `aux_fan_speed`, `chamber_fan_speed`,
+`heatbreak_fan_speed`, `active_tray`, `print_weight`, `print_length`, `speed_profile`,
+`nozzle_diameter`, `nozzle_type`, `print_bed_type`, `wifi_signal`, `total_usage_hours`, `hms`,
+`print_error`, `camera`, `cover_image`, `chamber_light`. What isn't there isn't shown.
 
 Lua widgets can read and drive Home Assistant too, with `rb.home` (see below); `watch` lists the
 entities they need besides the tiles.

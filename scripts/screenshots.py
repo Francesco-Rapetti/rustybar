@@ -5,7 +5,7 @@
 #   open -n target/RustyBar.app --env RUSTYBAR_CONFIG_DIR=<dir> --env RUSTYBAR_MOCK=$PWD/examples/mock \
 #     --args -AppleLanguages '(en)' -AppleLocale en_US
 # and the mouse on the main display, where the popups open. Needs Pillow and swiftc.
-# Usage: scripts/screenshots.py [OUT_DIR] [WIDGET…|settings]; by default docs/screenshots, all.
+# Usage: scripts/screenshots.py [OUT_DIR] [WIDGET…|printer|settings]; by default docs/screenshots, all.
 import os, subprocess, sys, tempfile, time
 from PIL import Image, ImageDraw
 
@@ -88,16 +88,18 @@ def save(name, left, top, right, bottom, pills, popup=None):
         canvas.alpha_composite(img, (px - left, py - top))
     canvas.convert("RGB").save(os.path.join(OUT, f"{name}.png"), optimize=True)
 
-# What opens the popup of a widget on more than its first page: the chat widgets' on a chat, and
-# network's with its details
+# What opens the popup of a widget on more than its first page: the chat widgets' on a chat,
+# network's with its details, and home's on the house, whatever page it was left on
 OPEN = {"whatsapp": [["trigger", "whatsapp_chat", "chat=Thursday"]], "telegram": [["trigger", "telegram_chat", "chat=Irene"]],
         "slack": [["trigger", "slack_chat", "chat=#launch"]], "teams": [["trigger", "teams_chat", "chat=Quarterly"]],
-        "network": [["popup", "network"], ["trigger", "network_details"]]}
+        "network": [["popup", "network"], ["trigger", "network_details"]],
+        "home": [["trigger", "home_view", "view=home"], ["popup", "home"]]}
+# Shots of a popup on another page, by a name of their own: the widget, what opens it
+MORE = {"printer": ("home", [["trigger", "home_view", "view=printer"], ["popup", "home"]])}
 
-os.makedirs(OUT, exist_ok=True)
-for name in [n for n in sys.argv[2:] if n != "settings"] or ([] if sys.argv[2:] else list(pos)):
-    x, y, w, h = pos[name]
-    for command in OPEN.get(name, [["popup", name]]):
+def shot(name, widget, commands):
+    x, y, w, h = pos[widget]
+    for command in commands:
         subprocess.run([RB, "msg", *command], capture_output=True)
         time.sleep(0.3)
     time.sleep(1.6)
@@ -111,11 +113,17 @@ for name in [n for n in sys.argv[2:] if n != "settings"] or ([] if sys.argv[2:] 
         _, px, py, pw, ph = win
         popup = (grab(win), px, py)
         left, right, bottom = min(left, px), max(right, px + pw), max(bottom, py + ph)
-        subprocess.run([RB, "msg", "popup", name], capture_output=True)
+        subprocess.run([RB, "msg", "popup", widget], capture_output=True)
         time.sleep(1.0)
     pills = (max(x - 6, bx), min(x + w + 6, bx + bw))
     save(name, max(left - MARGIN, bx), top - MARGIN // 2, min(right + MARGIN, bx + bw), bottom + MARGIN, pills, popup)
     print(name, "with its popup" if popup else "")
+
+os.makedirs(OUT, exist_ok=True)
+names = [n for n in sys.argv[2:] if n != "settings"] or ([] if sys.argv[2:] else list(pos) + [n for n, (widget, _) in MORE.items() if widget in pos])
+for name in names:
+    widget, commands = MORE.get(name, (name, OPEN.get(name, [["popup", name]])))
+    shot(name, widget, commands)
 
 shown = [pos[n] for n in HEADER if n in pos]
 if shown and not sys.argv[2:]:

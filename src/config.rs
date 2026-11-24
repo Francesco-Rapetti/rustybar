@@ -145,7 +145,7 @@ impl Default for DisplayConfig {
             compact_on_notch: false,
             hide_on_notch: vec![],
             always_compact: vec![],
-            slim_first: vec!["devices".into(), "battery".into(), "audio".into(), "system".into(), "claude".into()],
+            slim_first: vec!["home".into(), "devices".into(), "battery".into(), "audio".into(), "system".into(), "claude".into()],
             large_width: 3840.0,
         }
     }

@@ -135,7 +135,7 @@ pub fn bar(f: &mut Form) {
     f.group(Some(t("Schermi", "Displays")));
     f.toggle_at(t("Tutto compatto col notch", "All compact with a notch"), Some(t("Sugli schermi col notch ogni widget usa la forma compatta, anche se c'è spazio", "On screens with a notch every widget draws its compact form, even with room")), &rb("displays.compact_on_notch"), d.displays.compact_on_notch);
     f.tokens_at(t("Sempre compatti", "Always compact"), Some(t("Widget compatti su ogni schermo", "Widgets compact on every screen")), &rb("displays.always_compact"), t("nessuno", "none"));
-    f.tokens_or_at(t("Snelliti per primi", "Slim first"), Some(t("Senza spazio, prima che un widget diventi compatto, in quest'ordine: devices e battery senza il tempo di carica, audio senza gli slider del volume, system con la sola memoria, claude in una pillola", "With no room, before any widget turns compact, in this order: devices and battery without the time to full, audio without its volume sliders, system with the memory alone, claude in one pill")), &rb("displays.slim_first"), &d.displays.slim_first, t("nessuno", "none"));
+    f.tokens_or_at(t("Snelliti per primi", "Slim first"), Some(t("Senza spazio, prima che un widget diventi compatto, in quest'ordine: home senza il tempo che manca alla stampa, devices e battery senza il tempo di carica, audio senza gli slider del volume, system con la sola memoria, claude in una pillola", "With no room, before any widget turns compact, in this order: home without the time the print has left, devices and battery without the time to full, audio without its volume sliders, system with the memory alone, claude in one pill")), &rb("displays.slim_first"), &d.displays.slim_first, t("nessuno", "none"));
     f.tokens_at(t("Nel ⋯ col notch", "In the ⋯ with a notch"), Some(t("Widget che sugli schermi col notch vanno nel popup della pillola ⋯, anche se c'è spazio", "Widgets that go in the popup of the ⋯ pill on screens with a notch, even with room")), &rb("displays.hide_on_notch"), t("nessuno", "none"));
     f.number_at(t("Schermo grande da", "Large screen from"), Some(t("Da questa larghezza in punti uno schermo è grande: i widget Lua possono mostrare di più (ctx.large)", "From this width in points a screen is large: Lua widgets can show more (ctx.large)")), &rb("displays.large_width"), d.displays.large_width, Num::new(800.0, 10000.0, 10.0, 0));
     f.footer(t(
@@ -945,6 +945,10 @@ fn home(f: &mut Form, spot: &Spot) {
     f.text_at(t("Stato", "Status"), None, &printer.k("status"), "sensor.printer_status");
     f.text_at(t("Avanzamento", "Progress"), Some("%"), &printer.k("progress"), "sensor.printer_progress");
     f.text_at(t("Tempo rimanente", "Time left"), Some(t("In ore", "In hours")), &printer.k("remaining"), "sensor.printer_remaining");
+    f.footer(t(
+        "Mentre stampa ha una pillola sua, che apre tutto sulla stampante: temperature, ventole, filamento, la videocamera. Con l'integrazione Bambu Lab il resto delle entità si trova da sé, da quella dello stato.",
+        "While it prints it has a pill of its own, which opens all about the printer: temperatures, fans, filament, the camera. With the Bambu Lab integration the other entities are found by themselves, from the one of the status.",
+    ));
 }
 
 /// Asks for the Home Assistant token and saves it in the keychain, where the widget reads it.

@@ -5,7 +5,9 @@
 //!   the count while Home Assistant can't be reached. The logo is the server's own mask icon
 //!   (`/static/icons/mask-icon.svg`), saved once in `~/Library/Caches/rustybar`: it's a trademark,
 //!   so it isn't in the repo, and until then there's a house. While the 3D printer prints, a pill on
-//!   its left has a printer and the progress, yellow while paused.
+//!   its left has a 3D printer (`printer3d.fill`, drawn in `gfx`), the progress and, where the bar
+//!   has room (not slim, see `slim_first`), how long is left (`1 h 20 min`); yellow while paused. A
+//!   click on it opens the printer's own popup, one on the logo the dashboard.
 //! - Popup: the groups of `groups`, each a title and its tiles, two in a row; a tile is the icon,
 //!   the name (Home Assistant's, or the tile's own) and the state, in the color of the state.
 //!   - Light: a bulb, yellow when on; `Accesa` or `Spenta`. A click toggles it; dimmable ones
@@ -24,12 +26,28 @@
 //!     progress and a bar, then `ancora 1 h 20 min` (`In pausa`, `Si prepara a stampare…`). A
 //!     click turns it on; off only at a second click (`Fai clic per spegnere` in red, then
 //!     `Spegnimento…`), through `printer.off`, a script that should do nothing while the printer
-//!     works; while it prints a click only says `In stampa` in red.
+//!     works; while it prints a click only says `In stampa` in red. A chevron opens the
+//!     printer's popup.
 //!   - Scripts and scenes: chips after the tiles of their group; a script shows an hourglass while
 //!     it runs.
 //!   - Unavailable: gray, `Non disponibile`, no actions. A service that fails: `Non riuscito` in
 //!     red, until the entity changes.
 //!   - Last, `Apri Home Assistant`, which opens `dashboard`. Unreachable: only a message and it.
+//! - The printer's popup (`View::Printer`), in place of the dashboard, with `‹` back to it:
+//!   - the job: the model's picture, its name, the status in its color (`In stampa`, `In pausa`,
+//!     `Stampa completata`…) or what the printer is doing before it prints (`Pulizia dell'ugello`),
+//!     the progress, how long is left and when it ends, the layer and when it started;
+//!   - the camera, a frame every 5 s while the popup is open;
+//!   - nozzle and bed: the temperature, the target, and the last 5 minutes as bars (a reading
+//!     every 10 s, kept while the popup is closed too);
+//!   - the fans, the filament (its color, name and type, grams and meters of the print), then
+//!     speed, nozzle, plate, Wi-Fi and the hours printed; in red the printer's errors;
+//!   - the chamber light, a bulb in the header, which a click toggles.
+//!   - Besides `status`, `progress` and `remaining` the config names nothing: the other
+//!     entities are those of the same device in Home Assistant's entity registry, told apart by
+//!     the end of their unique id (`…_nozzle_temp`), which is how the Bambu Lab integration names
+//!     them in any language; `printer.entities` names them by hand (`nozzle_temp = "sensor.…"`).
+//!     What a printer doesn't have isn't shown. They redraw only the open popup, not the bar.
 //! - Data: the WebSocket API, `subscribe_entities` for the tiles, the printer's sensors and
 //!   `watch`, with a ping every 30 s. A dropped connection is tried again after 1 s, then every
 //!   10 s (gray only from the second failure, so a blip doesn't dim the bar), and at once on wake.
@@ -41,7 +59,7 @@
 //!   entities they need besides the tiles.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -63,6 +81,18 @@ const RETRY: f64 = 10.0;
 /// How long a value set from the popup shows before Home Assistant has it.
 const PENDING: Duration = Duration::from_secs(15);
 const PRINTING: [&str; 4] = ["running", "pause", "prepare", "slicing"];
+/// Between two readings of the temperatures, and how many are kept: 5 minutes.
+const SAMPLE: f64 = 10.0;
+const SAMPLES: usize = 30;
+const GRAPH: f64 = 24.0;
+/// Between two frames of the camera, while the printer's popup is open.
+const CAMERA: f64 = 5.0;
+/// What the printer's popup reads, by the end of the unique id the Bambu Lab integration gives it.
+const KEYS: [&str; 30] = [
+    "end_time", "start_time", "current_layer", "total_layers", "nozzle_temp", "target_nozzle_temp", "bed_temp", "target_bed_temp", "chamber_temp", "stage",
+    "subtask_name", "print_weight", "print_length", "speed_profile", "cooling_fan_speed", "aux_fan_speed", "chamber_fan_speed", "heatbreak_fan_speed", "wifi_signal", "nozzle_diameter",
+    "nozzle_type", "print_bed_type", "total_usage_hours", "active_tray", "hms", "print_error", "camera", "cover_image", "chamber_light", "online",
+];
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
@@ -111,7 +141,8 @@ struct Group {
 }
 
 /// A 3D printer, e.g. of the Bambu Lab integration: its plug among the tiles, the script that
-/// turns it off, and the sensors of its status, progress (%) and time left (hours).
+/// turns it off, and the sensors of its status, progress (%) and time left (hours). `entities`
+/// names by hand what its popup reads (see `KEYS`), which is otherwise found in the registry.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 struct Printer {
@@ -120,6 +151,15 @@ struct Printer {
     status: String,
     progress: String,
     remaining: String,
+    entities: HashMap<String, String>,
+}
+
+/// What the popup shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum View {
+    #[default]
+    Home,
+    Printer,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -141,6 +181,11 @@ struct Mock {
     #[serde(flatten)]
     setup: Setup,
     states: HashMap<String, Entity>,
+    /// The printer's temperatures, oldest first, and its pictures, files beside this one.
+    nozzle_history: Vec<f64>,
+    bed_history: Vec<f64>,
+    cover: String,
+    camera: String,
 }
 
 /// What a tile says for a moment, over its state.
@@ -189,6 +234,25 @@ pub struct Home {
     nudges: u64,
     logo: Option<String>,
     mock: bool,
+    view: View,
+    /// The tiles, the printer's three sensors and `watch`: what the bar and Lua see change.
+    base: Vec<String>,
+    /// The printer's entities by key (see `KEYS`, and `print_status`, `print_progress`,
+    /// `remaining_time`).
+    ids: HashMap<String, String>,
+    /// The request for the entity registry, until it's answered; asked once.
+    registry: Option<u64>,
+    discovered: bool,
+    /// Readings of nozzle and bed, numbered, oldest first.
+    temps: VecDeque<(u64, f64, f64)>,
+    readings: u64,
+    /// The model's picture, and the state of its entity it was fetched for.
+    cover: Option<String>,
+    cover_of: String,
+    /// The camera's last frame; `watching` numbers the popup that asks for them.
+    camera: Option<String>,
+    watching: u64,
+    frames: u64,
 }
 
 fn domain(id: &str) -> &str {
@@ -197,6 +261,65 @@ fn domain(id: &str) -> &str {
 
 fn logo_path() -> PathBuf {
     crate::config::home().join("Library/Caches/rustybar/home-assistant.svg")
+}
+
+fn cache(name: &str) -> PathBuf {
+    crate::config::home().join("Library/Caches/rustybar").join(name)
+}
+
+/// `0,4` in Italian, `0.4` in English, with `digits` decimals.
+fn decimal(v: f64, digits: usize) -> String {
+    let s = format!("{v:.digits$}");
+    if crate::i18n::italian() { s.replace('.', ",") } else { s }
+}
+
+/// `hardened_steel` → `Hardened steel`: a state Home Assistant gives as a key.
+fn pretty(key: &str) -> String {
+    let s = key.replace('_', " ");
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => s,
+    }
+}
+
+/// What the printer does before and around printing, for the ones seen most; the others as
+/// Home Assistant names them.
+fn stage_name(stage: &str) -> String {
+    let name = match stage {
+        "auto_bed_leveling" | "bed_level_phase_1" | "bed_level_phase_2" | "bed_level_high_temperature" => t("Livellamento del piatto", "Leveling the bed"),
+        "heatbed_preheating" | "waiting_for_heatbed_temperature" | "heatbed_stabilizing" => t("Riscaldamento del piatto", "Heating the bed"),
+        "heating_hotend" | "preparing_hotend" | "checking_extruder_temperature" => t("Riscaldamento dell'ugello", "Heating the nozzle"),
+        "cleaning_nozzle_tip" => t("Pulizia dell'ugello", "Cleaning the nozzle"),
+        "homing_toolhead" => t("Azzeramento della testina", "Homing the toolhead"),
+        "sweeping_xy_mech_mode" => t("Misura delle vibrazioni", "Measuring vibrations"),
+        "calibrating_extrusion" | "calibrating_extrusion_flow" => t("Calibrazione dell'estrusione", "Calibrating the extrusion"),
+        "scanning_bed_surface" => t("Scansione del piatto", "Scanning the bed"),
+        "inspecting_first_layer" => t("Controllo del primo strato", "Inspecting the first layer"),
+        "changing_filament" => t("Cambio del filamento", "Changing filament"),
+        "filament_loading" => t("Carico del filamento", "Loading filament"),
+        "filament_unloading" => t("Scarico del filamento", "Unloading filament"),
+        "print_calibration_lines" => t("Linee di calibrazione", "Calibration lines"),
+        "cooling_chamber" | "heated_bedcooling" | "cooling_nozzle" => t("Raffreddamento", "Cooling down"),
+        "paused_user" | "paused_user_gcode" | "m400_pause" => t("Messa in pausa", "Paused by you"),
+        "paused_filament_runout" => t("Filamento finito", "Out of filament"),
+        "paused_nozzle_clog" => t("Ugello intasato", "Nozzle clogged"),
+        "paused_front_cover_falling" => t("Coperchio caduto", "Front cover fell"),
+        other => return pretty(other),
+    };
+    name.to_string()
+}
+
+fn material(key: &str) -> String {
+    match key {
+        "hardened_steel" => t("acciaio temprato", "hardened steel").to_string(),
+        "stainless_steel" => t("acciaio inox", "stainless steel").to_string(),
+        "textured_plate" => t("PEI ruvido", "Textured PEI").to_string(),
+        "cool_plate" => "Cool Plate".to_string(),
+        "eng_plate" => "Engineering Plate".to_string(),
+        "hot_plate" => t("PEI liscio", "Smooth PEI").to_string(),
+        other => pretty(other),
+    }
 }
 
 /// `26,5°` in Italian, `26.5°` in English; whole degrees without decimals.
@@ -255,15 +378,26 @@ impl Home {
         });
         let mock = crate::mock::load::<Mock>("home");
         let (mut online, mut states) = (None, HashMap::new());
+        let (mut temps, mut cover, mut camera) = (VecDeque::new(), None, None);
         if let Some(m) = mock {
             if setup.groups.is_empty() {
                 setup.groups = m.setup.groups;
                 setup.printer = m.setup.printer;
             }
             (online, states) = (Some(m.online), m.states);
+            temps = m.nozzle_history.iter().zip(&m.bed_history).enumerate().map(|(i, (n, b))| (i as u64, *n, *b)).collect();
+            let file = |name: &str| std::env::var_os("RUSTYBAR_MOCK").filter(|_| !name.is_empty()).map(|d| std::path::Path::new(&d).join(name).display().to_string());
+            (cover, camera) = (file(&m.cover), file(&m.camera));
         }
         let mock = online.is_some();
-        Home {
+        let p = &setup.printer;
+        let mut ids = p.entities.clone();
+        for (key, id) in [("print_status", &p.status), ("print_progress", &p.progress), ("remaining_time", &p.remaining)] {
+            if !id.is_empty() {
+                ids.insert(key.into(), id.clone());
+            }
+        }
+        let mut home = Home {
             setup,
             online,
             no_token: false,
@@ -280,7 +414,21 @@ impl Home {
             nudges: 0,
             logo: logo_path().exists().then(|| logo_path().display().to_string()),
             mock,
-        }
+            view: View::Home,
+            base: Vec::new(),
+            ids,
+            registry: None,
+            discovered: false,
+            readings: temps.len() as u64,
+            temps,
+            cover,
+            cover_of: String::new(),
+            camera,
+            watching: 0,
+            frames: 0,
+        };
+        home.base = home.entities();
+        home
     }
 
     fn base(&self) -> String {
@@ -384,8 +532,14 @@ impl Home {
             }
             Some("auth_ok") => {
                 self.next_id = 1;
-                let ids = self.entities();
+                let mut ids = self.base.clone();
+                ids.extend(self.ids.values().filter(|id| !self.base.contains(id)).cloned());
                 self.send(json!({"type": "subscribe_entities", "entity_ids": ids}));
+                // The printer's other entities are those of its device
+                if !self.discovered && !self.setup.printer.status.is_empty() {
+                    self.registry = Some(self.next_id);
+                    self.send(json!({"type": "config/entity_registry/list"}));
+                }
                 self.fetch_logo(cx);
             }
             // A wrong token: tried again on wake, or when a new one is saved
@@ -398,6 +552,14 @@ impl Home {
                 self.share();
                 cx.redraw();
             }
+            Some("result") if self.registry.is_some() && message["id"].as_u64() == self.registry => {
+                self.registry = None;
+                self.discovered = true;
+                let found = self.discover(&message["result"]);
+                if !found.is_empty() {
+                    self.send(json!({"type": "subscribe_entities", "entity_ids": found}));
+                }
+            }
             Some("result") if message["success"] == json!(false) => self.disconnected(cx),
             Some("event") => {
                 let changed = self.apply(&message["event"]);
@@ -407,9 +569,19 @@ impl Home {
                 self.failures = 0;
                 if first || !changed.is_empty() {
                     self.settle(&changed);
-                    self.share();
-                    cx.redraw();
-                    crate::runtime::after(0.0, |app| app.broadcast(&Event::Trigger { name: "home_assistant".into(), args: HashMap::new() }));
+                    // The printer's own sensors change every few seconds while it prints: only
+                    // its open popup shows them
+                    let seen = first || changed.iter().any(|id| self.base.contains(id));
+                    if seen {
+                        self.share();
+                        crate::runtime::after(0.0, |app| app.broadcast(&Event::Trigger { name: "home_assistant".into(), args: HashMap::new() }));
+                    }
+                    if seen || cx.popup_open {
+                        cx.redraw();
+                    }
+                    if cx.popup_open && self.view == View::Printer {
+                        self.fetch_cover(cx);
+                    }
                 }
             }
             _ => {}
@@ -452,6 +624,26 @@ impl Home {
             }
         }
         changed
+    }
+
+    /// The printer's entities in the registry (`list`): those of the device of `printer.status`
+    /// whose unique id ends as that one's does, with a key of `KEYS` in place of `print_status`.
+    /// The ones that are new, to subscribe to.
+    fn discover(&mut self, list: &Value) -> Vec<String> {
+        let entries = list.as_array().map(Vec::as_slice).unwrap_or_default();
+        let found = entries.iter().find(|e| e["entity_id"] == json!(self.setup.printer.status)).and_then(|e| Some((e["device_id"].as_str()?, e["unique_id"].as_str()?.strip_suffix("print_status")?)));
+        let Some((device, prefix)) = found else { return Vec::new() };
+        let mut new = Vec::new();
+        for e in entries.iter().filter(|e| e["device_id"] == json!(device) && e["disabled_by"].is_null()) {
+            let (Some(key), Some(id)) = (e["unique_id"].as_str().and_then(|u| u.strip_prefix(prefix)), e["entity_id"].as_str()) else { continue };
+            if KEYS.contains(&key) && !self.ids.contains_key(key) {
+                self.ids.insert(key.to_string(), id.to_string());
+                if !self.base.iter().any(|b| b == id) {
+                    new.push(id.to_string());
+                }
+            }
+        }
+        new
     }
 
     /// What changed ends the notes on it, and the values set from the popup once it has them.
@@ -526,6 +718,121 @@ impl Home {
                     cx.redraw();
                 });
             }
+        });
+    }
+
+    // The printer
+
+    /// The entity of a key (see `KEYS`), when it has a state.
+    fn part(&self, key: &str) -> Option<&Entity> {
+        self.states.get(self.ids.get(key)?).filter(|e| !["unavailable", "unknown", ""].contains(&e.state.as_str()))
+    }
+
+    fn word(&self, key: &str) -> Option<&str> {
+        self.part(key).map(|e| e.state.as_str())
+    }
+
+    fn number(&self, key: &str) -> Option<f64> {
+        self.word(key)?.parse().ok()
+    }
+
+    /// A reading of nozzle and bed for the graphs; none while the printer is off.
+    fn sample(&mut self, cx: &mut Cx) {
+        match (self.number("nozzle_temp"), self.number("bed_temp")) {
+            (Some(nozzle), Some(bed)) if self.is_online() => {
+                self.readings += 1;
+                self.temps.push_back((self.readings, nozzle, bed));
+                while self.temps.len() > SAMPLES {
+                    self.temps.pop_front();
+                }
+            }
+            _ if self.temps.is_empty() => return,
+            _ => self.temps.clear(),
+        }
+        if cx.popup_open && self.view == View::Printer {
+            cx.redraw();
+        }
+    }
+
+    /// The printer's popup is on screen: its pictures.
+    fn entered(&mut self, cx: &mut Cx) {
+        self.watching += 1;
+        if self.view == View::Printer && !self.mock {
+            self.fetch_cover(cx);
+            self.fetch_frame(self.watching, cx);
+        }
+    }
+
+    /// A picture of Home Assistant, which wants the token, saved as `name` with the extension
+    /// of what it is.
+    fn fetch(&self, path: &str, name: String, done: impl Fn(Option<String>) + Send + Sync + 'static) {
+        let Some(token) = self.token.clone() else { return done(None) };
+        net::request("GET", &format!("{}{path}", self.base()), &[("Authorization", &format!("Bearer {token}"))], None, 10.0, move |status, body| {
+            if status != 200 || body.len() < 16 {
+                return done(None);
+            }
+            let file = cache(&format!("{name}.{}", if body.starts_with(b"\x89PNG") { "png" } else { "jpg" }));
+            let _ = std::fs::create_dir_all(file.parent().unwrap_or(&file));
+            done(std::fs::write(&file, &body).is_ok().then(|| file.display().to_string()))
+        });
+    }
+
+    /// The model's picture, when the entity has a new one: its state is when it changed.
+    fn fetch_cover(&mut self, cx: &mut Cx) {
+        let Some((id, state)) = self.ids.get("cover_image").cloned().zip(self.word("cover_image").map(String::from)) else { return };
+        if state == self.cover_of || self.mock {
+            return;
+        }
+        self.cover_of = state.clone();
+        let stamp: String = state.chars().filter(char::is_ascii_digit).collect();
+        let handle = cx.handle::<Home>();
+        self.fetch(&format!("/api/image_proxy/{id}"), format!("printer-cover-{stamp}"), move |file| {
+            let state = state.clone();
+            handle.send(move |w, cx| {
+                if w.cover_of != state {
+                    return;
+                }
+                match file {
+                    Some(file) => {
+                        if let Some(old) = w.cover.replace(file.clone()).filter(|old| *old != file) {
+                            let _ = std::fs::remove_file(old);
+                        }
+                        cx.redraw();
+                    }
+                    // Asked again the next time the popup opens
+                    None => w.cover_of.clear(),
+                }
+            });
+        });
+    }
+
+    /// A frame of the camera, then the next one `CAMERA` later, while the popup that asked
+    /// (`watching`) is open on the printer. Each is a file of its own, as a picture is drawn
+    /// once per path.
+    fn fetch_frame(&mut self, watching: u64, cx: &mut Cx) {
+        let Some(id) = self.ids.get("camera").cloned() else { return };
+        self.frames += 1;
+        let handle = cx.handle::<Home>();
+        self.fetch(&format!("/api/camera_proxy/{id}"), format!("printer-camera-{}", self.frames), move |file| {
+            handle.send(move |w, cx| {
+                if w.watching != watching {
+                    if let Some(file) = file {
+                        let _ = std::fs::remove_file(file);
+                    }
+                    return;
+                }
+                if let Some(file) = file {
+                    if let Some(old) = w.camera.replace(file.clone()).filter(|old| *old != file) {
+                        let _ = std::fs::remove_file(old);
+                    }
+                    cx.redraw();
+                }
+                cx.after::<Home>(CAMERA, move |w, cx| {
+                    if w.watching == watching && cx.popup_open && w.view == View::Printer {
+                        w.fetch_frame(watching, cx);
+                    }
+                });
+            });
         });
     }
 
@@ -864,10 +1171,18 @@ impl Home {
             _ => (t("Spenta", "Off"), th.subtext),
         };
         let mut top = vec![
-            Node::symbol("printer.fill", 18.0, Weight::Semibold, color).key("icon"),
+            Node::symbol("printer3d.fill", 18.0, Weight::Semibold, color).key("icon"),
             Node::column(vec![Node::text(name, th.font(), if unavailable { th.overlay } else { th.text }).key("name"), Node::text(text, th.small_font(), text_color).key("state")]).gap(2.0).key("names"),
             Node::spacer(),
         ];
+        let more = Node::row(vec![Node::symbol("chevron.right", 10.0, Weight::Bold, th.subtext)])
+            .size(22.0, 22.0)
+            .justify(Justify::Center)
+            .radius(6.0)
+            .background(th.surface.faded(0.7))
+            .click(rx.action("view:printer"))
+            .tip(t("Tutto sulla stampante", "All about the printer"))
+            .key("more");
         let mut rows = Vec::new();
         if let Some(status) = printing {
             let paused = status == "pause";
@@ -883,6 +1198,7 @@ impl Home {
             rows.push(Node::new(Kind::Progress { value: progress / 100.0, color: if paused { th.yellow } else { th.primary }, track: th.surface }).height(6.0).key("bar"));
             rows.push(Node::text(detail, th.small_font(), th.subtext).key("detail"));
         }
+        top.push(more);
         let mut children = vec![Node::row(top).gap(10.0).key("top")];
         if !rows.is_empty() {
             children.push(Node::column(rows).gap(6.0).padding(6.0, 0.0, 0.0, 0.0).key("progress"));
@@ -892,6 +1208,217 @@ impl Home {
             tile = tile.click(rx.action(&format!("tap:{id}")));
         }
         tile
+    }
+
+    /// The printer's popup: the job, the camera, temperatures, fans, filament and the rest.
+    fn printer_view(&self, rx: &Rx) -> Vec<Node> {
+        let th = rx.theme;
+        let p = &self.setup.printer;
+        let plug = self.states.get(&p.plug);
+        let name = self.setup.groups.iter().flat_map(|g| &g.entities).find(|d| d.id() == p.plug).and_then(custom_name).or_else(|| plug.and_then(|e| e.name()).map(String::from)).unwrap_or_else(|| t("Stampante 3D", "3D printer").to_string());
+        // Without a plug the printer's own sensors say whether it's on
+        let on = if p.plug.is_empty() { self.word("print_status").is_some_and(|s| s != "offline") } else { plug.is_some_and(|e| e.state == "on") };
+        let status = self.word("print_status").filter(|_| on).unwrap_or("offline");
+        let printing = PRINTING.contains(&status);
+        let color_of = |name: &str| th.color(name).unwrap_or(th.primary);
+        let small = th.small_font();
+
+        // The header: back to the dashboard, and the chamber light
+        let button = |symbol: &str, color: Rgba, action: &str, tip: &str| {
+            Node::row(vec![Node::symbol(symbol, 12.0, Weight::Bold, color)]).size(26.0, 24.0).justify(Justify::Center).radius(6.0).background(th.surface.faded(0.7)).click(rx.action(action)).tip(tip).key(action)
+        };
+        let mut header = vec![button("chevron.left", th.text, "view:home", t("Torna alla casa", "Back to the house")), Node::text(name, th.font(), th.text).max_width(WIDE - 80.0).key("name"), Node::spacer()];
+        if let Some((id, light)) = self.ids.get("chamber_light").zip(self.part("chamber_light")).filter(|_| on) {
+            let lit = light.state == "on";
+            let tip = if lit { t("Spegni la luce della camera", "Turn the chamber light off") } else { t("Accendi la luce della camera", "Turn the chamber light on") };
+            header.push(button(if lit { "lightbulb.fill" } else { "lightbulb" }, if lit { th.yellow } else { th.subtext }, &format!("tap:{id}"), tip));
+        }
+        let mut rows = vec![Node::row(header).gap(8.0).padding(0.0, 0.0, 2.0, 0.0).key("header")];
+
+        // The job
+        let (text, color) = match status {
+            "running" => (t("In stampa", "Printing"), th.primary),
+            "pause" => (t("In pausa", "Paused"), th.yellow),
+            "prepare" | "slicing" => (t("Si prepara a stampare", "Getting ready to print"), th.primary),
+            "finish" => (t("Stampa completata", "Print finished"), th.green),
+            "failed" => (t("Stampa non riuscita", "Print failed"), th.red),
+            "init" => (t("Si avvia", "Starting"), th.subtext),
+            "offline" if on => (t("Non raggiungibile", "Can't be reached"), th.overlay),
+            "offline" => (t("Spenta", "Off"), th.overlay),
+            _ => (t("Inattiva", "Idle"), th.subtext),
+        };
+        let stage = self.word("stage").filter(|s| printing && !["printing", "idle", "unknown", "offline"].contains(s)).map(stage_name);
+        let job = self.word("subtask_name").filter(|_| printing || ["finish", "failed"].contains(&status)).map(|n| n.replace('_', " "));
+        let picture = match self.cover.as_ref().filter(|_| job.is_some()) {
+            Some(path) => Node::image(path, 56.0, 56.0, None).radius(8.0).key("cover"),
+            None => Node::row(vec![Node::symbol("printer3d.fill", 26.0, Weight::Semibold, color)]).size(56.0, 56.0).justify(Justify::Center).radius(8.0).background(th.surface.faded(0.7)).key("cover"),
+        };
+        let progress = self.number("print_progress").unwrap_or(0.0).clamp(0.0, 100.0);
+        let room = WIDE - 20.0 - 56.0 - 10.0 - if printing { 58.0 } else { 0.0 };
+        let mut names = Vec::new();
+        if let Some(job) = &job {
+            names.push(Node::text(job, th.font(), th.text).max_width(room).key("job"));
+        }
+        names.push(Node::text(text, if job.is_some() { small.clone() } else { th.font() }, if color == th.primary { th.text } else { color }).key("status"));
+        if let Some(stage) = stage {
+            names.push(Node::text(stage, small.clone(), th.subtext).max_width(room).key("stage"));
+        }
+        let mut top = vec![picture, Node::column(names).gap(3.0).key("names"), Node::spacer()];
+        if printing {
+            top.push(Node::text(format!("{progress:.0}%"), th.font_with(Weight::Medium, 22.0), if status == "pause" { th.yellow } else { th.text }).key("percent"));
+        }
+        let mut hero = vec![Node::row(top).gap(10.0).key("top")];
+        let line = |left: Option<String>, right: Option<String>, key: &str| {
+            Node::row(vec![Node::text(left.unwrap_or_default(), small.clone(), th.subtext).key("left"), Node::spacer(), Node::text(right.unwrap_or_default(), small.clone(), th.subtext).key("right")]).key(key)
+        };
+        let at = |key: &str| self.word(key).and_then(crate::time::iso8601).map(crate::time::clock);
+        if printing {
+            hero.push(Node::new(Kind::Progress { value: progress / 100.0, color: if status == "pause" { th.yellow } else { th.primary }, track: th.surface }).height(6.0).key("bar"));
+            let left = self.number("remaining_time").filter(|h| *h > 0.0).map(|h| crate::time::span((h * 60.0).round() * 60.0));
+            let ends = at("end_time").or_else(|| self.number("remaining_time").filter(|h| *h > 0.0).map(|h| crate::time::clock(crate::time::now() + h * 3600.0)));
+            hero.push(line(left.map(|s| t(&format!("ancora {s}"), &format!("{s} left")).to_string()), ends.map(|c| t(&format!("finisce alle {c}"), &format!("ends at {c}")).to_string()), "time"));
+            let layer = self.number("current_layer").zip(self.number("total_layers")).filter(|(_, total)| *total > 0.0).map(|(l, total)| t(&format!("strato {l:.0} di {total:.0}"), &format!("layer {l:.0} of {total:.0}")).to_string());
+            hero.push(line(layer, at("start_time").map(|c| t(&format!("iniziata alle {c}"), &format!("started at {c}")).to_string()), "layer"));
+        } else if status == "finish" {
+            hero.push(line(at("start_time").map(|c| t(&format!("iniziata alle {c}"), &format!("started at {c}")).to_string()), at("end_time").map(|c| t(&format!("finita alle {c}"), &format!("finished at {c}")).to_string()), "time"));
+        }
+        let tile = |children: Vec<Node>, color: Rgba, lit: bool, key: &str| Node::column(children).gap(6.0).padding(10.0, 10.0, 10.0, 10.0).width(WIDE).radius(10.0).background(th.tile(color, lit)).key(key);
+        rows.push(tile(hero, color, printing, "job"));
+
+        // What goes wrong
+        let hms = self.part("hms").filter(|e| e.state == "on").map(|e| e.num("Count").unwrap_or(1.0) as i64);
+        let mut errors = Vec::new();
+        if self.word("print_error") == Some("on") {
+            errors.push(t("Errore di stampa", "Print error").to_string());
+        }
+        match hms {
+            Some(1) => errors.push(t("Un avviso della stampante", "A warning from the printer").to_string()),
+            Some(n) => errors.push(t(&format!("{n} avvisi della stampante"), &format!("{n} warnings from the printer")).to_string()),
+            None => {}
+        }
+        if !errors.is_empty() && on {
+            rows.push(tile(vec![Node::row(vec![Node::symbol("exclamationmark.triangle.fill", 12.0, Weight::Bold, th.red).key("icon"), Node::text(errors.join(" · "), th.font(), th.red).max_width(WIDE - 44.0).key("text")]).gap(8.0).key("row")], th.red, true, "errors"));
+        }
+        if !on {
+            return rows;
+        }
+
+        if let Some(path) = &self.camera {
+            rows.push(Node::image(path, WIDE, 0.0, None).radius(10.0).key("camera"));
+        }
+
+        // Nozzle and bed: now, the target, and the last minutes
+        let gauge = |key: &str, symbol: &str, label: &str, color: Rgba, pick: fn(&(u64, f64, f64)) -> f64| {
+            let now = self.number(&format!("{key}_temp"))?;
+            let target = self.number(&format!("target_{key}_temp")).filter(|v| *v > 0.0);
+            let top = self.temps.iter().map(pick).fold(target.unwrap_or(0.0).max(now), f64::max).max(40.0);
+            let bar = (TILE - 20.0 - (SAMPLES - 1) as f64 * 1.5) / SAMPLES as f64;
+            let graph = self.temps.iter().map(|r| Node::default().size(bar, (2.0 + (GRAPH - 2.0) * (pick(r) / top).clamp(0.0, 1.0)).round()).radius(1.0).background(color).key(format!("bar-{}", r.0))).collect();
+            let heading = Node::row(vec![
+                Node::row(vec![Node::symbol(symbol, 10.0, Weight::Bold, color)]).width(14.0).justify(Justify::Center).key("icon"),
+                Node::text(label, small.clone(), th.subtext).key("label"),
+                Node::spacer(),
+                Node::text(target.map(|v| format!("→ {v:.0}°")).unwrap_or_default(), small.clone(), th.subtext).key("target"),
+            ])
+            .gap(4.0)
+            .height(14.0)
+            .key("top");
+            Some(
+                Node::column(vec![heading, Node::text(format!("{now:.0}°"), th.font_with(Weight::Medium, 15.0), th.text).key("value"), Node::row(graph).gap(1.5).justify(Justify::End).align(Align::End).height(GRAPH).key("graph")])
+                    .gap(4.0)
+                    .padding(9.0, 10.0, 9.0, 10.0)
+                    .width(TILE)
+                    .radius(10.0)
+                    .background(th.tile(color, target.is_some()))
+                    .key(key.to_string()),
+            )
+        };
+        let gauges: Vec<Node> = [gauge("nozzle", "flame.fill", t("UGELLO", "NOZZLE"), color_of("peach"), |r| r.1), gauge("bed", "square.3.layers.3d.down.right", t("PIATTO", "BED"), color_of("yellow"), |r| r.2)].into_iter().flatten().collect();
+        if !gauges.is_empty() {
+            rows.push(Node::row(gauges).gap(GAP).align(Align::Stretch).key("temperatures"));
+        }
+
+        // The fans, two in a row
+        let fans: Vec<Node> = [("cooling_fan_speed", t("Raffreddamento", "Part cooling")), ("aux_fan_speed", t("Ausiliaria", "Auxiliary")), ("chamber_fan_speed", t("Camera", "Chamber")), ("heatbreak_fan_speed", "Heatbreak")]
+            .into_iter()
+            .filter_map(|(key, label)| {
+                let v = self.number(key)?.clamp(0.0, 100.0);
+                let color = if v > 0.0 { color_of("teal") } else { th.overlay };
+                Some(
+                    Node::column(vec![
+                        Node::row(vec![Node::text(label, small.clone(), th.subtext).key("label"), Node::spacer(), Node::text(format!("{v:.0}%"), small.clone(), if v > 0.0 { th.text } else { th.subtext }).key("value")]).key("top"),
+                        Node::new(Kind::Progress { value: v / 100.0, color, track: th.surface }).height(4.0).key("bar"),
+                    ])
+                    .gap(4.0)
+                    .width((WIDE - 20.0 - 12.0) / 2.0)
+                    .key(key),
+                )
+            })
+            .collect();
+        if !fans.is_empty() {
+            let mut lines = vec![Node::row(vec![Node::row(vec![Node::symbol("fan.fill", 10.0, Weight::Bold, color_of("teal"))]).width(14.0).justify(Justify::Center).key("icon"), Node::text(t("VENTOLE", "FANS"), small.clone(), th.subtext).key("label")]).gap(4.0).height(14.0).key("top")];
+            let mut fans = fans.into_iter();
+            while let Some(first) = fans.next() {
+                let key = format!("row-{}", first.key.clone().unwrap_or_default());
+                lines.push(Node::row([Some(first), fans.next()].into_iter().flatten().collect()).gap(12.0).key(key));
+            }
+            rows.push(tile(lines, th.subtext, false, "fans").gap(8.0));
+        }
+
+        // The filament in use, and how much of it this print takes
+        if let Some(tray) = self.part("active_tray").filter(|e| !e.state.eq_ignore_ascii_case("empty")) {
+            let attr = |k: &str| tray.attributes.get(k).and_then(Value::as_str).filter(|v| !v.is_empty());
+            let dot = attr("color").and_then(Rgba::parse).unwrap_or(th.overlay);
+            let mut what = vec![Node::text(&tray.state, th.font(), th.text).max_width(WIDE - 150.0).key("name")];
+            let remain = tray.num("remain").filter(|r| *r >= 0.0).map(|r| t(&format!("ne resta il {r:.0}%"), &format!("{r:.0}% left")).to_string());
+            let kind = [attr("type").filter(|k| !tray.state.contains(k)).map(String::from), remain].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+            if !kind.is_empty() {
+                what.push(Node::text(kind, small.clone(), th.subtext).key("type"));
+            }
+            let used = [self.number("print_weight").filter(|g| *g > 0.0).map(|g| format!("{} g", decimal(g, if g < 100.0 { 1 } else { 0 }))), self.number("print_length").filter(|m| *m > 0.0).map(|m| format!("{} m", decimal(m, 2)))]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ");
+            rows.push(tile(
+                vec![Node::row(vec![Node::default().size(14.0, 14.0).radius(7.0).background(dot).border(1.0, th.surface).key("color"), Node::column(what).gap(2.0).key("what"), Node::spacer(), Node::text(used, small.clone(), th.subtext).key("used")]).gap(10.0).key("row")],
+                dot,
+                false,
+                "filament",
+            ));
+        }
+
+        // The rest, a line each
+        let speed = self.part("speed_profile").map(|e| {
+            let name = match e.state.as_str() {
+                "silent" => t("Silenziosa", "Silent").to_string(),
+                "standard" => "Standard".to_string(),
+                "sport" => "Sport".to_string(),
+                "ludicrous" => "Ludicrous".to_string(),
+                other => pretty(other),
+            };
+            match e.num("modifier") {
+                Some(m) => format!("{name} · {m:.0}%"),
+                None => name,
+            }
+        });
+        let nozzle = [self.number("nozzle_diameter").map(|d| format!("{} mm", decimal(d, 1))), self.word("nozzle_type").map(material)].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+        let facts = [
+            (t("Velocità", "Speed"), speed),
+            (t("Ugello", "Nozzle"), Some(nozzle).filter(|n| !n.is_empty())),
+            (t("Piatto", "Plate"), self.word("print_bed_type").map(material)),
+            (t("Camera", "Chamber"), self.number("chamber_temp").map(|v| format!("{v:.0}°"))),
+            ("Wi-Fi", self.number("wifi_signal").map(|v| format!("{v:.0} dBm"))),
+            (t("Ore di stampa", "Hours printed"), self.number("total_usage_hours").map(|h| format!("{h:.0} h"))),
+        ];
+        let facts: Vec<Node> = facts
+            .into_iter()
+            .filter_map(|(label, value)| Some(Node::row(vec![Node::text(label, small.clone(), th.subtext).key("label"), Node::spacer(), Node::text(value?, small.clone(), th.text).max_width(WIDE - 110.0).key("value")]).key(format!("fact-{label}"))))
+            .collect();
+        if !facts.is_empty() {
+            rows.push(tile(facts, th.subtext, false, "facts"));
+        }
+        rows
     }
 
     /// A script or a scene.
@@ -938,6 +1465,9 @@ impl Widget for Home {
         }
         self.connect(cx);
         cx.every::<Home>(PING, |w, cx| w.ping(cx));
+        if !self.setup.printer.status.is_empty() {
+            cx.every::<Home>(SAMPLE, |w, cx| w.sample(cx));
+        }
     }
 
     fn bar(&self, rx: &Rx) -> Option<Node> {
@@ -959,10 +1489,15 @@ impl Widget for Home {
         let mut pills = Vec::new();
         if let Some(status) = self.printing().filter(|_| online) {
             let color = if status == "pause" { th.yellow } else { th.text };
-            let (progress, _) = self.printer_progress();
-            pills.push(rx.pill(vec![Node::symbol("printer.fill", th.icon_size, Weight::Semibold, color).key("icon"), Node::text(format!("{progress:.0}%"), th.font(), color).key("percent")]).key("printer").click(rx.toggle_popup()));
+            let (progress, minutes) = self.printer_progress();
+            let mut pill = vec![Node::symbol("printer3d.fill", th.icon_size, Weight::Semibold, color).key("icon"), Node::text(format!("{progress:.0}%"), th.font(), color).key("percent")];
+            // How long is left is the first thing to go
+            if let Some(m) = minutes.filter(|m| *m > 0.0 && !rx.slim) {
+                pill.push(Node::text(crate::time::span(m * 60.0), th.font(), th.subtext).key("left"));
+            }
+            pills.push(rx.pill(pill).key("printer").click(rx.action("open:printer")));
         }
-        pills.push(rx.pill(home).key("home").click(rx.toggle_popup()));
+        pills.push(rx.pill(home).key("home").click(rx.action("open:home")));
         Some(Node::row(pills).gap(th.item_gap).height(th.pill_height).key(rx.name))
     }
 
@@ -971,6 +1506,7 @@ impl Widget for Home {
         let mut rows: Vec<Node> = Vec::new();
         let message = |text: &str, key: &str| Node::row(vec![Node::text(text, th.font(), th.subtext)]).padding(6.0, 10.0, 6.0, 10.0).key(key);
         match self.online {
+            Some(true) if self.view == View::Printer && !self.setup.printer.status.is_empty() => rows.extend(self.printer_view(rx)),
             Some(true) => {
                 for (g, group) in self.setup.groups.iter().enumerate() {
                     if !group.title.is_empty() {
@@ -1049,10 +1585,21 @@ impl Widget for Home {
             }
             return;
         }
+        let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
+        if let "open" | "view" = kind {
+            let view = if rest == "printer" { View::Printer } else { View::Home };
+            // A pill opens the popup on its view, or switches the open one to it
+            if kind == "open" && !(cx.popup_open && self.view != view) {
+                self.view = view;
+                return cx.toggle_popup();
+            }
+            self.view = view;
+            self.entered(cx);
+            return cx.redraw();
+        }
         if self.mock {
             return;
         }
-        let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
         match kind {
             "tap" => self.tap(rest, cx),
             // Never without a value: 0 would turn the light off
@@ -1077,10 +1624,21 @@ impl Widget for Home {
     }
 
     fn event(&mut self, event: &Event, cx: &mut Cx) {
+        // `msg trigger home_view view=printer`: what the popup shows when it opens
+        if let Event::Trigger { name, args } = event
+            && name == "home_view"
+        {
+            self.view = if args.get("view").is_some_and(|v| v == "printer") { View::Printer } else { View::Home };
+            if cx.popup_open {
+                self.entered(cx);
+            }
+            return cx.redraw();
+        }
         if self.mock || self.setup.server.trim().is_empty() {
             return;
         }
         match event {
+            Event::PopupOpened => self.entered(cx),
             // After sleep the connection is gone, though nothing says so until the next ping
             Event::Wake => {
                 self.failures = 0;
@@ -1091,7 +1649,10 @@ impl Widget for Home {
                 self.failures = 0;
                 self.connect(cx);
             }
-            Event::PopupClosed => self.notes.retain(|_, n| !matches!(n, Note::ConfirmOff | Note::Printing)),
+            Event::PopupClosed => {
+                self.watching += 1;
+                self.notes.retain(|_, n| !matches!(n, Note::ConfirmOff | Note::Printing));
+            }
             _ => {}
         }
     }
@@ -1151,6 +1712,30 @@ mod tests {
     }
 
     #[test]
+    fn printer_entities() {
+        let table: toml::Table = toml::from_str("groups = [{ entities = [\"light.x\"] }]\n[printer]\nstatus = \"sensor.stato\"\nprogress = \"sensor.avanzamento\"").unwrap();
+        let mut h = Home::new(&Options(table));
+        let entry = |id: &str, device: &str, unique: &str| json!({"entity_id": id, "device_id": device, "unique_id": unique, "disabled_by": null});
+        let list = json!([
+            entry("sensor.stato", "d1", "SERIAL_print_status"),
+            entry("sensor.avanzamento", "d1", "SERIAL_print_progress"),
+            entry("sensor.ugello", "d1", "SERIAL_nozzle_temp"),
+            entry("sensor.ugello_target", "d1", "SERIAL_target_nozzle_temp"),
+            entry("sensor.altro", "d1", "SERIAL_something_else"),
+            entry("sensor.other_nozzle", "d2", "OTHER_nozzle_temp"),
+            json!({"entity_id": "sensor.piatto", "device_id": "d1", "unique_id": "SERIAL_bed_temp", "disabled_by": "user"}),
+        ]);
+        assert_eq!(h.discover(&list), vec!["sensor.ugello", "sensor.ugello_target"]);
+        assert_eq!(h.ids["nozzle_temp"], "sensor.ugello");
+        assert_eq!(h.ids["target_nozzle_temp"], "sensor.ugello_target");
+        assert!(!h.ids.contains_key("bed_temp"));
+        // Not of this integration: nothing to find
+        let mut h = Home::new(&Options(toml::from_str("[printer]\nstatus = \"sensor.stato\"").unwrap()));
+        assert!(h.discover(&json!([entry("sensor.stato", "d1", "abc")])).is_empty());
+        assert_eq!(stage_name("some_new_stage"), "Some new stage");
+    }
+
+    #[test]
     fn options() {
         let table: toml::Table = toml::from_str(
             r#"
@@ -1167,6 +1752,7 @@ mod tests {
         let h = Home::new(&Options(table));
         assert_eq!(h.base(), "http://ha.local:8123");
         assert_eq!(h.entities(), vec!["light.a", "switch.b", "sensor.s"]);
+        assert_eq!(h.ids["print_status"], "sensor.s");
         assert_eq!(degrees(24.0).trim_end_matches('°'), "24");
         assert!(degrees(26.46).starts_with("26"));
     }

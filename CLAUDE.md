@@ -39,7 +39,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   (niente di quello che c'è dietro) su uno sfondo neutro, dalla barra coi dati finti in inglese e
   ogni widget nel layout, più la finestra delle impostazioni (`settings` da solo la rifà); il mouse
   sullo schermo principale. Apre i popup delle chat su una chat e quello di `network` coi
-  Dettagli (`msg trigger network_details`). Prende solo `target/RustyBar.app`, mai la barra vera. Guardali tutti
+  Dettagli (`msg trigger network_details`); `printer` è il popup di `home` sulla stampante
+  (`MORE`). Prende solo `target/RustyBar.app`, mai la barra vera. Guardali tutti
   prima di usarli.
 - `scripts/measure.py [PID] [SECONDI]`: memoria, CPU e processi avviati da RustyBar (e da SketchyBar,
   se gira), per confrontarle.
@@ -60,7 +61,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `App::bar_tree`, che disegna una forma solo quando serve misurarla).
 - `surface.rs`, `ui/` (`node.rs` albero dichiarativo, `layout.rs` flexbox, `render.rs` diff dei
   layer con animazioni implicite), `gfx.rs` (testo, SF Symbols e icone in bitmap, più i simboli
-  che SF Symbols non ha, disegnati lì su pixel interi: `magictrackpad.fill`, `magickeyboard.fill`;
+  che SF Symbols non ha, disegnati lì su pixel interi: `magictrackpad.fill`, `magickeyboard.fill`,
+  `printer3d.fill`;
   con cache a due
   generazioni ripulita dopo ogni render, e del tutto quando un popup si chiude, insieme alle pagine
   libere di malloc), `theme.rs`, `palette.rs` (i colori di un'immagine in Oklab e un tema fatto
@@ -955,6 +957,38 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   attribuiti (`heap` senza MallocStackLogging non dice di chi sono 11 MB di allocazioni Rust).
   Sulla barra vera dal 24/11/2026, 14:39: gli oggetti restano 1 in 90 s; due minuti dopo
   l'avvio 32 MB in 2 processi. Da rimisurare dopo qualche ora: deve restare lì.
+- Stampante 3D di `home` (chiesto dall'utente: icona da stampante 3D, il tempo che manca nella
+  pill, un popup suo con tutto). Icona `printer3d.fill` disegnata in `gfx` (portale su due gambe,
+  testina con l'ugello sulla traversa, pezzo sul piatto staccato dal fondo), scelta dall'utente fra
+  tre: la prima, una scatola aperta, a 1x si leggeva come una H. Pill: icona, `45%` e, se c'è
+  spazio, `1 h 20 min` (`home` primo di `slim_first`); il clic apre il popup della stampante
+  (`open:printer`), quello sul logo la plancia (`open:home`); col popup già aperto una pill passa
+  all'altra pagina. Popup (`View::Printer`, anche dalla freccia sul riquadro; `‹` torna alla casa,
+  lampadina della luce della camera in alto): lavoro (immagine del modello, nome, stato o fase,
+  avanzamento, tempo, fine, strato, inizio), un fotogramma della videocamera ogni 5 s, ugello e
+  piatto con target e gli ultimi 5 minuti (una lettura ogni 10 s, tenute anche a popup chiuso),
+  ventole, filamento, velocità, ugello, piatto, Wi-Fi, ore, errori in rosso. Pausa, stop e velocità
+  apposta no: un clic sbagliato rovina una stampa. Le entità oltre a `status`, `progress` e
+  `remaining` vengono dal registro (`config/entity_registry/list` una volta dopo `auth_ok`): quelle
+  dello stesso device con lo unique id che finisce come `KEYS` (l'integrazione Bambu Lab fa
+  `<seriale>_<chiave>`, in ogni lingua); `printer.entities` le nomina a mano. Ridisegnano solo il
+  popup aperto (`base` sono le entità che vedono barra e Lua). Videocamera (`/api/camera_proxy`)
+  e immagine del modello (`/api/image_proxy`, quando cambia) col token, in
+  `~/Library/Caches/rustybar`, un file per fotogramma (un'immagine si disegna una volta per
+  percorso), il vecchio tolto. `msg trigger home_view view=printer|home`. Dati finti in
+  `home.json` più due immagini disegnate in `examples/mock/home/`; nuovo `printer.png` nel README.
+  Provato coi dati finti sulla barra di prova (popup intero, clic veri su pill, pill della casa col
+  popup aperto, freccia e `‹`) e dal vero sulla barra di prova con la P1S dell'utente: entità
+  trovate tutte (la P1S non ha la temperatura della camera), videocamera, immagine del modello,
+  pausa (pill gialla), stampa annullata (`failed`: pill via, popup `Stampa non riuscita`). Solo
+  `home` sui dati veri: 20 MB, 0,07% CPU a riposo; popup della stampante aperto 27 MB, 0,58%
+  (13 fotogrammi al minuto); chiuso di nuovo 21 MB; 0 processi. Sulla barra vera dal 24/11/2026
+  (build dell'albero di lavoro, col lavoro non committato delle altre sessioni), con una stampa
+  vera: `2%  7 h 0 min` sull'Odyssey, `2%` (slim) sul MQ16AHE; dopo 7 minuti 36 MB in 2
+  processi, 0,40% CPU. `measure.py` nel minuto in cui `claude` legge conta anche i suoi processi,
+  memoria compresa (63 MB, 14 processi): non sono della barra. Da provare con l'utente: la luce
+  della camera (cambia lo stato reale), il clic sulla pill vera, una stampa che finisce
+  (`finish`, orari), gli avvisi HMS e l'errore di stampa, la stampante spenta dalla presa.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

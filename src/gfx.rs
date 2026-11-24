@@ -359,8 +359,8 @@ fn symbol_image(name: &str, size: f64, weight: Weight) -> Option<Retained<NSImag
 /// `laptopcomputer+speaker.wave.2.fill+mic.fill` is a symbol with badges: the others, small, at
 /// its bottom right, cut out of it with a gap around them (a Mac that plays and records).
 ///
-/// `magictrackpad.fill` and `magickeyboard.fill` aren't SF Symbols: they're drawn here (see
-/// `drawn_symbol`), without badges.
+/// `magictrackpad.fill`, `magickeyboard.fill` and `printer3d.fill` aren't SF Symbols: they're
+/// drawn here (see `drawn_symbol`), without badges.
 pub fn symbol(name: &str, size: f64, weight: Weight, color: Rgba, scale: f64) -> Option<Bitmap> {
     let key = Key::Symbol(name.to_string(), (size * 100.0) as u32, weight, color.key(), (scale * 100.0) as u32);
     cached(key, || {
@@ -430,7 +430,8 @@ type Draw = fn(&CGContext, f64, Weight);
 /// The symbols SF Symbols doesn't have, drawn in the style of its `magicmouse.fill` and about as
 /// big as a symbol of `size` points: Apple's Magic Trackpad, a pad with the Apple logo cut out low
 /// as on the mouse, and Magic Keyboard, with its half-height function keys and the arrows as an
-/// inverted T. On whole pixels, so they stay sharp on a screen at 1x too: the unit is `size / 14`
+/// inverted T; and a 3D printer, a gantry on two legs, with the head on its rail over what it prints
+/// on the bed. On whole pixels, so they stay sharp on a screen at 1x too: the unit is `size / 14`
 /// rounded to pixels, and every key is a whole number of units (2 wide, 1 apart). Their unit, size
 /// and how to draw them.
 fn drawn_symbol(name: &str, size: f64, scale: f64) -> Option<(f64, f64, f64, Draw)> {
@@ -438,6 +439,7 @@ fn drawn_symbol(name: &str, size: f64, scale: f64) -> Option<(f64, f64, f64, Dra
     match name {
         "magictrackpad.fill" => Some((u, 17.0 * u, 12.0 * u, magic_trackpad)),
         "magickeyboard.fill" => Some((u, 21.0 * u, 14.0 * u, magic_keyboard)),
+        "printer3d.fill" => Some((u, 16.0 * u, 15.0 * u, printer_3d)),
         _ => None,
     }
 }
@@ -453,6 +455,26 @@ fn magic_trackpad(ctx: &CGContext, u: f64, weight: Weight) {
     let place = NSRect::new(CGPoint::new(8.5 * u - width / 2.0, 3.7 * u - height / 2.0), CGSize::new(width, height));
     logo.drawInRect_fromRect_operation_fraction(place, NSRect::ZERO, objc2_app_kit::NSCompositingOperation::DestinationOut, 1.0);
     NSGraphicsContext::restoreGraphicsState_class();
+}
+
+fn printer_3d(ctx: &CGContext, u: f64, _: Weight) {
+    // In units from the bottom left: x, y, width, height. The frame is 2 units thick, its top
+    // corners cut by one; the rail runs across under the top, the bed above the legs, a unit
+    // apart from what it holds so the print doesn't melt into it
+    let parts: [(f64, f64, f64, f64); 9] = [
+        (1.0, 14.0, 14.0, 1.0),  // the top, with its corners cut
+        (0.0, 13.0, 16.0, 1.0),
+        (0.0, 0.0, 2.0, 13.0),   // the sides, down to the legs
+        (14.0, 0.0, 2.0, 13.0),
+        (2.0, 10.0, 12.0, 1.0),  // the rail
+        (6.0, 9.0, 4.0, 3.0),    // the head on it
+        (7.0, 8.0, 2.0, 1.0),    // its nozzle
+        (5.0, 4.0, 6.0, 2.0),    // the print
+        (2.0, 2.0, 12.0, 1.0),   // the bed
+    ];
+    for (x, y, w, h) in parts {
+        CGContext::fill_rect(Some(ctx), CGRect::new(CGPoint::new(x * u, y * u), CGSize::new(w * u, h * u)));
+    }
 }
 
 fn magic_keyboard(ctx: &CGContext, u: f64, _: Weight) {
