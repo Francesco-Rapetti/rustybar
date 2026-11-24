@@ -88,14 +88,18 @@ def save(name, left, top, right, bottom, pills, popup=None):
         canvas.alpha_composite(img, (px - left, py - top))
     canvas.convert("RGB").save(os.path.join(OUT, f"{name}.png"), optimize=True)
 
-# What opens the popup of a widget on more than its first page: the chat widgets' on a chat
-OPEN = {"whatsapp": ["trigger", "whatsapp_chat", "chat=Thursday"], "telegram": ["trigger", "telegram_chat", "chat=Irene"],
-        "slack": ["trigger", "slack_chat", "chat=#launch"], "teams": ["trigger", "teams_chat", "chat=Quarterly"]}
+# What opens the popup of a widget on more than its first page: the chat widgets' on a chat, and
+# network's with its details
+OPEN = {"whatsapp": [["trigger", "whatsapp_chat", "chat=Thursday"]], "telegram": [["trigger", "telegram_chat", "chat=Irene"]],
+        "slack": [["trigger", "slack_chat", "chat=#launch"]], "teams": [["trigger", "teams_chat", "chat=Quarterly"]],
+        "network": [["popup", "network"], ["trigger", "network_details"]]}
 
 os.makedirs(OUT, exist_ok=True)
 for name in [n for n in sys.argv[2:] if n != "settings"] or ([] if sys.argv[2:] else list(pos)):
     x, y, w, h = pos[name]
-    subprocess.run([RB, "msg", *OPEN.get(name, ["popup", name])], capture_output=True)
+    for command in OPEN.get(name, [["popup", name]]):
+        subprocess.run([RB, "msg", *command], capture_output=True)
+        time.sleep(0.3)
     time.sleep(1.6)
     # A popup hangs under its widget; another window is one still closing
     extra = [v for v in windows() if v[0] not in bars and v[1] < x + w and v[1] + v[3] > x and v[2] < y + h + 60]

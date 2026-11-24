@@ -38,7 +38,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
 - `scripts/screenshots.py`: gli screenshot del README in `docs/screenshots`, finestra per finestra
   (niente di quello che c'è dietro) su uno sfondo neutro, dalla barra coi dati finti in inglese e
   ogni widget nel layout, più la finestra delle impostazioni (`settings` da solo la rifà); il mouse
-  sullo schermo principale. Prende solo `target/RustyBar.app`, mai la barra vera. Guardali tutti
+  sullo schermo principale. Apre i popup delle chat su una chat e quello di `network` coi
+  Dettagli (`msg trigger network_details`). Prende solo `target/RustyBar.app`, mai la barra vera. Guardali tutti
   prima di usarli.
 - `scripts/measure.py [PID] [SECONDI]`: memoria, CPU e processi avviati da RustyBar (e da SketchyBar,
   se gira), per confrontarle.
@@ -866,6 +867,12 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   sulla barra di prova, due schermi senza notch, con notifiche di `osascript`: pill assente che
   compare e cresce (prima no), pill presente che cresce. Da provare con l'utente: il suono
   (non lo sento), il link alle Impostazioni, lo stile Nessuno.
+- Screenshot del README rifatti tutti il 24/11/2026 (chiesto dall'utente), dalla stessa barra:
+  dati finti, inglese, `catppuccin-mocha` senza vetro, due schermi senza notch, ogni widget nel
+  layout con `notch = false` per le chat e `apps` = Slack e Mail (Slack ha il suo widget, quindi
+  in `notifications` resta Mail). Prima erano di giorni e temi diversi (`network` era nel tema
+  `macos` con l'accento rosso). Nuovi `slack.png` e `teams.png`. Guardati tutti. L'orologio è
+  quello vero del momento.
 - Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
   sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
   (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del

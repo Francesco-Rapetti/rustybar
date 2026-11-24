@@ -1144,6 +1144,8 @@ impl Widget for Network {
     fn event(&mut self, event: &Event, cx: &mut Cx) {
         match event {
             Event::Wake => self.read(cx),
+            // `msg trigger network_details`: the details open or closed, as with a click
+            Event::Trigger { name, .. } if name == "network_details" => self.action("details", None, cx),
             Event::PopupOpened => {
                 self.ticking += 1;
                 self.ticks = 0;
