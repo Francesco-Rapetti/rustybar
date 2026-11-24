@@ -853,6 +853,19 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   due volte), una notifica finta di `osascript` (Script Editor: titolo, sottotitolo, testo,
   conto 1), Mail col suo conto nella notte. Da provare: il notice di un'app qualunque, molte
   app nell'ala dell'isola, un'app col badge e senza notifiche.
+- Notice dei widget delle chat, chiesto dall'utente il 24/11/2026: (1) senza notch la pill non
+  cresceva a una notifica: il widget chiede il notice prima del ridisegno (`cx.notice()` poi
+  `cx.redraw()`), e `Effect::Notice` aspettava solo con la barra già `dirty`, quindi partiva
+  subito su una barra senza ancora la pill e si perdeva; ora aspetta sempre 0,05 s. (2) Notifica
+  di sistema e notice insieme: `notice = false` lascia solo il conto; l'altra metà è di macOS
+  (stile Nessuno per l'app, Centro Notifiche acceso): una campanella nel popup apre la pagina
+  (`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=<bundle>`), non
+  cambiamo noi le impostazioni di sistema. (3) `sound = "Tink"`: `NSSound` per nome, col
+  notice. Imparato: macOS scrive la notifica nel database quando il banner esce (~5 s), quindi
+  il notice arriva 5–7 s dopo; senza banner dovrebbe scriverla subito (non provato). Provato
+  sulla barra di prova, due schermi senza notch, con notifiche di `osascript`: pill assente che
+  compare e cresce (prima no), pill presente che cresce. Da provare con l'utente: il suono
+  (non lo sento), il link alle Impostazioni, lo stile Nessuno.
 - Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
   sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
   (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del

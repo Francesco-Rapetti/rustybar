@@ -369,6 +369,11 @@ pub struct WhatsApp {
     notch: bool,
     hover: bool,
     always: bool,
+    /// A new message grows the island or the pill for a moment; off, the count alone changes
+    /// (for who has the app's own notification).
+    notice: bool,
+    /// The system sound that goes with it, by name (`Tink`); none without.
+    sound: Option<String>,
     state: State,
     chats: Vec<Chat>,
     /// The chats read here, by jid, with the id of their last message then: out of the count
@@ -533,6 +538,8 @@ impl WhatsApp {
             notch: options.bool("notch").unwrap_or(true),
             hover: options.bool("hover").unwrap_or(true),
             always: options.bool("always").unwrap_or(false),
+            notice: options.bool("notice").unwrap_or(true),
+            sound: options.str("sound").map(str::trim).filter(|s| !s.is_empty()).map(String::from),
             state: State::Loading,
             chats: Vec::new(),
             seen,
@@ -721,15 +728,26 @@ impl WhatsApp {
         };
         if let (Some(before), Some((id, jid))) = (self.newest, last)
             && id > before
+            && self.notice
         {
             self.arrival = Some(Arrival { jid, id, at: time::now() });
             self.share(cx);
             cx.notice();
+            self.ring();
         } else {
             self.share(cx);
         }
         self.newest = Some(self.newest.unwrap_or(0).max(highest));
         cx.redraw();
+    }
+
+    /// The sound of a new message, if one is chosen: one of macOS's, by name.
+    fn ring(&self) {
+        let Some(name) = &self.sound else { return };
+        match objc2_app_kit::NSSound::soundNamed(&NSString::from_str(name)) {
+            Some(sound) => drop(sound.play()),
+            None => crate::log(&format!("{}: no sound called {name} (see /System/Library/Sounds)", self.service.key())),
+        }
     }
 
     /// The chat `jid` is on show: Telegram downloads what its messages show.
@@ -923,7 +941,22 @@ impl WhatsApp {
             .hover(th.highlight)
             .tip(format!("{} {}", t("Apri", "Open"), self.service.name()))
             .key("app");
-        let mut rows = vec![rx.section(self.service.name(), Some(open_app)).key("title")];
+        // For who wants the bar's notice alone: where macOS turns the app's banners off
+        let banners = Node::row(vec![Node::symbol("bell.badge", 12.0, Weight::Semibold, th.subtext).key("symbol")])
+            .size(24.0, 22.0)
+            .justify(Justify::Center)
+            .radius(6.0)
+            .click(Action::Open(format!("x-apple.systempreferences:com.apple.Notifications-Settings.extension?id={}", self.service.bundle())))
+            .hover(th.highlight)
+            .tip(format!(
+                "{} {} {}",
+                t("Le notifiche di", "The notifications of"),
+                self.service.name(),
+                t("in Impostazioni: con lo stile Nessuno e Centro Notifiche acceso arrivano solo qui", "in Settings: with the style None and Notification Center on they come only here")
+            ))
+            .key("banners");
+        let buttons = if self.service.notified().is_some() { Node::row(vec![banners, open_app]).gap(2.0).key("buttons") } else { open_app };
+        let mut rows = vec![rx.section(self.service.name(), Some(buttons)).key("title")];
         let note = |symbol: &str, color: Rgba, lines: Vec<String>| {
             let font = th.small_font();
             let text: Vec<Node> = lines.iter().flat_map(|l| wrap(l, &font, WIDTH - 60.0)).enumerate().map(|(i, l)| Node::text(l, font.clone(), th.subtext).key(format!("l{i}"))).collect();

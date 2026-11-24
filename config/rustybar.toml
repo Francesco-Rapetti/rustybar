@@ -99,6 +99,8 @@ large_width = 3840        # from this width a screen is "large"
 # notch = true            # in the notch on a screen that has one; false, a pill there too
 # hover = true            # under the mouse, the chats that wait
 # always = false          # in the bar with nothing unread too
+# notice = true           # a new message grows the island or the pill for a moment
+# sound = "Tink"          # with one of macOS's sounds, by name (/System/Library/Sounds)
 #
 # [widgets.telegram]      # not in the layout above; the same as whatsapp, with the same options,
 # channels = false        # and the channels too. First, in Terminal: rustybar telegram login

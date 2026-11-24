@@ -516,12 +516,12 @@ impl App {
                     self.toggle_popup(widget, display);
                 }
                 // Once the bar is drawn as it is now: what asks for it may be what puts the widget
-                // in the bar (the first unread message)
-                Effect::Notice if self.dirty => {
+                // in the bar (the first unread message), and the widget asks to be drawn after it
+                // asks this
+                Effect::Notice => {
                     let widget = widget.to_string();
                     runtime::after(0.05, move |app| app.notice(&widget));
                 }
-                Effect::Notice => self.notice(widget),
                 Effect::Focus => {
                     if self.popup.as_ref().is_some_and(|p| p.widget == widget)
                         && let Some(field) = &self.field

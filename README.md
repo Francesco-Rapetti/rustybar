@@ -434,6 +434,9 @@ wrote last on the left, the count on the right), and a sign with the count in th
 while something plays. A new message grows the island for 3 seconds, with who wrote, the group and
 the first two lines (`preview = false`: only who wrote); a click there opens the chat. Under the
 mouse it grows with the chats that wait (`hover = false`: no). `notch = false` keeps it a pill.
+On a screen without a notch the pill grows the same way. `notice = false` leaves only the count
+to change, and `sound = "Tink"` plays one of macOS's sounds with the notice
+(`/System/Library/Sounds`, by name).
 
 The popup lists the chats with something unread, then the `recent` (5) latest of the others. A
 click shows the chat, its last 40 messages:
@@ -547,6 +550,13 @@ number on its Dock icon (Calendar) counts what it notified since the bar started
 read here. A number on the Dock higher than the notifications there are is a row with the rest
 and no text. They all take their options from `[widgets.apps]`, the same as `whatsapp`'s
 (`notch`, `always`, `recent`, `preview`, `hover`, `groups`).
+
+The app's own notification and the bar's notice are two: to have one, either set `notice =
+false` and keep macOS's, or keep the bar's and turn the app's banners off in System Settings →
+Notifications (the bell in the widget's popup opens that page): the style *None*, with
+*Notification Center* still on, so that macOS goes on recording what the bar reads. With the
+banners on, macOS writes a notification down only when its banner leaves the screen, so the
+bar's notice follows it by some five seconds.
 
 macOS keeps that database from every app without **Full Disk Access** (System Settings, Privacy &
 Security), given to RustyBar in the list its popup opens; restart the bar after. Without it

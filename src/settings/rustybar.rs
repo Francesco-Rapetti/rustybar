@@ -572,10 +572,17 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
             );
             f.toggle_at(t("Testo del messaggio nel notch", "The message's text in the notch"), Some(t("Spento, solo chi ha scritto", "Off, only who wrote")), &spot.k("preview"), true);
             f.toggle_at(t("Chat sotto il mouse", "Chats under the mouse"), Some(t("Col mouse sopra si allunga con le chat da leggere", "Under the mouse it grows with the chats to read")), &spot.k("hover"), true);
+            f.toggle_at(
+                t("Avviso di un messaggio nuovo", "Notice of a new message"),
+                Some(t("L'isola o la pill si allunga per un momento; spento, cambia solo il conto (per chi tiene la notifica dell'app)", "The island or the pill grows for a moment; off, only the count changes (for who keeps the app's own notification)")),
+                &spot.k("notice"),
+                true,
+            );
+            f.text_at(t("Suono dell'avviso", "Sound of the notice"), Some(t("Un suono di macOS per nome: Tink, Glass, Pop, Ping… Vuoto, nessuno", "One of macOS's sounds by name: Tink, Glass, Pop, Ping… Empty, none")), &spot.k("sound"), t("nessuno", "none"));
             match kind.as_str() {
-                "telegram" => &["muted", "groups", "channels", "always", "recent", "notch", "preview", "hover"],
-                "slack" | "teams" => &["groups", "always", "recent", "notch", "preview", "hover"],
-                _ => &["muted", "groups", "always", "recent", "notch", "preview", "hover"],
+                "telegram" => &["muted", "groups", "channels", "always", "recent", "notch", "preview", "hover", "notice", "sound"],
+                "slack" | "teams" => &["groups", "always", "recent", "notch", "preview", "hover", "notice", "sound"],
+                _ => &["muted", "groups", "always", "recent", "notch", "preview", "hover", "notice", "sound"],
             }
         }
         "fn_keys" => {
