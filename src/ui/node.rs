@@ -19,6 +19,11 @@ pub struct Node {
     pub children: Vec<Node>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub on_click: Option<Action>,
+    /// Dragging across it sends this, as the mouse moves, with the value (0..1) it had, here,
+    /// plus how far across its width the mouse went: a pill that is its own slider. A press
+    /// that doesn't move is still a click.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub on_slide: Option<(Action, f64)>,
     /// The background while the mouse is over the node; nodes with `on_click` get the theme's. A
     /// clear one (alpha 0): none, the background stays as it is.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -182,6 +187,20 @@ pub struct Style {
     /// A line along its edge that goes as far as something has got (see `Trace`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace: Option<Trace>,
+    /// Over its parent and as large as it, shown up to a part of its width (see `Level`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<Level>,
+}
+
+/// How much of something there is (a volume), as a node over its parent, out of the flow and as
+/// large as the parent is, padding included, that shows from the left up to `value` (0..1) of its
+/// width: its background fills the parent that far, and its children, laid out in all of it, are
+/// cut there (the same text in another color, over the parent's own). With `edge`, a line that
+/// wide at where it ends.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Level {
+    pub value: f64,
+    pub edge: Option<(f64, Rgba)>,
 }
 
 /// How far something has got (a track that plays), as a line along the edge of a node, over its
@@ -249,6 +268,7 @@ impl Default for Style {
             clip: false,
             notch: None,
             trace: None,
+            level: None,
         }
     }
 }
@@ -318,6 +338,13 @@ impl Node {
 
     pub fn click(mut self, action: Action) -> Node {
         self.on_click = Some(action);
+        self
+    }
+
+    /// Dragging across it sends `action` with `value` plus how far the mouse went (see
+    /// `on_slide`).
+    pub fn slide(mut self, action: Action, value: f64) -> Node {
+        self.on_slide = Some((action, value));
         self
     }
 
@@ -433,6 +460,18 @@ impl Node {
     /// A line along its edge that goes as far as something has got (see `Trace`).
     pub fn trace(mut self, trace: Trace) -> Node {
         self.style.trace = Some(trace);
+        self
+    }
+
+    /// Over its parent, shown up to `value` (0..1) of its width (see `Level`).
+    pub fn level(mut self, value: f64) -> Node {
+        self.style.level = Some(Level { value: value.clamp(0.0, 1.0), edge: self.style.level.and_then(|l| l.edge) });
+        self
+    }
+
+    /// A line `width` wide where its `level` ends.
+    pub fn level_edge(mut self, width: f64, color: Rgba) -> Node {
+        self.style.level = Some(Level { value: self.style.level.map_or(0.0, |l| l.value), edge: Some((width, color)) });
         self
     }
 

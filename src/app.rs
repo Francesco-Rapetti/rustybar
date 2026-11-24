@@ -118,6 +118,19 @@ struct Tip {
 
 /// How long the mouse rests on a node before its tip shows, and how wide a tip gets before it
 /// goes on another line.
+/// How far the mouse goes before a press on a node that slides is a drag.
+const SLIDE_START: f64 = 3.0;
+
+/// A press on a node with `on_slide`.
+struct Sliding {
+    action: Action,
+    value: f64,
+    /// Where the press was, and how wide the node is: the value goes with the mouse from there.
+    x: f64,
+    width: f64,
+    moved: bool,
+}
+
 const TIP_DELAY: f64 = 0.6;
 const TIP_WIDTH: f64 = 240.0;
 
@@ -225,6 +238,9 @@ pub struct App {
     dirty: bool,
     flush_queued: bool,
     pressed: Option<(SurfaceId, String)>,
+    /// A press on a node that a drag slides (see `Node::on_slide`): where it began, the value
+    /// there, and whether the mouse has moved far enough to be a drag and not a click.
+    sliding: Option<Sliding>,
     edge_requested: Option<String>,
     /// While a bar is drawn: it has an island (see `Rx::notch_island`).
     beside_island: bool,
@@ -327,6 +343,7 @@ pub fn start(mtm: MainThreadMarker) {
         dirty: true,
         flush_queued: false,
         pressed: None,
+        sliding: None,
         edge_requested: None,
         beside_island: false,
         observers: Vec::new(),
@@ -1333,12 +1350,24 @@ impl App {
                     surface.drag_slider(&h.path, v);
                 } else if let Some(h) = surface.hit(p, &[HitKind::Click]).cloned() {
                     surface.press(&h.path);
+                    self.sliding = h.slide.map(|(action, value)| Sliding { action, value, x: p.x, width: h.rect.size.width.max(1.0), moved: false });
                     self.pressed = Some((id, h.path));
                 } else if matches!(id, SurfaceId::Bar(_)) {
                     self.close_popup();
                 }
             }
             Mouse::Dragged => {
+                if let Some(sl) = &mut self.sliding {
+                    // A few points of a shaky click aren't a drag
+                    sl.moved |= (p.x - sl.x).abs() > SLIDE_START;
+                    if sl.moved {
+                        let (action, v) = (sl.action.clone(), (sl.value + (p.x - sl.x) / sl.width).clamp(0.0, 1.0));
+                        self.pressed = None;
+                        self.dispatch(action, Some(v), display);
+                    }
+                    return;
+                }
+                let Some(surface) = self.surface_mut(id) else { return };
                 if let Some((path, _)) = surface.dragging.clone()
                     && let Some(h) = surface.hits.iter().find(|h| h.path == path).cloned() {
                         let v = crate::ui::slider_value(h.rect, p.x);
@@ -1355,6 +1384,10 @@ impl App {
                     return;
                 }
                 let pressed = self.pressed.take();
+                // What was dragged has been told as it went: no click
+                if self.sliding.take().is_some_and(|s| s.moved) {
+                    return;
+                }
                 let Some(surface) = self.surface_mut(id) else { return };
                 let hit = surface.hit(p, &[HitKind::Click]).cloned();
                 if let (Some((pid, ppath)), Some(h)) = (pressed, hit)

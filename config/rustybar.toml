@@ -72,7 +72,11 @@ large_width = 3840        # from this width a screen is "large"
 # dictation_key = true    # during a call the dictation key 🎤 mutes and unmutes the mic
 #
 # [widgets.audio]
-# sliders = true          # a slider with the volume of the output and of the input in the bar
+# volume = "line"         # how the pill shows the volume of the output and of the input, which
+#                         # a drag across it changes: "line" (along its bottom), "veil" (the
+#                         # pill filled that far, under the text), "solid" (filled with the
+#                         # accent), "mark" (a lighter veil that ends with a line), "slider"
+#                         # (a slider after each device), "none"
 #
 # [widgets.aerospace]
 # workspaces = ["1", "2", "3"]   # a fixed list; by default the ones AeroSpace knows

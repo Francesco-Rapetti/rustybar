@@ -25,6 +25,8 @@ pub struct Hit {
     pub rect: CGRect,
     pub action: Option<Action>,
     pub hover: Option<Rgba>,
+    /// What a drag across it sends, and the value it starts from (see `Node::on_slide`).
+    pub slide: Option<(Action, f64)>,
     pub kind: HitKind,
     pub tip: Option<String>,
 }
@@ -341,8 +343,10 @@ impl Surface {
         clip: Option<CGRect>,
         container: Option<Container>,
     ) {
-        let frame = rect(laid.x, laid.y, laid.w, laid.h);
-        let abs = rect(ox + laid.x, oy + laid.y, laid.w, laid.h);
+        // One with a level is as wide as what it shows; what's in it stays where it is
+        let shown = node.style.level.map_or(laid.w, |l| (laid.w * l.value.clamp(0.0, 1.0) * self.scale).round() / self.scale);
+        let frame = rect(laid.x, laid.y, shown, laid.h);
+        let abs = rect(ox + laid.x, oy + laid.y, shown, laid.h);
         let created = !self.entries.contains_key(&path);
         if created {
             let layer = CALayer::new();
@@ -408,7 +412,7 @@ impl Surface {
         }
         // A fill (the background, or the hover highlight of a click) follows the corners of the
         // node it's in: a corner near one of the container's is concentric with it
-        let fills = matches!(node.kind, Kind::Box) && s.border.is_none() && !s.glass && (s.background.is_some() || node.on_click.is_some());
+        let fills = matches!(node.kind, Kind::Box) && s.border.is_none() && !s.glass && (s.background.is_some() || node.on_click.is_some() || node.on_slide.is_some());
         let corners = if fills { concentric(abs, s.radius, container) } else { [s.radius; 4] };
         // What's in a notch is in its shape, which is round at the bottom only
         let notched = s.notch.map(|n| {
@@ -420,7 +424,7 @@ impl Surface {
             if entry.notch.take().is_some() {
                 unsafe { layer.setMask(None) };
             }
-            set_corners(entry, &layer, corners, laid.w, laid.h);
+            set_corners(entry, &layer, corners, shown, laid.h);
         }
         match s.border {
             Some((w, c)) => {
@@ -571,8 +575,28 @@ impl Surface {
                     unsafe { layer.setContents(None) };
                     entry.sig = None;
                 }
-                if matches!(node.kind, Kind::Box) && layer.masksToBounds() != s.clip {
-                    layer.setMasksToBounds(s.clip);
+                let clips = s.clip || s.level.is_some();
+                if matches!(node.kind, Kind::Box) && layer.masksToBounds() != clips {
+                    layer.setMasksToBounds(clips);
+                }
+                // The line where a level ends, over what's in it
+                match s.level.and_then(|l| l.edge) {
+                    Some((width, color)) => {
+                        let new = !entry.parts.contains_key("edge");
+                        let edge = part(entry, "edge", &layer, scale);
+                        edge.setZPosition(1.0);
+                        edge.setBackgroundColor(Some(&color.cg()));
+                        let at = rect((shown - width).max(0.0), 0.0, width.min(shown), laid.h);
+                        if new {
+                            transaction(false, 0.0, || edge.setFrame(at));
+                        }
+                        edge.setFrame(at);
+                    }
+                    None => {
+                        if let Some(edge) = entry.parts.remove("edge") {
+                            edge.removeFromSuperlayer();
+                        }
+                    }
                 }
             }
         }
@@ -622,7 +646,7 @@ impl Surface {
                     self.inputs.push(Input { rect: r, node: Node { children: Vec::new(), ..node.clone() } });
                     None
                 }
-                _ if node.on_click.is_some() => Some(HitKind::Click),
+                _ if node.on_click.is_some() || node.on_slide.is_some() => Some(HitKind::Click),
                 _ if node.tip.is_some() => Some(HitKind::Tip),
                 _ => None,
             };
@@ -633,7 +657,7 @@ impl Surface {
                     (HitKind::Click, hover) => Some(hover.unwrap_or(highlight)),
                     (_, hover) => hover,
                 };
-                self.hits.push(Hit { path: path.clone(), rect: r, action: node.on_click.clone(), hover, kind, tip: node.tip.clone() });
+                self.hits.push(Hit { path: path.clone(), rect: r, action: node.on_click.clone(), hover, slide: node.on_slide.clone(), kind, tip: node.tip.clone() });
             }
         }
 
@@ -686,7 +710,7 @@ impl Surface {
             return;
         }
         // What a clipping node doesn't show can't be clicked either
-        let clip = match (s.clip, clip) {
+        let clip = match (s.clip || s.level.is_some(), clip) {
             (true, Some(c)) => Some(intersect(abs, c).unwrap_or(rect(0.0, 0.0, 0.0, 0.0))),
             (true, None) => Some(abs),
             (false, c) => c,

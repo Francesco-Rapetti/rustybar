@@ -5,5 +5,5 @@ mod node;
 mod render;
 
 pub use layout::{Layout, wrap};
-pub use node::{Action, Align, Along, Dir, Justify, Kind, Node, Notch, Trace};
+pub use node::{Action, Align, Along, Dir, Justify, Kind, Level, Node, Notch, Trace};
 pub use render::{Glass, HitKind, Input, Surface, contains, ease, settling, slider_value};

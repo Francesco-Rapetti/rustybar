@@ -91,7 +91,7 @@ impl Layout {
 
     fn box_content(&self, node: &Node, avail: Option<f64>) -> (f64, f64) {
         let s = &node.style;
-        let flow: Vec<&Node> = node.children.iter().filter(|c| c.style.at.is_none()).collect();
+        let flow: Vec<&Node> = node.children.iter().filter(|c| c.style.at.is_none() && c.style.level.is_none()).collect();
         if flow.is_empty() {
             return (0.0, 0.0);
         }
@@ -165,7 +165,7 @@ impl Layout {
             _ => return laid,
         }
 
-        let flow_idx: Vec<usize> = (0..node.children.len()).filter(|i| node.children[*i].style.at.is_none()).collect();
+        let flow_idx: Vec<usize> = (0..node.children.len()).filter(|i| node.children[*i].style.at.is_none() && node.children[*i].style.level.is_none()).collect();
         let mut frames: Vec<Option<Laid>> = vec![None; node.children.len()];
 
         if let Some(cols) = s.columns.filter(|c| *c > 0) {
@@ -239,7 +239,10 @@ impl Layout {
         }
 
         for (i, child) in node.children.iter().enumerate() {
-            if let Some((ax, ay)) = child.style.at {
+            if child.style.level.is_some() {
+                // All of the parent; the renderer shows as much of it as its level
+                frames[i] = Some(self.place(child, 0.0, 0.0, w, h));
+            } else if let Some((ax, ay)) = child.style.at {
                 let (cw, ch) = self.intrinsic(child, None);
                 frames[i] = Some(self.place(child, ax, ay, cw, ch));
             }
@@ -311,6 +314,18 @@ mod tests {
         let long = wrap("a supercalifragilisticexpialidocious word", &font, 60.0);
         assert!(long[1].ends_with('…'));
         assert!(wrap("", &font, 60.0).is_empty());
+    }
+
+    #[test]
+    fn a_level_covers_its_parent_out_of_the_flow() {
+        let n = Node::row(vec![boxed(10.0, 10.0), boxed(50.0, 4.0).level(0.4), boxed(20.0, 6.0)]).gap(4.0).pad(2.0, 3.0);
+        let l = Layout { scale: 1.0 };
+        // It takes no room, nor a gap
+        assert_eq!(l.intrinsic(&n, None), (40.0, 14.0));
+        let laid = l.place(&n, 0.0, 0.0, 40.0, 14.0);
+        // All of the parent, padding included: the renderer shows 0.4 of it
+        assert_eq!((laid.children[1].x, laid.children[1].y, laid.children[1].w, laid.children[1].h), (0.0, 0.0, 40.0, 14.0));
+        assert_eq!(laid.children[2].x, 17.0);
     }
 
     #[test]

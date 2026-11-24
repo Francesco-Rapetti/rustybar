@@ -29,7 +29,7 @@ use crate::config::{self, Config};
 use crate::gfx::{FontSpec, Rgba, Weight};
 use crate::runtime;
 use crate::theme::Theme;
-use crate::ui::{Action, Align, Along, Dir, Justify, Kind, Node, Trace};
+use crate::ui::{Action, Align, Along, Dir, Justify, Kind, Level, Node, Trace};
 use crate::widgets::{Cx, Event, Rx, Widget};
 
 const PRELUDE: &str = include_str!("prelude.lua");
@@ -478,6 +478,11 @@ impl Convert<'_> {
                 color: self.color(&tr, "color").unwrap_or(theme.primary),
                 track: self.color(&tr, "track"),
             });
+        }
+        // Over its parent, shown up to this much of its width; with `edge`, a line where it ends
+        if let Some(value) = self.num(t, "level") {
+            let edge = self.num(t, "edge").map(|w| (w, self.color(t, "edge_color").unwrap_or(theme.primary)));
+            s.level = Some(Level { value: value.clamp(0.0, 1.0), edge });
         }
         if let Some(v) = self.num(t, "radius") {
             s.radius = v;

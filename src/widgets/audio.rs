@@ -1,7 +1,11 @@
-//! The sound: in the bar the output and the input in use, with the battery of Bluetooth ones and,
-//! unless `sliders = false`, a slider with the volume of each, the first thing to go when the bar
-//! has no room (`slim_first`, see `fit`); the Mac's own speakers and microphone, or the two halves
-//! of a headset, show as one, with both sliders. The popup is a dashboard: a tile for the volume of
+//! The sound: in the bar the output and the input in use, with the battery of Bluetooth ones and
+//! the volume of each, drawn as `volume` says (see `Look`): by default the pill has a part for the
+//! output and one for the input, each with a line at its bottom as long as its volume, and a drag
+//! across a part changes it; or the part is filled that far (`veil`, `solid`, `mark`), or each has
+//! a slider (`slider`), or nothing (`none`). The sliders are the first thing
+//! to go when the bar has no room (`slim_first`, see `fit`); the Mac's own speakers and
+//! microphone, or the two halves of a headset, show as one pill, whole, with the output's volume
+//! along its bottom half and the microphone's along its top one. The popup is a dashboard: a tile for the volume of
 //! the output and one for the input, with the level and a slider; under them, two in a row, tiles
 //! for the devices to switch to (the one in use lit) and for the paired Bluetooth headphones and
 //! speakers, which a click connects or disconnects.
@@ -31,6 +35,30 @@ const GAP: f64 = 8.0;
 const WIDE: f64 = TILE * 2.0 + GAP;
 /// The icon's column in a device's tile.
 const ICON: f64 = 30.0;
+/// How long after a drag set a volume what CoreAudio says of it waits: a read that began before
+/// the last of the drag would put the fill back for a moment.
+const HOLD: f64 = 0.4;
+
+/// How the bar shows a volume (`volume`). All but `Slider` and `None` split the pill into a part
+/// for the output and one for the input, which a drag across changes the volume of.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Look {
+    /// A line along the bottom of the part, as long as the volume.
+    Line,
+    /// The part filled up to the volume with a veil of the accent, under the text.
+    Veil,
+    /// Filled with the accent itself; the text over it in the color that reads on it.
+    Solid,
+    /// A lighter veil that ends with a line, as a slider's knob.
+    Mark,
+    /// A slider after each device, with the percentage inside.
+    Slider,
+    None,
+}
+
+/// What's in a part of the pill, in a color: once for the part, and again over a solid fill.
+type Content<'a> = Box<dyn Fn(Rgba) -> Vec<Node> + 'a>;
+
 /// A volume slider in the bar: room for the percentage on either side of the knob.
 const BAR_SLIDER: f64 = 96.0;
 
@@ -157,8 +185,10 @@ impl Badges {
 }
 
 pub struct Audio {
-    /// The volume sliders in the bar.
-    sliders: bool,
+    /// How the bar shows the volumes.
+    look: Look,
+    /// The volume a drag last set, of the output and of the input, and when (see `HOLD`).
+    set: [Option<(u8, f64)>; 2],
     devices: Option<Snapshot>,
     bluetooth: Bluetooth,
     mock: Option<Mock>,
@@ -176,7 +206,18 @@ pub struct Audio {
 impl Audio {
     pub fn new(options: &Options) -> Audio {
         Audio {
-            sliders: options.bool("sliders").unwrap_or(true),
+            look: match options.str("volume") {
+                Some("veil") => Look::Veil,
+                Some("solid") => Look::Solid,
+                Some("mark") => Look::Mark,
+                Some("slider") => Look::Slider,
+                Some("none") => Look::None,
+                Some("line") => Look::Line,
+                // `sliders = false`, from before there was a choice
+                _ if options.bool("sliders") == Some(false) => Look::None,
+                _ => Look::Line,
+            },
+            set: [None; 2],
             devices: None,
             bluetooth: Bluetooth::default(),
             mock: crate::mock::load::<Mock>("audio"),
@@ -207,6 +248,7 @@ impl Audio {
             let before = w.devices.as_ref().map(bluetooth_ids);
             let after = bluetooth_ids(&snapshot);
             w.devices = Some(snapshot);
+            w.hold();
             // A Bluetooth device came: its battery, if it's AirPods
             if before.is_some_and(|b| b != after) && !after.is_empty() {
                 w.profile(cx);
@@ -216,6 +258,18 @@ impl Audio {
             }
             cx.redraw();
         });
+    }
+
+    /// Keeps the volumes a drag has just set over what was read meanwhile.
+    fn hold(&mut self) {
+        let now = crate::time::now();
+        let Some(s) = &mut self.devices else { return };
+        for (set, volume) in self.set.iter_mut().zip([&mut s.output_volume, &mut s.input_volume]) {
+            match *set {
+                Some((percent, at)) if now - at < HOLD && matches!(volume, Volume::Level(_)) => *volume = Volume::Level(percent),
+                _ => *set = None,
+            }
+        }
     }
 
     fn changed(&mut self, cx: &mut Cx) {
@@ -318,6 +372,117 @@ impl Audio {
         .key(format!("{side}-volume"))
     }
 
+    /// A part of the pill, for the output or the input: `content` in a color, over or under its
+    /// volume drawn as `look` says, with no number (the popup has it); a drag across it
+    /// changes the volume, a click opens the popup. `first` and `last`: at that end of the pill.
+    fn part(&self, rx: &Rx, output: bool, volume: Volume, content: &dyn Fn(Rgba) -> Vec<Node>, first: bool, last: bool) -> Node {
+        let th = rx.theme;
+        let side = if output { "out" } else { "in" };
+        let level = match volume {
+            Volume::Level(v) => Some(v),
+            _ => None,
+        };
+        let row = |color: Rgba| Node::row(content(color)).gap(5.0).padding(0.0, th.pill_padding, 0.0, th.pill_padding).height(th.pill_height);
+        let mut part = row(th.text).key(format!("{side}-part")).click(rx.toggle_popup());
+        let Some(v) = level.map(|v| v as f64 / 100.0) else { return part };
+        part = part.slide(rx.action(&format!("volume:{side}")), v);
+        let round = th.pill_radius.min(th.pill_height / 2.0);
+        let fill = self.fill(rx, v, th.primary, false, [if first { round } else { 0.0 }, if last { round } else { 0.0 }], row(th.on_primary));
+        part.push(fill)
+    }
+
+    /// A volume over the node it's pushed in, as `look` draws it in `color`: a fill up to it, or
+    /// a line along the bottom edge (the top one with `top`) that leaves out `round` at the left
+    /// and at the right, where the pill bends. `copy`: what's under it, in the color that reads
+    /// on a solid fill, where it is in the node.
+    fn fill(&self, rx: &Rx, v: f64, color: Rgba, top: bool, round: [f64; 2], copy: Node) -> Node {
+        let th = rx.theme;
+        let fill = match self.look {
+            Look::Veil => Node::row(vec![]).background(color.faded(0.3)).level(v),
+            Look::Mark => Node::row(vec![]).background(color.faded(0.16)).level(v).level_edge(2.0, color),
+            Look::Solid => Node::row(vec![copy.key("copy")]).align(Align::Start).background(color).level(v),
+            // The line, on the straight part of the pill's edge, inside its border
+            _ => {
+                let inset = if th.glass { 0.0 } else { th.pill_border };
+                let line = Node::row(vec![]).background(color).radius(1.0).level(v).key("line");
+                Node::column(vec![Node::row(vec![line]).height(2.0).key("track")])
+                    .justify(if top { Justify::Start } else { Justify::End })
+                    .padding(if top { inset } else { 0.0 }, round[1], if top { 0.0 } else { inset }, round[0])
+                    .level(1.0)
+            }
+        };
+        fill.key("fill")
+    }
+
+    /// The pill of one device for both, whole as before the volumes were on it: the output's
+    /// along its bottom half and the microphone's, in another color, along its top one, and a
+    /// drag across a half changes that one.
+    fn both(&self, rx: &Rx, content: &dyn Fn(Rgba) -> Vec<Node>, output: u8, input: u8) -> Node {
+        let th = rx.theme;
+        let row = |color: Rgba| Node::row(content(color)).gap(5.0).padding(0.0, th.pill_padding, 0.0, th.pill_padding).height(th.pill_height);
+        let round = th.pill_radius.min(th.pill_height / 2.0);
+        // The microphone's color: an accent that isn't the output's
+        let other = ["mauve", "blue"].iter().filter_map(|n| th.color(n)).find(|c| *c != th.primary).unwrap_or(th.subtext);
+        let half = |top: bool, side: &str, percent: u8, color: Rgba| {
+            let v = percent as f64 / 100.0;
+            // The copy of a solid fill, where the pill has it: the bottom half begins halfway down
+            let copy = row(th.on_primary).at(0.0, if top { 0.0 } else { -th.pill_height / 2.0 });
+            Node::row(vec![self.fill(rx, v, color, top, [round; 2], copy)])
+                .grow()
+                .click(rx.toggle_popup())
+                .slide(rx.action(&format!("volume:{side}")), v)
+                .key(format!("{side}-half"))
+        };
+        let halves = Node::column(vec![half(true, "in", input, other), half(false, "out", output, th.primary)]).level(1.0).key("volumes");
+        // The pill's round cuts the halves: a layer half as tall can't be as round as it is
+        rx.pill(vec![row(th.text).key("both-part").radius(round).clip().click(rx.toggle_popup()).push(halves)]).padding(0.0, 0.0, 0.0, 0.0).gap(0.0).click(rx.toggle_popup())
+    }
+
+    /// The pill in parts (every `Look` but the slider): the output's, and the input's.
+    fn parts(&self, rx: &Rx, s: &Snapshot, output: Option<&Device>, input: Option<&Device>, out_name: Option<String>, merged: bool) -> Option<Node> {
+        let th = rx.theme;
+        // One device for both, with only the microphone's volume to set: a part of its own
+        let own_mic = merged && matches!(s.input_volume, Volume::Level(_));
+        let device = |d: &Device, name: Option<String>, output: bool, badges: Badges| {
+            let (symbol, battery) = (icon(output, badges, d.transport, d.kind, &d.name), self.battery(d));
+            move |color: Rgba| {
+                let mut children = vec![Node::symbol(symbol.clone(), th.icon_size, Weight::Semibold, color).key("icon")];
+                if let Some(name) = name.clone().filter(|_| !rx.compact) {
+                    children.push(Node::text(name, th.font(), color).key("name"));
+                }
+                if let Some(b) = battery {
+                    children.push(battery_node(rx, b, false, (color != th.text).then_some(color)));
+                }
+                children
+            }
+        };
+        if let (true, Some(o), Volume::Level(out), Volume::Level(mic)) = (merged, output, s.output_volume, s.input_volume) {
+            return Some(self.both(rx, &device(o, out_name, true, Badges::Both), out, mic));
+        }
+        let mut parts: Vec<(bool, Volume, Content)> = Vec::new();
+        if let Some(o) = output {
+            let badges = if merged && !own_mic { Badges::Both } else { Badges::Speaker };
+            parts.push((true, s.output_volume, Box::new(device(o, out_name, true, badges))));
+        }
+        if let Some(i) = input {
+            parts.push((false, s.input_volume, Box::new(device(i, Some(i.name.clone()), false, Badges::Microphone))));
+        } else if own_mic {
+            parts.push((false, s.input_volume, Box::new(|color: Rgba| vec![Node::symbol("mic.fill", th.icon_size, Weight::Semibold, color).key("icon")])));
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        let n = parts.len();
+        let mut children = Vec::new();
+        for (i, (output, volume, content)) in parts.iter().enumerate() {
+            if i > 0 {
+                children.push(Node::row(vec![]).size(1.0, th.pill_height).background(th.overlay.faded(0.35)).key("divider"));
+            }
+            children.push(self.part(rx, *output, *volume, content.as_ref(), i == 0, i == n - 1));
+        }
+        Some(rx.pill(children).padding(0.0, 0.0, 0.0, 0.0).gap(0.0).click(rx.toggle_popup()))
+    }
+
     /// A volume in the bar: a slider with the percentage inside; `symbol` puts a speaker or a
     /// microphone before it. None when the volume is set on the device only.
     fn bar_volume(&self, rx: &Rx, output: bool, symbol: bool) -> Option<Node> {
@@ -341,7 +506,7 @@ impl Audio {
         let badges = if output { Badges::Speaker } else { Badges::Microphone };
         let (name, what) = tile_names(d, builtin);
         let detail = match self.battery(d) {
-            Some(b) => battery_node(rx, b, true),
+            Some(b) => battery_node(rx, b, true, None),
             None => Node::text(what, th.small_font(), th.subtext).key("detail"),
         };
         let symbol = icon(output, badges, d.transport, d.kind, &d.name);
@@ -475,11 +640,12 @@ fn battery_symbol(level: u8) -> &'static str {
 
 /// The battery glyph and percentage; red at 20% or less, as in the battery menu of macOS: the
 /// glyph only in the bar, all of it in the popup.
-fn battery_node(rx: &Rx, level: u8, popup: bool) -> Node {
+/// All of it in `color`, when given: over a fill of the accent.
+fn battery_node(rx: &Rx, level: u8, popup: bool, color: Option<Rgba>) -> Node {
     let th = rx.theme;
     let low = level <= 20;
-    let glyph = if low { th.red } else { th.subtext };
-    let text = if low && popup { th.red } else { th.subtext };
+    let glyph = color.unwrap_or(if low { th.red } else { th.subtext });
+    let text = color.unwrap_or(if low && popup { th.red } else { th.subtext });
     Node::row(vec![
         Node::symbol(battery_symbol(level), if popup { 11.0 } else { 12.0 }, Weight::Semibold, glyph),
         Node::text(format!("{level}%"), th.font_with(Weight::Bold, 11.0), text),
@@ -525,6 +691,9 @@ impl Widget for Audio {
                 input = None;
             }
         }
+        if !matches!(self.look, Look::Slider | Look::None) {
+            return self.parts(rx, s, output, input, out_name, badges == Badges::Both);
+        }
         let group = |d: &Device, name: Option<String>, output: bool, badges: Badges, key: &str| {
             let mut children = vec![Node::symbol(icon(output, badges, d.transport, d.kind, &d.name), th.icon_size, Weight::Semibold, th.text).key("icon")];
             if !rx.compact
@@ -533,9 +702,9 @@ impl Widget for Audio {
                 children.push(Node::text(name, th.font(), th.text).key("name"));
             }
             if let Some(b) = self.battery(d) {
-                children.push(battery_node(rx, b, false));
+                children.push(battery_node(rx, b, false, None));
             }
-            if self.sliders && !rx.slim {
+            if self.look == Look::Slider && !rx.slim {
                 // One device for both: a slider each, with a symbol to tell them apart
                 let both = badges == Badges::Both;
                 let sides: &[bool] = if both { &[true, false] } else { &[output] };
@@ -636,6 +805,11 @@ impl Widget for Audio {
                 let percent = (value * 100.0).round().clamp(0.0, 100.0) as u8;
                 let devices = if output { &s.outputs } else { &s.inputs };
                 let Some(object) = devices.iter().find(|d| d.default).map(|d| d.object) else { return };
+                // A drag across the pill sends every point of the way: one call for each percent
+                if (if output { s.output_volume } else { s.input_volume }) == Volume::Level(percent) {
+                    return;
+                }
+                self.set[if output { 0 } else { 1 }] = Some((percent, crate::time::now()));
                 // The title shows it at once; CoreAudio confirms it
                 if let Some(s) = &mut self.devices {
                     *(if output { &mut s.output_volume } else { &mut s.input_volume }) = Volume::Level(percent);

@@ -511,8 +511,16 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
         }
         "audio" => {
             f.group(Some(t("Opzioni", "Options")));
-            f.toggle_at(t("Volume nella barra", "Volume in the bar"), Some(t("Un cursore con il volume dell'uscita e dell'ingresso", "A slider with the volume of the output and of the input")), &spot.k("sliders"), true);
-            &["sliders"]
+            let looks = opts(&[
+                ("line", t("Linea in basso", "Line at the bottom")),
+                ("veil", t("Velo sulla pillola", "Veil over the pill")),
+                ("solid", t("Pillola piena", "Filled pill")),
+                ("mark", t("Velo con tacca", "Veil with a mark")),
+                ("slider", t("Cursore", "Slider")),
+                ("none", t("Niente", "Nothing")),
+            ]);
+            f.choice_at(t("Volume nella barra", "Volume in the bar"), Some(t("Come la pillola mostra il volume dell'uscita e dell'ingresso; tranne che col cursore, si cambia trascinando sulla pillola", "How the pill shows the volume of the output and of the input; but for the slider, a drag across the pill changes it")), &spot.k("volume"), looks, "line");
+            &["volume"]
         }
         "system" => {
             f.group(Some(t("Opzioni", "Options")));

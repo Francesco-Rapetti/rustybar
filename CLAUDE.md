@@ -884,6 +884,38 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   README rifatti. Da provare dal vero: il Mac in carica col limite attivo (se macOS dà già il
   tempo fino al limite, la quota è troppo bassa), quanto è giusta la stima verso la fine (non
   resti indietro vicino al 100%), la pill su uno schermo dove `devices` è intero.
+- Volume di `audio` sulla pill (chiesto dall'utente, come rustybar-windows; i quattro stili dei
+  mockup tutti, a scelta, di default la linea): `volume` = `line` (linea in basso lunga quanto il
+  volume, sulla parte dritta del bordo), `veil` (la parte riempita fin lì con l'accento a 0,3,
+  sotto il testo: quello di Windows), `solid` (accento pieno, testo in `on_primary` dove è
+  coperto), `mark` (velo a 0,16 con una riga dove finisce), `slider` (com'era), `none`;
+  `sliders = false` vale ancora `none`. La pill è in parti, uscita e ingresso (un dispositivo per
+  tutti e due, scelto dall'utente fra quattro mockup: una pill sola, intera, con l'uscita nella
+  metà bassa e il microfono, in un altro colore, mauve o blue, in quella alta; si trascina la
+  metà che si vuole; `both`, ritagliata dalla pill perché un layer alto metà non può avere il
+  raggio intero), con una riga fra le due;
+  nessuna percentuale nella pill (tolta dall'utente lo stesso giorno: c'è nel popup), compatto
+  toglie il nome, il riempimento resta sempre; slim vale solo per `slider`. Nel motore:
+  `Style::level` (`Level`, `Node::level`/`level_edge`, in Lua `level`, `edge`, `edge_color`): un
+  nodo fuori dal flusso, grande quanto il genitore, che si vede fino a una quota della larghezza
+  (il layer è largo quanto si vede e ritaglia; i figli restano disposti su tutta la larghezza,
+  così lo stesso testo in un altro colore sta sopra quello del genitore); `Node::on_slide`
+  (`Sliding` in `app.rs`): un trascinamento oltre 3 pt manda l'azione a ogni movimento col valore
+  di partenza più lo spostamento sulla larghezza (relativo: un clic tremolante non porta il
+  volume dov'è il mouse), senza muoversi è un clic (popup). `audio` chiama CoreAudio una volta
+  per punto percentuale e per 0,4 s tiene il valore trascinato sopra le letture (`HOLD`). Muto:
+  il volume letto è 0, quindi niente riempimento. Provato coi dati finti sulla barra di prova
+  (Mocha, senza e col vetro): i quattro stili, slim e compatto, trascinamento con eventi veri del
+  mouse su uscita e microfono, clic che apre il popup: 18 MB, 0,05% CPU, 0 processi in 20 s. Da
+  provare: il volume vero trascinando (cambia lo stato del Mac), la scelta nella pagina delle
+  impostazioni (non aperta), il tema `macos`; lo screenshot della barra nel README è da rifare.
+  Sulla barra vera dal 24/11/2026 (build dell'albero di lavoro, col lavoro non committato di
+  un'altra sessione): linea sotto uscita e microfono con le percentuali vere; nel primo minuto
+  36 MB in 2 processi, 0,40% CPU, 0 processi in 30 s (da rimisurare a riposo).
+  Poi, lo stesso giorno, senza percentuali e con la pill unica per un dispositivo solo (provata
+  coi dati finti: quattro stili, vetro, trascinamento delle due metà con eventi veri): sulla
+  barra vera con le cuffie che fanno da uscita e microfono, linea in basso e linea in alto;
+  32 MB in 2 processi, 0,40% CPU, 0 processi nei primi 30 s.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a
