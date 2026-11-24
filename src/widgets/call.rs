@@ -14,7 +14,9 @@
 //!   keystrokes and the app stays where it is. Electron (Slack) shows what's in its pages to
 //!   Accessibility only with `AXManualAccessibility`, which RustyBar sets while it captures.
 //!   Microsoft's local API for Teams (ws://localhost:8124) was retired in June 2026, so Teams
-//!   goes the same way.
+//!   goes the same way; its pages are in the web view of a child process (Edge's), which shows
+//!   them only when asked with `AXEnhancedUserInterface`, as an assistive app would, and its
+//!   buttons have ids that don't change with the language (seen in a real meeting, Teams 26304).
 //!
 //! Everything here but `watch` and `capturing` runs on a background thread: Accessibility asks the
 //! app for each attribute.
@@ -25,7 +27,7 @@ use std::sync::Mutex;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2_app_kit::{NSApplicationActivationOptions, NSApplicationActivationPolicy, NSRunningApplication};
+use objc2_app_kit::{NSApplicationActivationOptions, NSApplicationActivationPolicy, NSRunningApplication, NSWorkspace};
 use objc2_foundation::{NSArray, NSNumber, NSString};
 use serde::Deserialize;
 
@@ -303,6 +305,8 @@ mod ax {
     static CACHE: Mutex<Option<HashMap<i32, Found>>> = Mutex::new(None);
     /// The apps told to show their pages to Accessibility (Electron's `AXManualAccessibility`).
     static MANUAL: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+    /// When the web view of each app was last asked to show its pages (see `show_web_view`).
+    static WEB_VIEW: Mutex<Vec<(i32, f64)>> = Mutex::new(Vec::new());
 
     fn app(pid: i32) -> Option<El> {
         let app: Retained<AnyObject> = unsafe { owned(AXUIElementCreateApplication(pid)) }?;
@@ -324,6 +328,10 @@ mod ax {
 
     fn elements(e: &El, name: &str) -> Vec<El> {
         attribute(e, name).and_then(|v| v.downcast::<NSArray>().ok()).map(|a| a.iter().map(El).collect()).unwrap_or_default()
+    }
+
+    fn number(e: &El, name: &str) -> Option<f64> {
+        attribute(e, name).and_then(|v| v.downcast::<NSNumber>().ok()).map(|n| n.doubleValue())
     }
 
     /// What a button says it does: its title, description and help, in lower case.
@@ -352,18 +360,52 @@ mod ax {
         let w = words(label);
         const TOGGLE: [&str; 14] = ["mute", "unmute", "turn", "disattiva", "riattiva", "attiva", "start", "stop", "accendi", "spegni", "enable", "disable", "on", "off"];
         if any(&w, &["leave", "esci", "abbandona", "lascia", "hang"]) && (service == Service::Teams || any(&w, &["huddle"])) {
+            // Not a channel, a team or a community to leave, nor the devices to sign out of
+            if any(&w, &["canale", "channel", "team", "community", "chat", "gruppo", "group", "dispositivi", "devices", "visualizzazione", "view"]) {
+                return None;
+            }
             return Some(Control::Leave);
         }
-        if any(&w, &["hand", "mano"]) && any(&w, &["raise", "lower", "alza", "abbassa"]) {
+        // Teams' is just "Mano" ("Hand"); Slack has none
+        if any(&w, &["hand", "mano"]) && (any(&w, &["raise", "lower", "alza", "abbassa"]) || (service == Service::Teams && w.len() == 1)) {
             return Some(Control::Hand);
+        }
+        // Not the captions of a video, a clip to record, or everyone's video
+        if any(&w, &["captions", "sottotitoli", "clip", "preview", "anteprima", "tutto", "tutti", "everyone", "all"]) {
+            return None;
         }
         if any(&w, &["camera", "fotocamera", "video", "videocamera", "webcam"]) && any(&w, &TOGGLE) {
             return Some(Control::Camera);
+        }
+        // Not what silences a conversation's notifications, someone else, or the speakers too
+        const OTHERS: [&str; 13] = ["conversation", "conversazione", "channel", "canale", "notifications", "notifiche", "thread", "partecipante", "partecipanti", "participant", "participants", "altoparlanti", "temporaneamente"];
+        if any(&w, &OTHERS) || any(&w, &["altoparlante", "speakers"]) {
+            return None;
         }
         if (any(&w, &["mic", "microphone", "microfono"]) && any(&w, &TOGGLE)) || any(&w, &["mute", "unmute"]) || (any(&w, &["audio"]) && any(&w, &["disattiva", "riattiva"])) {
             return Some(Control::Mic);
         }
         None
+    }
+
+    /// Teams' buttons have an id in its page that doesn't change with the language.
+    pub(super) fn by_id(service: Service, id: &str) -> Option<Control> {
+        if service != Service::Teams {
+            return None;
+        }
+        match id {
+            "microphone-button" => Some(Control::Mic),
+            "video-button" => Some(Control::Camera),
+            "raisehands-button" => Some(Control::Hand),
+            "hangup-button" => Some(Control::Leave),
+            _ => None,
+        }
+    }
+
+    /// The control a button is: by its id where the app gives one, else by its name.
+    fn kind(service: Service, e: &El, label: &str) -> Option<Control> {
+        let id = if service == Service::Teams { by_id(service, &string(e, "AXDOMIdentifier")) } else { None };
+        id.or_else(|| classify(service, label))
     }
 
     /// Whether what a button controls is on now, from its name, which says what a click does:
@@ -406,7 +448,7 @@ mod ax {
         walk(app, |e, window, _| {
             let role = string(e, "AXRole");
             if BUTTONS.contains(&role.as_str()) {
-                if let Some(c) = classify(service, &label(e)) {
+                if let Some(c) = kind(service, e, &label(e)) {
                     found.controls.entry(c).or_insert_with(|| e.clone());
                     if c == Control::Leave {
                         found.window = Some(window.clone());
@@ -431,6 +473,33 @@ mod ax {
         unsafe { AXUIElementSetAttributeValue(cf(&*app.0), cf(&*NSString::from_str("AXManualAccessibility")), cf(&*yes)) };
     }
 
+    /// Teams draws its pages in the web view of another process, its child "Microsoft Teams
+    /// WebView" (Edge's), which shows only the windows to Accessibility until it's asked with
+    /// `AXEnhancedUserInterface`, as an assistive app would. That process is asked, not Teams,
+    /// whose windows a window manager would then move badly. Before a search, at most every 5 s:
+    /// a browser that nobody asks for a while may stop.
+    fn show_web_view(pid: i32) {
+        let now = crate::time::now();
+        {
+            let Ok(mut asked) = WEB_VIEW.lock() else { return };
+            if asked.iter().any(|(p, at)| *p == pid && now - at < 5.0) {
+                return;
+            }
+            asked.retain(|(p, _)| *p != pid);
+            asked.push((pid, now));
+        }
+        let yes = NSNumber::new_bool(true);
+        for child in NSWorkspace::sharedWorkspace().runningApplications().iter() {
+            let web_view = child.localizedName().is_some_and(|n| n.to_string().contains("WebView"));
+            if web_view
+                && parent(child.processIdentifier()) == Some(pid)
+                && let Some(view) = app(child.processIdentifier())
+            {
+                unsafe { AXUIElementSetAttributeValue(cf(&*view.0), cf(&*NSString::from_str("AXEnhancedUserInterface")), cf(&*yes)) };
+            }
+        }
+    }
+
     /// The buttons of a call, each with its name now.
     type Labelled = HashMap<Control, (El, String)>;
 
@@ -439,12 +508,15 @@ mod ax {
         let mut cache = CACHE.lock().ok()?;
         let cache = cache.get_or_insert_with(HashMap::new);
         // A button whose name says it's something else now isn't one of them any more
-        let labelled = |f: &Found| -> Labelled { f.controls.iter().map(|(c, e)| (*c, (e.clone(), label(e)))).filter(|(c, (_, l))| classify(t.service, l) == Some(*c)).collect() };
+        let labelled = |f: &Found| -> Labelled { f.controls.iter().map(|(c, e)| (*c, (e.clone(), label(e)))).filter(|(c, (e, l))| kind(t.service, e, l) == Some(*c)).collect() };
         if let Some(f) = cache.get(&t.pid) {
             let now = labelled(f);
             if now.contains_key(&Control::Leave) && now.len() == f.controls.len() {
                 return Some((now, f.window.clone()));
             }
+        }
+        if t.service == Service::Teams {
+            show_web_view(t.pid);
         }
         let f = search(t.service, app);
         let now = labelled(&f);
@@ -460,10 +532,14 @@ mod ax {
         let Some(app) = app(t.pid) else { return super::Found::Nothing };
         show_pages(t.pid, &app);
         let Some((controls, window)) = controls(t, &app) else { return super::Found::Nothing };
-        if !controls.contains_key(&Control::Leave) {
+        // A call has a way out and a microphone: a Leave alone is something else of the app
+        if !controls.contains_key(&Control::Leave) || !controls.contains_key(&Control::Mic) {
             return super::Found::Nothing;
         }
-        let state = |c: Control| controls.get(&c).and_then(|(_, l)| on_now(c, l));
+        // Teams' hand is just "Mano", and says it's raised as an expanded button
+        let state = |c: Control| {
+            controls.get(&c).and_then(|(e, l)| on_now(c, l).or_else(|| if c == Control::Hand { number(e, "AXExpanded").map(|n| n != 0.0) } else { None }))
+        };
         // Teams names its call window after the meeting: "Weekly sync | Microsoft Teams"
         let name = match (t.service, &window) {
             (Service::Teams, Some(w)) => {
@@ -505,6 +581,7 @@ mod ax {
         }
         let Some(app) = app(pid) else { return String::new() };
         show_pages(pid, &app);
+        show_web_view(pid);
         let mut out = String::new();
         walk(&app, |e, _, depth| {
             let mut line = format!("{}{}", "  ".repeat(depth), string(e, "AXRole"));
@@ -556,5 +633,41 @@ mod tests {
         assert_eq!(classify(Service::Slack, "leave channel"), None);
         assert_eq!(classify(Service::Slack, "leave huddle"), Some(Control::Leave));
         assert_eq!(classify(Service::Slack, "share screen"), None);
+    }
+
+    /// The names the two apps really give, from the strings of their clients and a real Teams
+    /// meeting in Italian.
+    #[test]
+    fn a_calls_buttons_are_told_from_the_apps_other_ones() {
+        use ax::{by_id, classify, on_now};
+        let slack = |l: &str| classify(Service::Slack, &l.to_lowercase());
+        let teams = |l: &str| classify(Service::Teams, &l.to_lowercase());
+        assert_eq!(slack("Mute microphone"), Some(Control::Mic));
+        assert_eq!(on_now(Control::Mic, "unmute microphone"), Some(false));
+        assert_eq!(slack("Turn on camera"), Some(Control::Camera));
+        assert_eq!(on_now(Control::Camera, "turn off my video"), Some(true));
+        assert_eq!(slack("Leave Huddle"), Some(Control::Leave));
+        assert_eq!(slack("Mute conversation"), None);
+        assert_eq!(slack("Turn on captions for this video"), None);
+        assert_eq!(slack("Record video clip"), None);
+        assert_eq!(slack("Start a Huddle"), None);
+        assert_eq!(slack("Mano"), None);
+        assert_eq!(teams("Riattiva microfono"), Some(Control::Mic));
+        assert_eq!(on_now(Control::Mic, "riattiva microfono"), Some(false));
+        assert_eq!(teams("Attiva videocamera"), Some(Control::Camera));
+        assert_eq!(on_now(Control::Camera, "disattiva videocamera"), Some(true));
+        assert_eq!(teams("Abbandona"), Some(Control::Leave));
+        assert_eq!(teams("Abbandona canale"), None);
+        assert_eq!(teams("Esci dalla community"), None);
+        assert_eq!(teams("Disattiva audio partecipante"), None);
+        assert_eq!(teams("Disattiva tutto il video"), None);
+        assert_eq!(teams("Disattiva microfono e altoparlanti"), None);
+        // Teams' hand has no verb: its state is the button's, not its name's
+        assert_eq!(teams("Mano"), Some(Control::Hand));
+        assert_eq!(on_now(Control::Hand, "mano"), None);
+        assert_eq!(by_id(Service::Teams, "hangup-button"), Some(Control::Leave));
+        assert_eq!(by_id(Service::Teams, "raisehands-button"), Some(Control::Hand));
+        assert_eq!(by_id(Service::Teams, "share-button"), None);
+        assert_eq!(by_id(Service::Slack, "hangup-button"), None);
     }
 }

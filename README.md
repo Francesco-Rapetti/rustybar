@@ -403,8 +403,13 @@ No plugin or admin is needed:
   call only while it captures, and during a call reads its state every second, in-process, since
   neither says when it changes. The buttons of the call are found by their names and pressed
   without keystrokes, so the app stays where it is. Slack, built on Electron, shows the content of
-  its window to Accessibility only when asked, which RustyBar does while Slack captures. (Teams had
-  a local API for this, which Microsoft retired in June 2026.)
+  its window to Accessibility only when asked, which RustyBar does while Slack captures. Teams
+  draws its pages in the web view of a child process (Edge's), which is asked as an assistive app
+  would (`AXEnhancedUserInterface`), not Teams itself, whose windows a window manager would then
+  move badly; its buttons are found by ids that don't change with the language, and the raised
+  hand by the button's state. (Teams had a local API for this, which Microsoft retired in June
+  2026.) CoreAudio doesn't always tell when an app starts to capture, so RustyBar also asks it
+  again every 3 s: a few property reads in its own process.
 
 The names of the buttons can change with an update of the app. `rustybar msg trigger call_dump`
 writes what Accessibility sees of Slack and Teams, and the buttons the extension finds in each Meet

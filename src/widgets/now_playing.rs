@@ -866,6 +866,11 @@ impl Widget for NowPlaying {
             self.born = time::now();
             call::watch(cx.handle::<NowPlaying>());
             self.capture_changed(cx);
+            // CoreAudio tells when an app starts or stops capturing, but not every time: a Teams
+            // that began to capture minutes after it had started went unnoticed (seen with the
+            // same listeners in the Stream Deck helper). So it's asked again now and then: a few
+            // property reads in this process, and nothing more unless what captures changed.
+            cx.every::<NowPlaying>(3.0, |w, cx| w.capture_changed(cx));
             meet::serve(cx.handle::<NowPlaying>());
         }
     }
