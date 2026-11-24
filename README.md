@@ -30,7 +30,7 @@ processes a minute.
 | `telegram` | Telegram's unread messages, as `whatsapp` shows WhatsApp's: the count, the notch, the notice of a new message. Not in the default layout; first `rustybar telegram login` | The same popup: the chats that wait, then the latest; a chat with its texts, pictures, voice notes, videos and documents (downloaded when asked), and a field to answer, sent straight to Telegram |
 | `slack`, `teams` | What Slack and Teams notify on this Mac (direct messages, mentions), as `whatsapp` shows its chats: the count, the notch, the notice of a new message. Not in the default layout; needs Full Disk Access | The same popup: the conversations that wait, then the latest; each with the messages notified while the bar ran, and a button to answer in the app |
 | `events` | Today's next event from the Mac's calendars: its time, colored as it gets close, the title and a countdown | A dashboard: the next event (or the one going on, with how much of it is gone) with its calendar, place, guests who accepted and Join for its Google Meet call; the all-day events; then the whole day in the colors of its calendars, with a line at the time it is now. A click joins the call or shows the event in Calendar |
-| `notifications` | Two counts: the Dock badges of the apps you choose and new RustyBar crash reports (green), Homebrew updates (red) | The badged apps and crash reports to open, or to dismiss with their ✕ or all at once (a badge comes back when it goes up), the packages to update one by one or all at once |
+| `notifications` | Two counts: new RustyBar crash reports (green) and Homebrew updates (red). Each app of its `apps` is a widget of its own before it, with what the app notifies, as `slack` (see [Slack and Teams](#slack-and-teams)); an entry that is no app's name stays here as a Dock badge | The crash reports and badged apps to open, or to dismiss with their ✕ or all at once (a badge comes back when it goes up), the packages to update one by one or all at once |
 | `home` | [Home Assistant](https://www.home-assistant.io): its logo with how many devices are on, and the 3D printer's progress while it prints | A dashboard of tiles: lights and plugs (with brightness), blinds, climate (modes and − target +), vacuum, the 3D printer, scripts and scenes as chips |
 | `claude` | How much of the Claude plan each account has used: the 5-hour session and the week | For each account its plan and two tiles, the session and the week, with a bar, when they reset and how long until then; how old the numbers are, ↻ to read them again, log in and log out; the usage page on claude.ai |
 | `docker` | How many containers run, red when one is unhealthy; hidden while Docker is off | A dashboard: the engine and what the containers use; every container, by Compose project, with its state, CPU, memory, image, ports (links to localhost) and uptime, and buttons to start, stop, restart and remove it (a project's at once too); disk usage of images, containers, volumes and build cache, unused networks and a system prune, each cleaned up only after saying what it would remove; Docker Desktop |
@@ -122,7 +122,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
 | Accessibility | `notifications`, `now_playing`, `whatsapp` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls). Sending a reply and marking a chat read through WhatsApp's window |
 | Data of other apps | `whatsapp` | Reading WhatsApp's chats from its app's folder: macOS asks each time the bar starts, unless RustyBar has Full Disk Access; without it a yellow `!` shows, whose popup says how to be asked again (`tccutil reset SystemPolicyAppData io.github.francesco-rapetti.rustybar`, or Full Disk Access) |
-| Full Disk Access | `slack`, `teams` | Reading what the two apps notify from Notification Center's database, which macOS keeps from every app without it; without it a yellow `!` shows, whose popup opens the list |
+| Full Disk Access | `slack`, `teams`, the apps of `notifications` | Reading what the apps notify from Notification Center's database, which macOS keeps from every app without it; without it only the Dock's number shows, and the popup opens the list |
 | Automation | `apple`, `clock`, `now_playing` | Restart, Shut Down and Log Out; showing a day in Calendar; for Music and Spotify, the position, the cover and the controls (when the popup opens or on a click); without it the bar still shows what plays |
 | Local Network | `home`, `network` | Reaching a Home Assistant server on your network (at start); the ping to the router (when the network popup's details open), without which the rest works |
 
@@ -537,9 +537,21 @@ time macOS writes it:
   chat, while Slack's opens the app on its workspace;
 - nothing of it is written to disk by RustyBar.
 
+Any other app is shown the same way: each entry of `notifications`' `apps` (a bundle id, or the
+name of an app in the Applications folders: `apps = ["com.apple.mail", "Messages", "Discord"]`)
+is a widget of its own just before `notifications`, called `app-<bundle id>`, with the app's
+icon and macOS's blue. Slack and Teams in that list are the widgets above, and an app that
+already has its widget in the layout isn't there twice. For those apps the notification's title
+is the conversation, the line under it who wrote, and the ↗ opens the app; one that never has a
+number on its Dock icon (Calendar) counts what it notified since the bar started, until it's
+read here. A number on the Dock higher than the notifications there are is a row with the rest
+and no text. They all take their options from `[widgets.apps]`, the same as `whatsapp`'s
+(`notch`, `always`, `recent`, `preview`, `hover`, `groups`).
+
 macOS keeps that database from every app without **Full Disk Access** (System Settings, Privacy &
-Security): without it the pill shows a yellow `!`, and its popup has a button to the list where
-RustyBar goes; restart the bar after adding it.
+Security), given to RustyBar in the list its popup opens; restart the bar after. Without it
+the widgets show the Dock's number alone, and their popup says what the texts need; with
+neither that nor Accessibility, a yellow `!`.
 
 ### Devices
 

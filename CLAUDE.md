@@ -832,6 +832,27 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   0 processi in 30 s. Da provare: un messaggio che arriva (notice) e che va via leggendolo
   nell'app, il link di Teams, titoli di Slack per thread e in altre lingue, un gruppo di Teams
   (il titolo lì non l'ho visto); mancano gli screenshot del README.
+- Un widget per ogni app di `notifications` (chiesto dall'utente: "tutte le app nel widget
+  notification appaiano come slack e teams", tranne Homebrew; scelta sua fra tre: un widget per
+  app, da solo): `App::create_widgets`, davanti a `notifications`, mette per ogni voce di `apps`
+  (`whatsapp::bundle_of`: bundle id, o nome di un'app nelle cartelle Applicazioni) un widget
+  `app-<bundle>` (`whatsapp::for_app`, `Service::of`: Slack e Teams i loro, le altre
+  `Service::App(&'static AppInfo)`, in un registro che resta per la vita del processo; icona
+  dell'app al posto del segno, blu di macOS), a meno che l'app abbia già il suo widget nel
+  layout (`bundle_of_kind`); a `notifications` dice quali con l'opzione interna `_own`, e lei
+  non le conta più (i pallini di `aerospace` restano). Opzioni da `[widgets.apps]`. Per
+  un'app qualunque (`nc::App::Other`): conversazione = `thre` o titolo, mittente = sottotitolo.
+  Un'app che non ha mai avuto un numero sul Dock (Calendario; ricordato in `<chiave>.badged`
+  nei default) conta ciò che ha notificato dall'avvio. Numero del Dock più alto delle notifiche
+  (tolte, o database non leggibile): una conversazione `~rest` col resto, senza messaggi; così
+  senza Accesso completo al disco resta il numero, e il popup dice cosa serve (vale anche per
+  `slack` e `teams`; il `!` solo senza nemmeno Accessibilità). Coi dati finti le app qualunque
+  non hanno widget (restano badge di `notifications`), Slack e Teams sì: lo screenshot di
+  `notifications` del README va rifatto. Provato dal vero sulla barra di prova il 24/11/2026:
+  Mail, Messaggi, Calendario per nome, un nome che non esiste (ignorato), Slack nel layout (non
+  due volte), una notifica finta di `osascript` (Script Editor: titolo, sottotitolo, testo,
+  conto 1), Mail col suo conto nella notte. Da provare: il notice di un'app qualunque, molte
+  app nell'ala dell'isola, un'app col badge e senza notifiche.
 - Tempo di carica in `battery` e `devices` (chiesto dall'utente: quanto manca e a che ora, anche
   sulla pill dove c'è spazio): `battery` dal `Time to Full Charge` di macOS, nel popup
   (`Completa tra 1 h 20 min · alle 18:45`; col limite `80% tra 25 min · alle 15:29`, la quota del

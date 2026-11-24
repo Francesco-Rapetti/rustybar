@@ -41,11 +41,13 @@ pub struct Note {
     pub body: String,
     /// The app's own name for it.
     pub ident: String,
+    /// What the app groups its notifications by, if it does.
+    pub thread: String,
     /// The strings of what the app attached for itself (its `userInfo`), by key.
     pub info: Vec<(String, String)>,
 }
 
-/// The notifications of the apps whose bundle identifier starts with `bundle` that Notification
+/// The notifications of the app `bundle`, and of its helpers (`<bundle>.…`), that Notification
 /// Center holds now, oldest first.
 pub fn read(dir: &Path, bundle: &str) -> Result<Vec<Note>, Error> {
     let mut notes = Vec::new();
@@ -58,7 +60,7 @@ pub fn read(dir: &Path, bundle: &str) -> Result<Vec<Note>, Error> {
         if let Some(user) = req.and_then(|r| r.get("usda")) {
             user.strings("", &mut info, 0);
         }
-        notes.push(Note { id, at: at + EPOCH, title: text("titl"), subtitle: text("subt"), body: text("body"), ident: text("iden"), info });
+        notes.push(Note { id, at: at + EPOCH, title: text("titl"), subtitle: text("subt"), body: text("body"), ident: text("iden"), thread: text("thre"), info });
     }
     notes.sort_by(|a, b| a.at.total_cmp(&b.at).then(a.id.cmp(&b.id)));
     Ok(notes)
@@ -79,7 +81,7 @@ fn records(dir: &Path, bundle: &str) -> Result<Vec<(i64, f64, Vec<u8>)>, Error> 
     let bundle: String = bundle.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
     let sql = format!(
         "SELECT r.rec_id, coalesce(r.delivered_date, r.request_date, 0), r.data FROM record r JOIN app a ON a.app_id = r.app_id \
-         WHERE lower(a.identifier) LIKE '{}%' ORDER BY r.rec_id",
+         WHERE lower(a.identifier) = '{0}' OR lower(a.identifier) LIKE '{0}.%' ORDER BY r.rec_id",
         bundle.to_lowercase()
     );
     db.each(&sql, &[], |row| rows.push((row.int(0), row.double(1), row.blob(2))))?;
@@ -123,6 +125,8 @@ fn mask(s: &str) -> String {
 pub enum App {
     Slack,
     Teams,
+    /// Any other: the title is the conversation, the line under it who wrote.
+    Other,
 }
 
 /// A notification as a message of a conversation.
@@ -170,6 +174,11 @@ fn shape(app: App, note: &Note) -> Shape {
             let link = conversation.map(|c| format!("msteams:/l/chat/{}/conversations", c.replace(':', "%3A").replace('@', "%40")));
             Shape { key: conversation.unwrap_or(title).to_string(), name: title.to_string(), group, sender, text, link }
         }
+        App::Other => {
+            let subtitle = note.subtitle.trim();
+            let key = if note.thread.is_empty() { title } else { note.thread.as_str() };
+            Shape { key: key.to_string(), name: title.to_string(), group: !subtitle.is_empty(), sender: subtitle.to_string(), text: note.body.clone(), link: None }
+        }
     }
 }
 
@@ -182,6 +191,9 @@ pub struct Book {
     started: Option<f64>,
 }
 
+/// The conversation of what the Dock counts and no notification tells.
+pub const REST: &str = "~rest";
+
 /// An id that grows with time, whatever the app.
 fn message_id(at: f64, row: i64) -> i64 {
     ((at.max(0.0) as i64) << 20) | (row & 0xF_FFFF)
@@ -192,7 +204,11 @@ impl Book {
     /// `recent` latest of the others. An app leaves its notifications in Notification Center
     /// after their messages are read, so what waits are the last `waiting` of them: the number on
     /// the app's Dock icon. Without that number, those that came since the bar started.
-    pub fn update(&mut self, app: App, notes: &[Note], waiting: Option<usize>, recent: usize) -> Vec<Chat> {
+    ///
+    /// A number higher than the notifications there are (cleared, never shown, or not readable
+    /// at all) is one more conversation with the rest and no message, called `rest`.
+    pub fn update(&mut self, app: App, notes: &[Note], waiting: Option<usize>, recent: usize, rest: &str) -> Vec<Chat> {
+        self.chats.retain(|c| c.jid != REST);
         for chat in &mut self.chats {
             chat.unread = 0;
         }
@@ -231,6 +247,10 @@ impl Book {
             chat.messages.drain(..extra);
             chat.newest = chat.messages.last().map_or(0, |m| m.id);
             chat.at = chat.messages.last().map_or(0.0, |m| m.at);
+        }
+        if let Some(more) = waiting.map(|n| n.saturating_sub(notes.len())).filter(|n| *n > 0) {
+            let at = self.chats.iter().map(|c| c.at).fold(0.0, f64::max);
+            self.chats.push(Chat { jid: REST.into(), name: rest.to_string(), unread: more as i64, at, ..Default::default() });
         }
         // Of those read, only the latest stay
         self.chats.sort_by(|a, b| (b.unread > 0).cmp(&(a.unread > 0)).then(b.at.total_cmp(&a.at)));
@@ -496,7 +516,7 @@ mod tests {
     fn slack_notifications_become_conversations() {
         let mut book = Book::default();
         let notes = [note(1, "New message from Ada Neri", "Hai un minuto?"), note(2, "New message in #design", "Leo Bruni: nuova bozza: guarda"), note(3, "Nuovo messaggio da Ada Neri", "È urgente"), note(4, "Reminder: stand-up", "In 5 minutes")];
-        let chats = book.update(App::Slack, &notes, Some(4), 5);
+        let chats = book.update(App::Slack, &notes, Some(4), 5, "Slack");
         assert_eq!(chats.len(), 3);
         let ada = chats.iter().find(|c| c.name == "Ada Neri").unwrap();
         assert_eq!((ada.unread, ada.messages.len(), ada.group, ada.link.as_deref()), (2, 2, false, Some("slack://open?team=T0AB12CD3")));
@@ -504,23 +524,23 @@ mod tests {
         assert_eq!((design.group, design.messages[0].sender.as_str(), design.messages[0].text.as_str()), (true, "Leo Bruni", "nuova bozza: guarda"));
         assert!(chats.iter().any(|c| c.name == "Reminder: stand-up" && c.messages[0].text == "In 5 minutes"));
         // The Dock says two wait: the last two, and the rest is read
-        let chats = book.update(App::Slack, &notes, Some(2), 5);
+        let chats = book.update(App::Slack, &notes, Some(2), 5, "Slack");
         let unread = |name: &str| chats.iter().find(|c| c.name == name).unwrap().unread;
         assert_eq!((unread("Ada Neri"), unread("#design"), unread("Reminder: stand-up")), (1, 0, 1));
         // None: all of it is read, and still there to see
-        let chats = book.update(App::Slack, &notes, Some(0), 5);
+        let chats = book.update(App::Slack, &notes, Some(0), 5, "Slack");
         assert!(chats.iter().all(|c| c.unread == 0) && chats.len() == 3);
         // With no room for the read ones, they go
-        assert!(book.update(App::Slack, &notes, Some(0), 0).is_empty());
+        assert!(book.update(App::Slack, &notes, Some(0), 0, "Slack").is_empty());
     }
 
     #[test]
     fn without_the_dock_only_what_came_since_the_start_waits() {
         let mut book = Book::default();
         let old = note(1, "New message from Ada Neri", "ieri");
-        assert_eq!(book.update(App::Slack, std::slice::from_ref(&old), None, 5)[0].unread, 0);
+        assert_eq!(book.update(App::Slack, std::slice::from_ref(&old), None, 5, "Slack")[0].unread, 0);
         let new = Note { at: crate::time::now() + 1.0, ..note(2, "New message from Ada Neri", "ora") };
-        assert_eq!(book.update(App::Slack, &[old, new], None, 5)[0].unread, 1);
+        assert_eq!(book.update(App::Slack, &[old, new], None, 5, "Slack")[0].unread, 1);
     }
 
     #[test]
@@ -528,11 +548,28 @@ mod tests {
         let info = |id: &str| vec![("$objects".to_string(), "default_action".to_string()), ("$objects".to_string(), format!("{{\"actionType\":\"quickReply\",\"convId\":\"{id}\"}}")), ("$objects".to_string(), id.to_string())];
         let one = Note { info: info("19:aa_bb@unq.gbl.spaces"), ..note(1, "Ada Neri", "Ciao: ci sei?") };
         let many = Note { info: info("19:cc@thread.v2"), ..note(2, "Ada Neri", "Leo Bruni: eccomi") };
-        let chats = Book::default().update(App::Teams, &[one, many], Some(2), 5);
+        let chats = Book::default().update(App::Teams, &[one, many], Some(2), 5, "Slack");
         let direct = chats.iter().find(|c| c.jid == "19:aa_bb@unq.gbl.spaces").unwrap();
         assert_eq!((direct.group, direct.messages[0].text.as_str(), direct.link.as_deref()), (false, "Ciao: ci sei?", Some("msteams:/l/chat/19%3Aaa_bb%40unq.gbl.spaces/conversations")));
         let group = chats.iter().find(|c| c.jid == "19:cc@thread.v2").unwrap();
         assert_eq!((group.group, group.messages[0].sender.as_str()), (true, "Leo Bruni"));
+    }
+
+    #[test]
+    fn what_the_dock_counts_beyond_the_notifications_is_a_conversation_of_its_own() {
+        let mut book = Book::default();
+        let notes = [Note { subtitle: "Ada Neri".into(), thread: "t1".into(), ..note(1, "Preventivo", "Ecco la bozza") }];
+        let chats = book.update(App::Other, &notes, Some(4), 5, "Mail");
+        assert_eq!(chats.len(), 2);
+        let mail = chats.iter().find(|c| c.jid == "t1").unwrap();
+        assert_eq!((mail.name.as_str(), mail.unread, mail.messages[0].sender.as_str()), ("Preventivo", 1, "Ada Neri"));
+        let rest = chats.iter().find(|c| c.jid == REST).unwrap();
+        assert_eq!((rest.name.as_str(), rest.unread, rest.messages.len()), ("Mail", 3, 0));
+        // Not readable at all: only the number
+        let chats = Book::default().update(App::Other, &[], Some(2), 5, "Mail");
+        assert_eq!((chats.len(), chats[0].unread), (1, 2));
+        // And it goes with the number
+        assert_eq!(book.update(App::Other, &notes, Some(1), 5, "Mail").len(), 1);
     }
 
     #[test]

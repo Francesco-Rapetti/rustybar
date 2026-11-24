@@ -41,17 +41,66 @@ use crate::theme::Theme;
 use crate::time;
 use crate::ui::{Action, Align, Justify, Kind, Node, wrap};
 
-/// Whose chats a widget shows: all that differs between `whatsapp` and `telegram`.
+/// Whose chats a widget shows: all that differs between `whatsapp`, `telegram`, `slack`, `teams`
+/// and the widget of any other app (see `for_app`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Service {
     WhatsApp,
     Telegram,
     Slack,
     Teams,
+    /// Any app that notifies: what it tells macOS, as Slack and Teams.
+    App(&'static AppInfo),
+}
+
+/// An app with a widget of its own, for as long as the bar runs.
+#[derive(Debug, PartialEq, Eq)]
+pub struct AppInfo {
+    bundle: &'static str,
+    /// `app-<bundle>`: the widget's name, and of its defaults.
+    key: &'static str,
+    name: &'static str,
+}
+
+thread_local! {
+    /// The apps that got a widget, each once: a reload finds them here.
+    static APPS: RefCell<Vec<&'static AppInfo>> = const { RefCell::new(Vec::new()) };
 }
 
 impl Service {
-    const ALL: [Service; 4] = [Service::WhatsApp, Service::Telegram, Service::Slack, Service::Teams];
+    /// All of them: the four, then the apps with a widget.
+    fn all() -> Vec<Service> {
+        let mut all = vec![Service::WhatsApp, Service::Telegram, Service::Slack, Service::Teams];
+        APPS.with(|a| all.extend(a.borrow().iter().map(|a| Service::App(a))));
+        all
+    }
+
+    /// The service of the app `bundle`: Slack's and Teams' own, or one made for it.
+    fn of(bundle: &str) -> Service {
+        if bundle == super::call::SLACK {
+            return Service::Slack;
+        }
+        if bundle == super::call::TEAMS {
+            return Service::Teams;
+        }
+        APPS.with(|apps| {
+            let mut apps = apps.borrow_mut();
+            if let Some(app) = apps.iter().find(|a| a.bundle == bundle) {
+                return Service::App(app);
+            }
+            let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+            // As the Finder calls it; else the end of its identifier
+            let name = objc2_app_kit::NSWorkspace::sharedWorkspace()
+                .URLForApplicationWithBundleIdentifier(&NSString::from_str(bundle))
+                .and_then(|url| url.path())
+                .map(|path| objc2_foundation::NSFileManager::defaultManager().displayNameAtPath(&path).to_string())
+                .map(|name| name.strip_suffix(".app").unwrap_or(&name).to_string())
+                .unwrap_or_else(|| bundle.rsplit('.').next().unwrap_or(bundle).to_string());
+            let app: &'static AppInfo = Box::leak(Box::new(AppInfo { bundle: leak(bundle.to_string()), key: leak(format!("app-{bundle}")), name: leak(name) }));
+            apps.push(app);
+            Service::App(app)
+        })
+    }
 
     /// The name of the widget's kind: of its made-up data, its defaults and its triggers too.
     fn key(self) -> &'static str {
@@ -60,6 +109,7 @@ impl Service {
             Service::Telegram => "telegram",
             Service::Slack => "slack",
             Service::Teams => "teams",
+            Service::App(app) => app.key,
         }
     }
 
@@ -69,16 +119,19 @@ impl Service {
             Service::Telegram => "Telegram",
             Service::Slack => "Slack",
             Service::Teams => "Teams",
+            Service::App(app) => app.name,
         }
     }
 
-    /// WhatsApp's green, Telegram's blue, the red of Slack's mark, Teams' violet.
+    /// WhatsApp's green, Telegram's blue, the red of Slack's mark, Teams' violet; macOS's blue
+    /// for any other app.
     fn color(self) -> Rgba {
         match self {
             Service::WhatsApp => Rgba(0.145, 0.827, 0.4, 1.0),
             Service::Telegram => Rgba(0.165, 0.671, 0.933, 1.0),
             Service::Slack => Rgba(0.878, 0.118, 0.353, 1.0),
             Service::Teams => Rgba(0.482, 0.514, 0.922, 1.0),
+            Service::App(_) => Rgba(0.04, 0.518, 1.0, 1.0),
         }
     }
 
@@ -86,7 +139,7 @@ impl Service {
     fn ink(self) -> Rgba {
         match self {
             Service::WhatsApp => Rgba(0.0, 0.0, 0.0, 1.0),
-            Service::Telegram | Service::Slack | Service::Teams => Rgba(1.0, 1.0, 1.0, 1.0),
+            _ => Rgba(1.0, 1.0, 1.0, 1.0),
         }
     }
 
@@ -96,6 +149,7 @@ impl Service {
             Service::Telegram => tg::BUNDLE,
             Service::Slack => super::call::SLACK,
             Service::Teams => super::call::TEAMS,
+            Service::App(app) => app.bundle,
         }
     }
 
@@ -105,17 +159,57 @@ impl Service {
             Service::Telegram => "paperplane.fill",
             Service::Slack => "number",
             Service::Teams => "person.2.fill",
+            Service::App(_) => "app.badge.fill",
         }
     }
 
-    /// Slack and Teams: the messages are what the app notifies on this Mac (see `nc`).
+    /// Slack, Teams and any other app: the messages are what the app notifies on this Mac
+    /// (see `nc`).
     fn notified(self) -> Option<nc::App> {
         match self {
             Service::Slack => Some(nc::App::Slack),
             Service::Teams => Some(nc::App::Teams),
+            Service::App(_) => Some(nc::App::Other),
             _ => None,
         }
     }
+}
+
+/// The bundle identifier of an entry of `notifications`' `apps`: itself, or that of the app with
+/// that name in the Applications folders. None for a name no app has.
+pub fn bundle_of(entry: &str) -> Option<String> {
+    if entry.contains('.') && !entry.contains([' ', '/']) && !entry.ends_with(".app") {
+        return Some(entry.to_string());
+    }
+    let home = crate::config::home();
+    [std::path::PathBuf::from("/Applications"), "/System/Applications".into(), home.join("Applications")]
+        .iter()
+        .map(|dir| dir.join(format!("{}.app", entry.trim_end_matches(".app"))))
+        .filter(|path| path.exists())
+        .find_map(|path| objc2_foundation::NSBundle::bundleWithPath(&NSString::from_str(&path.to_string_lossy()))?.bundleIdentifier().map(|b| b.to_string()))
+}
+
+/// The app whose messages a kind of widget shows, for the kinds that show an app's.
+pub fn bundle_of_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "whatsapp" => Some(wa::BUNDLE),
+        "telegram" => Some(tg::BUNDLE),
+        "slack" => Some(super::call::SLACK),
+        "teams" => Some(super::call::TEAMS),
+        _ => None,
+    }
+}
+
+/// The widget of the app `bundle`, an entry of `notifications`' `apps`: what the app notifies,
+/// as `slack` shows Slack's, and its name in the bar. None with the made-up data for an app
+/// they have nothing of: `notifications` then keeps its badge.
+pub fn for_app(bundle: &str, options: &Options) -> Option<(String, WhatsApp)> {
+    let service = Service::of(bundle);
+    let mocking = std::env::var_os("RUSTYBAR_MOCK").is_some();
+    if mocking && matches!(service, Service::App(_)) {
+        return None;
+    }
+    Some((service.key().to_string(), WhatsApp::new(options, service)))
 }
 
 const WIDTH: f64 = 340.0;
@@ -140,7 +234,8 @@ enum State {
 /// What a read on a thread brings: WhatsApp's chats, or the notifications of Slack or Teams.
 enum Read {
     Chats(Vec<Chat>),
-    Notes(Vec<nc::Note>, Option<u64>),
+    /// The notifications, the number on the Dock icon, and whether macOS let read the former.
+    Notes(Vec<nc::Note>, Option<u64>, bool),
 }
 
 /// A message that just came, for the notice.
@@ -217,7 +312,7 @@ fn shared(service: Service) -> Option<Shared> {
 /// wave while a voice note plays; a click opens the chats. None with nothing unread and nothing
 /// playing, or without a `whatsapp` that wants the notch.
 pub fn island_mark(th: &Theme) -> Option<Node> {
-    let marks: Vec<Node> = Service::ALL.into_iter().filter_map(|service| service_mark(th, service)).collect();
+    let marks: Vec<Node> = Service::all().into_iter().filter_map(|service| service_mark(th, service)).collect();
     match marks.len() {
         0 => None,
         1 => marks.into_iter().next(),
@@ -252,7 +347,7 @@ fn service_mark(th: &Theme, service: Service) -> Option<Node> {
 pub fn guest_notice(rx: &Rx) -> Option<Node> {
     // Of the two, the one that came last
     let now = time::now();
-    let s = Service::ALL.into_iter().filter_map(shared).filter(|s| s.arrival.as_ref().is_some_and(|(_, at)| now - at < FRESH)).max_by(|a, b| a.arrival.as_ref().map(|a| a.1).partial_cmp(&b.arrival.as_ref().map(|a| a.1)).unwrap_or(std::cmp::Ordering::Equal))?;
+    let s = Service::all().into_iter().filter_map(shared).filter(|s| s.arrival.as_ref().is_some_and(|(_, at)| now - at < FRESH)).max_by(|a, b| a.arrival.as_ref().map(|a| a.1).partial_cmp(&b.arrival.as_ref().map(|a| a.1)).unwrap_or(std::cmp::Ordering::Equal))?;
     let (chat, _) = s.arrival.as_ref()?;
     let theme = notch_theme(rx.theme, s.service);
     notice_node(&theme, s.service, &s.widget, chat, chat.messages.last()?, s.preview, WIDTH)
@@ -296,6 +391,11 @@ pub struct WhatsApp {
     telegram: Option<tg::Handle>,
     /// Slack's and Teams' conversations, made of their notifications.
     book: nc::Book,
+    /// macOS lets read those notifications; false, only the Dock's number is known.
+    texts: bool,
+    /// The app was seen with a number on its Dock icon, now or before (in the defaults): then
+    /// that number says what waits.
+    badged: bool,
     /// The messages whose file Telegram is asked for, after a click.
     fetching: HashSet<i64>,
     /// A read is under way; `again`, the database changed meanwhile.
@@ -318,9 +418,12 @@ fn count(n: i64) -> String {
 }
 
 /// The service's sign on the notch's black, where the app's icon (WhatsApp's is dark, as macOS
-/// draws it now) is lost.
+/// draws it now) is lost; for any other app there's only its icon.
 fn sign(service: Service, size: f64, color: Rgba) -> Node {
-    Node::symbol(service.symbol(), size, Weight::Semibold, color).key("icon")
+    match service {
+        Service::App(app) => Node::app_icon(app.bundle, size + 3.0).opacity(if color == service.color() { 1.0 } else { 0.6 }).key("icon"),
+        _ => Node::symbol(service.symbol(), size, Weight::Semibold, color).key("icon"),
+    }
 }
 
 /// A voice note plays: for the notch.
@@ -337,9 +440,10 @@ fn tally(th: &Theme, service: Service, new: i64, held: i64) -> (i64, Rgba) {
 /// The app's icon; the service's sign in its color where the app isn't installed.
 fn glyph(service: Service, size: f64) -> Node {
     thread_local! {
-        static INSTALLED: [bool; 4] = Service::ALL.map(|s| objc2_app_kit::NSWorkspace::sharedWorkspace().URLForApplicationWithBundleIdentifier(&NSString::from_str(s.bundle())).is_some());
+        static INSTALLED: RefCell<HashMap<&'static str, bool>> = RefCell::new(HashMap::new());
     }
-    if INSTALLED.with(|i| i[service as usize]) { Node::app_icon(service.bundle(), size).key("icon") } else { Node::symbol(service.symbol(), size - 1.0, Weight::Semibold, service.color()).key("icon") }
+    let installed = INSTALLED.with(|i| *i.borrow_mut().entry(service.bundle()).or_insert_with(|| objc2_app_kit::NSWorkspace::sharedWorkspace().URLForApplicationWithBundleIdentifier(&NSString::from_str(service.bundle())).is_some()));
+    if installed { Node::app_icon(service.bundle(), size).key("icon") } else { Node::symbol(service.symbol(), size - 1.0, Weight::Semibold, service.color()).key("icon") }
 }
 
 /// `19:42`.
@@ -419,6 +523,8 @@ impl WhatsApp {
             channels: options.bool("channels").unwrap_or(false),
             telegram: None,
             book: nc::Book::default(),
+            texts: true,
+            badged: mock.is_none() && defaults().is_some_and(|d| d.boolForKey(&NSString::from_str(&format!("{}.badged", service.key())))),
             fetching: HashSet::new(),
             recent: options.f64("recent").map_or(5, |n| n.max(0.0) as usize),
             muted: options.bool("muted").unwrap_or(false),
@@ -532,16 +638,34 @@ impl WhatsApp {
         cx.background(
             move || match service.notified() {
                 // With the number on the app's Dock icon: how many of them still wait
-                Some(_) => nc::read(&nc::database(), service.bundle()).map(|notes| Read::Notes(notes, super::notifications::dock_count(service.bundle()))),
+                Some(_) => {
+                    let waiting = super::notifications::dock_count(service.bundle());
+                    match nc::read(&nc::database(), service.bundle()) {
+                        Ok(notes) => Ok(Read::Notes(notes, waiting, true)),
+                        // Without the texts there's still the number, where the Dock can be read
+                        Err(wa::Error::Denied) if waiting.is_some() => Ok(Read::Notes(Vec::new(), waiting, false)),
+                        Err(e) => Err(e),
+                    }
+                }
                 None => wa::read(&wa::container(), recent).map(Read::Chats),
             },
             |w: &mut WhatsApp, result, cx| {
                 w.reading = false;
                 match result {
                     Ok(Read::Chats(chats)) => w.loaded(chats, cx),
-                    Ok(Read::Notes(notes, waiting)) => {
+                    Ok(Read::Notes(notes, waiting, texts)) => {
                         let Some(app) = w.service.notified() else { return };
-                        let chats = w.book.update(app, &notes, waiting.map(|n| n as usize), w.recent);
+                        w.texts = texts;
+                        // An app that never has a number on its icon (Calendar) says nothing
+                        // with none: what it notified since the bar started waits
+                        if waiting.is_some_and(|n| n > 0) && !w.badged {
+                            w.badged = true;
+                            if let (Some(d), None) = (defaults(), &w.mock) {
+                                d.setBool_forKey(true, &NSString::from_str(&format!("{}.badged", w.service.key())));
+                            }
+                        }
+                        let waiting = waiting.filter(|_| w.badged || !matches!(w.service, Service::App(_)));
+                        let chats = w.book.update(app, &notes, waiting.map(|n| n as usize), w.recent, w.service.name());
                         w.loaded(chats, cx);
                     }
                     Err(e) => {
@@ -868,6 +992,26 @@ impl WhatsApp {
             )),
             State::Failed(e) => rows.push(note("exclamationmark.triangle.fill", th.red, vec![e.clone()])),
             State::Ready => {
+                if !self.texts {
+                    rows.push(note(
+                        "lock.fill",
+                        th.yellow,
+                        vec![format!(
+                            "{} {} {}",
+                            t("Per leggere qui chi scrive e cosa, RustyBar deve poter leggere le notifiche di", "To read here who writes and what, RustyBar must be let read the notifications of"),
+                            self.service.name(),
+                            t("con Accesso completo al disco; poi riavvia la barra.", "with Full Disk Access; then restart the bar.")
+                        )],
+                    ));
+                    rows.push(
+                        rx.row_button(
+                            vec![Node::text(t("Apri Accesso completo al disco…", "Open Full Disk Access…"), th.font(), th.text).key("text")],
+                            vec![],
+                            Action::Open("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles".into()),
+                        )
+                        .key("privacy"),
+                    );
+                }
                 let waiting = self.waiting();
                 for c in &waiting {
                     rows.push(self.chat_row(rx, c, now));
@@ -1684,6 +1828,19 @@ mod tests {
         w.seen.clear();
         w.state = State::Ready;
         w
+    }
+
+    #[test]
+    fn an_entry_of_apps_is_a_bundle_or_the_name_of_an_app() {
+        assert_eq!(bundle_of("com.example.chat").as_deref(), Some("com.example.chat"));
+        assert_eq!(bundle_of("Calendar").as_deref(), Some("com.apple.iCal"));
+        assert_eq!(bundle_of("No Such App Anywhere"), None);
+        // Slack's and Teams' are the widgets made for them, any other app's its own, once
+        assert_eq!(Service::of(crate::widgets::call::SLACK), Service::Slack);
+        let chat = Service::of("com.example.chat");
+        assert_eq!((chat.key(), chat.bundle(), chat.name()), ("app-com.example.chat", "com.example.chat", "chat"));
+        assert_eq!(Service::of("com.example.chat"), chat);
+        assert!(Service::all().contains(&chat) && chat.notified() == Some(nc::App::Other));
     }
 
     #[test]

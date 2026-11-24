@@ -63,7 +63,7 @@ fn info(kind: &str) -> (&'static str, &'static str, &'static str) {
         "audio" => ("Audio", "speaker.wave.2.fill", t("L'uscita e l'ingresso in uso, con il volume.", "The output and input in use, with their volume.")),
         "network" => (t("Rete", "Network"), "wifi", t("La VPN, la rete Wi-Fi o Ethernet.", "The VPN, the Wi-Fi network or Ethernet.")),
         "events" => (t("Eventi", "Events"), "calendar", t("Il prossimo evento di oggi dai calendari del Mac.", "Today's next event from the Mac's calendars.")),
-        "notifications" => (t("Notifiche", "Notifications"), "bell.badge.fill", t("I badge del Dock delle app scelte, i crash di RustyBar e gli aggiornamenti di Homebrew.", "The Dock badges of the apps you choose, RustyBar's crashes and Homebrew updates.")),
+        "notifications" => (t("Notifiche", "Notifications"), "bell.badge.fill", t("I crash di RustyBar e gli aggiornamenti di Homebrew; ogni app scelta è un widget suo lì accanto, con ciò che notifica.", "RustyBar's crashes and Homebrew updates; each app you choose is a widget of its own beside it, with what it notifies.")),
         "home" => ("Home Assistant", "house.fill", t("I dispositivi di casa, in diretta, e una plancia per comandarli.", "The devices of the house, live, and a dashboard to control them.")),
         "claude" => ("Claude", "sparkle", t("Quanto dei limiti del piano ha usato ogni account Claude.", "How much of the plan's limits each Claude account has used.")),
         "docker" => ("Docker", "shippingbox.fill", t("I container, con i pulsanti per gestirli, e lo spazio su disco da pulire.", "The containers, with buttons to manage them, and the disk space to clean up.")),
@@ -756,7 +756,7 @@ fn tilde(path: &std::path::Path) -> String {
 
 fn notifications(f: &mut Form, spot: &Spot) {
     f.group(Some(t("Badge del Dock", "Dock badges")));
-    f.tokens_at(t("App", "Apps"), Some(t("Bundle id o nomi del Dock, come com.tinyspeck.slackmacgap o Mail; servono i permessi di Accessibilità", "Bundle ids or Dock names, such as com.tinyspeck.slackmacgap or Mail; it needs Accessibility")), &spot.k("apps"), t("nessuna", "none"));
+    f.tokens_at(t("App", "Apps"), Some(t("Bundle id o nomi di app, come com.tinyspeck.slackmacgap o Mail: ognuna è un widget suo con ciò che notifica; servono Accessibilità e, per i testi, Accesso completo al disco", "Bundle ids or names of apps, such as com.tinyspeck.slackmacgap or Mail: each is a widget of its own with what it notifies; it needs Accessibility and, for the texts, Full Disk Access")), &spot.k("apps"), t("nessuna", "none"));
     let s = spot.k("apps");
     let pick = f.button(t("Aggiungi un'app…", "Add an app…"), move || {
         if let Some(id) = form::choose_file(Some(std::path::Path::new("/Applications")), true).and_then(|p| form::bundle_id(&p)) {

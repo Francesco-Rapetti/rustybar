@@ -369,10 +369,25 @@ impl App {
             self.error = Some(e);
         }
         let layout = self.config.layout.clone();
+        // What each name of the layout is, to know which apps have a widget already
+        let layout_kinds: Vec<String> = layout.left.iter().chain(&layout.center).chain(&layout.right).map(|n| self.config.widgets.get(n).and_then(|w| w.get("type")).and_then(|t| t.as_str()).unwrap_or(n).to_string()).collect();
         for (side, names) in [(Side::Left, &layout.left), (Side::Center, &layout.center), (Side::Right, &layout.right)] {
             for name in names {
-                let options = Options(self.config.widgets.get(name).cloned().unwrap_or_default());
+                let mut options = Options(self.config.widgets.get(name).cloned().unwrap_or_default());
                 let kind = options.str("type").unwrap_or(name).to_string();
+                // Each app of `notifications` is a widget of its own before it, which shows what
+                // the app notifies; one that already has its widget in the layout isn't twice
+                if kind == "notifications" && !lua_widgets.contains(name) {
+                    let mut own = Vec::new();
+                    for bundle in options.strings("apps").iter().filter_map(|entry| widgets::whatsapp::bundle_of(entry)) {
+                        if !own.contains(&bundle) && !layout_kinds.iter().any(|k| widgets::whatsapp::bundle_of_kind(k) == Some(bundle.as_str())) {
+                            let Some((name, widget)) = widgets::whatsapp::for_app(&bundle, &Options(self.config.widgets.get("apps").cloned().unwrap_or_default())) else { continue };
+                            self.slots.push(Slot { name, side, widget: Box::new(widget), timers: Vec::new(), failed: None });
+                        }
+                        own.push(bundle);
+                    }
+                    options.0.insert(widgets::notifications::OWN.into(), toml::Value::Array(own.into_iter().map(toml::Value::String).collect()));
+                }
                 let widget: Option<Box<dyn Widget>> = if lua_widgets.contains(name) {
                     Some(Box::new(crate::lua::LuaWidget::new(name)))
                 } else {

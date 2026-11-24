@@ -86,6 +86,8 @@ struct Mock {
 
 pub struct Notifications {
     apps: Vec<String>,
+    /// The apps of `apps` with a widget of their own (see `OWN`), by bundle: not counted here.
+    own: Vec<String>,
     brew: Option<Brew>,
     /// None: no Accessibility permission.
     badges: Option<Vec<Badge>>,
@@ -109,6 +111,10 @@ enum Brew {
     All,
     File(PathBuf),
 }
+
+/// The option the bar sets itself: the apps of `apps` that it gave a widget of their own, which
+/// shows what they notify as `slack` does.
+pub const OWN: &str = "_own";
 
 /// The number of a badge: its digits (`99+` is 99), none for one without (a dot).
 fn level(label: &str) -> Option<u64> {
@@ -165,6 +171,7 @@ impl Notifications {
         let mock = crate::mock::load::<Mock>("notifications");
         Notifications {
             apps: options.strings("apps"),
+            own: options.strings(OWN),
             brew,
             badges: mock.as_ref().map(|m| m.badges.clone()),
             dismissed: if mock.is_some() { HashMap::new() } else { load_dismissed() },
@@ -180,7 +187,7 @@ impl Notifications {
     /// The listed apps with a badge not dismissed, in the order of `apps`.
     fn app_badges(&self) -> Vec<&Badge> {
         let Some(badges) = &self.badges else { return Vec::new() };
-        self.apps.iter().flat_map(|app| badges.iter().filter(move |b| (b.bundle == *app || b.name == *app) && self.shown(b))).collect()
+        self.apps.iter().flat_map(|app| badges.iter().filter(move |b| (b.bundle == *app || b.name == *app) && self.shown(b) && !self.own.contains(&b.bundle))).collect()
     }
 
     fn shown(&self, badge: &Badge) -> bool {
@@ -887,6 +894,7 @@ mod tests {
         // With the made-up data, so that nothing goes in the defaults
         let mut w = Notifications {
             apps: vec!["com.example.chat".into()],
+            own: Vec::new(),
             brew: None,
             badges: Some(vec![badge("3")]),
             dismissed: HashMap::new(),

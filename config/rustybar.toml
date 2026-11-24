@@ -121,7 +121,9 @@ large_width = 3840        # from this width a screen is "large"
 # imminent = 5            # red
 #
 # [widgets.notifications]
-# apps = ["com.tinyspeck.slackmacgap", "Mail"]   # Dock badges to count: bundle ids or Dock names
+# apps = ["com.tinyspeck.slackmacgap", "Mail"]   # each a widget of its own before this one, with
+#                          # what the app notifies, as slack: bundle ids, or names of apps
+# [widgets.apps]           # the options of those widgets: the same as whatsapp's (notch, always…)
 # brewfile = "~/Brewfile"  # the Homebrew packages to check for updates, every hour
 # brew = true              # or all of them
 #
