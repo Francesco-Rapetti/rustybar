@@ -27,6 +27,8 @@ pub struct Hit {
     pub hover: Option<Rgba>,
     /// What a drag across it sends, and the value it starts from (see `Node::on_slide`).
     pub slide: Option<(Action, f64)>,
+    /// The highlight under the mouse is of what's under it (see `Node::hover_below`).
+    pub hover_below: bool,
     pub kind: HitKind,
     pub tip: Option<String>,
 }
@@ -657,7 +659,7 @@ impl Surface {
                     (HitKind::Click, hover) => Some(hover.unwrap_or(highlight)),
                     (_, hover) => hover,
                 };
-                self.hits.push(Hit { path: path.clone(), rect: r, action: node.on_click.clone(), hover, slide: node.on_slide.clone(), kind, tip: node.tip.clone() });
+                self.hits.push(Hit { path: path.clone(), rect: r, action: node.on_click.clone(), hover, slide: node.on_slide.clone(), hover_below: node.hover_below, kind, tip: node.tip.clone() });
             }
         }
 
@@ -1442,7 +1444,7 @@ pub fn slider_value(rect: CGRect, x: f64) -> f64 {
 }
 
 /// Text that reads on `background`: dark on light colors, light on dark ones.
-fn ink(background: Rgba) -> Rgba {
+pub fn ink(background: Rgba) -> Rgba {
     let luminance = 0.2126 * background.0 + 0.7152 * background.1 + 0.0722 * background.2;
     if luminance > 0.6 { Rgba(0.0, 0.0, 0.0, 0.75) } else { Rgba(1.0, 1.0, 1.0, 0.92) }
 }

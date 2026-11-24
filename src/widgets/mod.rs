@@ -24,6 +24,7 @@ pub mod docker;
 pub mod events;
 pub mod fn_keys;
 pub mod front_app;
+pub mod gauge;
 pub mod hid;
 pub mod home;
 pub mod meet;

@@ -28,6 +28,10 @@ pub struct Node {
     /// clear one (alpha 0): none, the background stays as it is.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hover: Option<Rgba>,
+    /// Under the mouse, the highlight goes to what's under it and not to it: a part of a pill
+    /// with a click or a drag of its own, over a pill that lights up as one.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub hover_below: bool,
     /// What it does, in a few words under it while the mouse rests on it in a popup: for a
     /// button that is only an icon, or a click whose result isn't plain from what it shows.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -345,6 +349,12 @@ impl Node {
     /// `on_slide`).
     pub fn slide(mut self, action: Action, value: f64) -> Node {
         self.on_slide = Some((action, value));
+        self
+    }
+
+    /// Leaves the highlight under the mouse to what's under it (see `hover_below`).
+    pub fn hover_below(mut self) -> Node {
+        self.hover_below = true;
         self
     }
 

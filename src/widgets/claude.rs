@@ -3,6 +3,11 @@
 //! - Bar: the Claude spark (the Claude app's menu bar icon, in the account's color; `✻` without
 //!   the app) with the 5-hour session and the week, `42% · 31%`, yellow from `warning`, red from
 //!   `critical`, gray while the numbers are stale (the last reading failed, e.g. without network).
+//!   On the pill itself, as on `audio`'s, a line along the bottom as long as the session and a
+//!   fainter one along the top as long as the week, in the account's color, yellow and red as
+//!   the numbers; `usage` draws them as `veil`, `solid` or `mark` instead (see `gauge::Look`), or
+//!   not at all (`none`), `bars = "session"` leaves the session alone, over all of the pill, and
+//!   `numbers = false` leaves the lines to say it, with the numbers in the popup.
 //!   The account of `~/.claude` is orange; `accounts` adds others, each with its Claude Code config
 //!   dir (`CLAUDE_CONFIG_DIR`) and color. With more than one, each has its own pill, the others on
 //!   the left, with the time the session resets (`42% · 31% · 17:07`) and a popup of its own;
@@ -40,7 +45,7 @@ use objc2_foundation::{NSString, NSUserDefaults, ns_string};
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{Cx, Event, Rx, Widget};
+use super::{Cx, Event, Rx, Widget, gauge};
 use crate::config::Options;
 use crate::gfx::{Rgba, Weight};
 use crate::i18n::t;
@@ -329,7 +334,22 @@ fn note(rx: &Rx, symbol: &str, color: Rgba, text: &str, detail: Option<&str>, ke
         .key(key)
 }
 
+/// Which usage a pill draws on itself.
+#[derive(Clone, Copy, PartialEq)]
+enum Bars {
+    /// The session along its bottom, the week along its top.
+    Both,
+    /// The session over all of it.
+    Session,
+}
+
 pub struct Claude {
+    /// How the pills draw the usage on themselves (`usage`), none for the numbers alone.
+    look: Option<gauge::Look>,
+    /// Which of the two (`bars`).
+    bars: Bars,
+    /// The numbers in the pills (`numbers`).
+    numbers: bool,
     accounts: Vec<Setup>,
     data: Vec<Option<Account>>,
     fetched: Vec<Option<Instant>>,
@@ -384,6 +404,9 @@ impl Claude {
             None => defaults().and_then(|d| d.stringForKey(ns_string!(LATEST))).and_then(|id| accounts.iter().position(|a| a.id() == id.to_string())),
         };
         Claude {
+            look: gauge::Look::named(options.str("usage").unwrap_or("line")),
+            bars: if options.str("bars") == Some("session") { Bars::Session } else { Bars::Both },
+            numbers: options.bool("numbers").unwrap_or(true),
             latest: latest.filter(|i| *i < n),
             accounts,
             data,
@@ -505,9 +528,10 @@ impl Claude {
         self.latest.filter(|&i| self.data[i].as_ref().is_none_or(|a| a.session.is_some())).unwrap_or_else(|| self.busiest())
     }
 
-    /// The spark of the Claude app in the account's color, `✻` without the app.
-    fn spark(&self, rx: &Rx, i: usize) -> Node {
-        let color = self.color(rx, i);
+    /// The spark of the Claude app in the account's color (or in `ink`, over a fill of that
+    /// color), `✻` without the app.
+    fn spark(&self, rx: &Rx, i: usize, ink: Option<Rgba>) -> Node {
+        let color = ink.unwrap_or(self.color(rx, i));
         let icon = if std::path::Path::new(ICON).exists() { Node::image(ICON, 22.0, 22.0, Some(color)) } else { Node::text("✻", rx.theme.font_with(Weight::Bold, 15.0), color) };
         icon.key("icon")
     }
@@ -523,24 +547,45 @@ impl Claude {
         });
     }
 
+    /// The pill of account `i`: its spark, the numbers (unless `numbers = false`) and, with
+    /// `time`, when the session resets; on it the session along the bottom and the week, fainter,
+    /// along the top (the session alone over all of it with `bars = "session"`), drawn as `usage`
+    /// says, in the account's color, which turns yellow and red as the numbers do.
     fn pill(&self, rx: &Rx, i: usize, time: bool, action: Action) -> Node {
         let th = rx.theme;
-        let mut children = vec![self.spark(rx, i)];
-        if let Some(a) = &self.data[i]
-            && let (Some(s), Some(w)) = (&a.session, &a.week)
-        {
-            let mut label = format!("{:.0}% · {:.0}%", s.percent, w.percent);
-            if time && let Some(reset) = s.reset {
-                let tm = crate::time::local(reset);
-                label.push_str(&format!(" · {:02}:{:02}", tm.tm_hour, tm.tm_min));
+        let usage = self.data[i].as_ref().and_then(|a| Some((a, a.session.as_ref()?, a.week.as_ref()?)));
+        // Without the levels the numbers are all there is
+        let numbers = self.numbers || self.look.is_none();
+        let row = |ink: Option<Rgba>| {
+            let mut children = vec![self.spark(rx, i, ink)];
+            if let Some((a, s, w)) = usage {
+                let mut label = Vec::new();
+                if numbers {
+                    label.push(format!("{:.0}% · {:.0}%", s.percent, w.percent));
+                }
+                if time && let Some(reset) = s.reset {
+                    let tm = crate::time::local(reset);
+                    label.push(format!("{:02}:{:02}", tm.tm_hour, tm.tm_min));
+                }
+                if !label.is_empty() {
+                    let c = if a.stale { th.overlay } else { th.level(s.percent.max(w.percent), self.warning, self.critical, th.text) };
+                    children.push(Node::text(label.join(" · "), th.font(), ink.unwrap_or(c)).key("label"));
+                }
             }
-            let c = if a.stale { th.overlay } else { th.level(s.percent.max(w.percent), self.warning, self.critical, th.text) };
-            children.push(Node::text(label, th.font(), c).key("label"));
-        }
-        // The image has room around the spark: less padding on its side
-        let mut pill = rx.pill(children).gap(4.0).key(format!("account-{i}")).click(action);
-        pill.style.padding[3] = (th.pill_padding - 4.0).max(0.0);
-        pill
+            // The image has room around the spark: less padding on its side
+            Node::row(children).gap(4.0).padding(0.0, th.pill_padding, 0.0, (th.pill_padding - 4.0).max(0.0)).height(th.pill_height)
+        };
+        let band = |percent: f64, dim: bool| {
+            let stale = usage.is_some_and(|(a, ..)| a.stale);
+            let color = if stale { th.overlay } else { th.level(percent, self.warning, self.critical, self.color(rx, i)) };
+            // A faint fill is closer to the pill than to its color: the text as it is
+            gauge::Band { value: percent / 100.0, color, ink: if dim { th.text } else { crate::ui::ink(color) }, dim, slide: None }
+        };
+        let (top, bottom) = match (self.look, usage) {
+            (Some(_), Some((_, s, w))) => ((self.bars == Bars::Both).then(|| band(w.percent, true)), Some(band(s.percent, false))),
+            _ => (None, None),
+        };
+        gauge::pill(rx, self.look.unwrap_or(gauge::Look::Line), &row, top, bottom, action).key(format!("account-{i}"))
     }
 
     /// The header of account `i`: its spark, name and plan, the email and the organization (or
@@ -588,7 +633,7 @@ impl Claude {
             bottom.extend(age.map(|(text, color)| Node::text(text, small.clone(), color).key("age")));
             lines.push(Node::row(bottom).gap(6.0).width(WIDE - SPARK).key("bottom"));
         }
-        Node::row(vec![Node::row(vec![self.spark(rx, i)]).width(26.0).justify(Justify::Center).key("spark"), Node::column(lines).gap(2.0).key("lines")])
+        Node::row(vec![Node::row(vec![self.spark(rx, i, None)]).width(26.0).justify(Justify::Center).key("spark"), Node::column(lines).gap(2.0).key("lines")])
             .gap(8.0)
             .align(Align::Center)
             .key("header")

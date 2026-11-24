@@ -151,6 +151,11 @@ large_width = 3840        # from this width a screen is "large"
 # color = "#d97757"       # of the account of ~/.claude
 # warning = 75            # the numbers turn yellow from here
 # critical = 90           # and red from here
+# usage = "line"          # the usage drawn on the pill, in the account's color: "line" (along
+#                         # its edges), "veil", "solid", "mark" (as `volume` of audio), "none"
+# bars = "both"           # the session along the bottom and the week along the top; "session":
+#                         # the session alone, over all of the pill
+# numbers = true          # false: the spark and the reset time alone, the numbers in the popup
 # accounts = [{ dir = "~/.claude-work", color = "sky" }]   # more Claude Code config dirs
 #
 # Two widgets of the same kind: give the second a name of its own and its type.

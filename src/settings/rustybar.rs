@@ -607,7 +607,7 @@ pub fn widget(f: &mut Form, name: &str, lua: &[String]) {
         }
         "claude" => {
             claude(f, &spot);
-            &["color", "warning", "critical", "accounts"]
+            &["color", "warning", "critical", "usage", "bars", "numbers", "accounts"]
         }
         "now_playing" => {
             f.group(Some(t("Opzioni", "Options")));
@@ -996,6 +996,17 @@ fn claude(f: &mut Form, spot: &Spot) {
     f.row(t("Colore di ~/.claude", "Color of ~/.claude"), Some(t("L'account di Claude Code predefinito", "The default Claude Code account")), &well);
     f.number_at(t("Gialla da", "Yellow from"), Some(t("In percentuale del limite", "In percent of the limit")), &spot.k("warning"), 75.0, Num::new(0.0, 100.0, 1.0, 0));
     f.number_at(t("Rossa da", "Red from"), None, &spot.k("critical"), 90.0, Num::new(0.0, 100.0, 1.0, 0));
+    let looks = opts(&[
+        ("line", t("Linee sui bordi", "Lines along the edges")),
+        ("veil", t("Velo sulla pillola", "Veil over the pill")),
+        ("solid", t("Pillola piena", "Filled pill")),
+        ("mark", t("Velo con tacca", "Veil with a mark")),
+        ("none", t("Solo i numeri", "The numbers alone")),
+    ]);
+    f.choice_at(t("Uso sulla pillola", "Usage on the pill"), Some(t("Quanto è usato, disegnato sulla pillola nel colore dell'account", "How much is used, drawn on the pill in the account's color")), &spot.k("usage"), looks, "line");
+    let bars = opts(&[("both", t("Sessione in basso, settimana in alto", "Session at the bottom, week at the top")), ("session", t("Solo la sessione", "The session alone"))]);
+    f.choice_at(t("Cosa disegna", "What it draws"), None, &spot.k("bars"), bars, "both");
+    f.toggle_at(t("Numeri nella pillola", "Numbers in the pill"), Some(t("Senza, restano la scintilla e l'ora del reset; i numeri sono nel popup", "Without them the spark and the reset time stay; the numbers are in the popup")), &spot.k("numbers"), true);
 
     f.group(Some(t("Altri account", "More accounts")));
     let accounts = spot.k("accounts");

@@ -1,5 +1,5 @@
 //! The sound: in the bar the output and the input in use, with the battery of Bluetooth ones and
-//! the volume of each, drawn as `volume` says (see `Look`): by default the pill has a part for the
+//! the volume of each, drawn as `volume` says (see `Look` and `gauge`): by default the pill has a part for the
 //! output and one for the input, each with a line at its bottom as long as its volume, and a drag
 //! across a part changes it; or the part is filled that far (`veil`, `solid`, `mark`), or each has
 //! a slider (`slider`), or nothing (`none`). The sliders are the first thing
@@ -24,7 +24,7 @@ use objc2::msg_send;
 use objc2_foundation::NSString;
 use serde::Deserialize;
 
-use super::{Cx, Event, Handle, Rx, Widget};
+use super::{Cx, Event, Handle, Rx, Widget, gauge};
 use crate::config::Options;
 use crate::gfx::{Rgba, Weight};
 use crate::i18n::t;
@@ -39,19 +39,12 @@ const ICON: f64 = 30.0;
 /// the last of the drag would put the fill back for a moment.
 const HOLD: f64 = 0.4;
 
-/// How the bar shows a volume (`volume`). All but `Slider` and `None` split the pill into a part
-/// for the output and one for the input, which a drag across changes the volume of.
+/// How the bar shows a volume (`volume`): on the pill itself (see `gauge::Look`), split into a
+/// part for the output and one for the input, which a drag across changes the volume of; or
+/// with a slider after each device, with the percentage inside; or not at all.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Look {
-    /// A line along the bottom of the part, as long as the volume.
-    Line,
-    /// The part filled up to the volume with a veil of the accent, under the text.
-    Veil,
-    /// Filled with the accent itself; the text over it in the color that reads on it.
-    Solid,
-    /// A lighter veil that ends with a line, as a slider's knob.
-    Mark,
-    /// A slider after each device, with the percentage inside.
+    Pill(gauge::Look),
     Slider,
     None,
 }
@@ -207,15 +200,12 @@ impl Audio {
     pub fn new(options: &Options) -> Audio {
         Audio {
             look: match options.str("volume") {
-                Some("veil") => Look::Veil,
-                Some("solid") => Look::Solid,
-                Some("mark") => Look::Mark,
                 Some("slider") => Look::Slider,
                 Some("none") => Look::None,
-                Some("line") => Look::Line,
+                Some(name) if gauge::Look::named(name).is_some() => Look::Pill(gauge::Look::named(name).unwrap()),
                 // `sliders = false`, from before there was a choice
                 _ if options.bool("sliders") == Some(false) => Look::None,
-                _ => Look::Line,
+                _ => Look::Pill(gauge::Look::Line),
             },
             set: [None; 2],
             devices: None,
@@ -378,64 +368,38 @@ impl Audio {
     fn part(&self, rx: &Rx, output: bool, volume: Volume, content: &dyn Fn(Rgba) -> Vec<Node>, first: bool, last: bool) -> Node {
         let th = rx.theme;
         let side = if output { "out" } else { "in" };
-        let level = match volume {
-            Volume::Level(v) => Some(v),
-            _ => None,
-        };
         let row = |color: Rgba| Node::row(content(color)).gap(5.0).padding(0.0, th.pill_padding, 0.0, th.pill_padding).height(th.pill_height);
-        let mut part = row(th.text).key(format!("{side}-part")).click(rx.toggle_popup());
-        let Some(v) = level.map(|v| v as f64 / 100.0) else { return part };
-        part = part.slide(rx.action(&format!("volume:{side}")), v);
-        let round = th.pill_radius.min(th.pill_height / 2.0);
-        let fill = self.fill(rx, v, th.primary, false, [if first { round } else { 0.0 }, if last { round } else { 0.0 }], row(th.on_primary));
-        part.push(fill)
+        let part = row(th.text).key(format!("{side}-part")).click(rx.toggle_popup());
+        let Volume::Level(v) = volume else { return part };
+        let band = self.band(rx, output, v, th.primary);
+        let round = gauge::round(rx);
+        let fill = gauge::fill(rx, self.on_pill(), &band, false, [if first { round } else { 0.0 }, if last { round } else { 0.0 }], row(band.ink));
+        part.slide(rx.action(&format!("volume:{side}")), band.value).push(fill)
     }
 
-    /// A volume over the node it's pushed in, as `look` draws it in `color`: a fill up to it, or
-    /// a line along the bottom edge (the top one with `top`) that leaves out `round` at the left
-    /// and at the right, where the pill bends. `copy`: what's under it, in the color that reads
-    /// on a solid fill, where it is in the node.
-    fn fill(&self, rx: &Rx, v: f64, color: Rgba, top: bool, round: [f64; 2], copy: Node) -> Node {
-        let th = rx.theme;
-        let fill = match self.look {
-            Look::Veil => Node::row(vec![]).background(color.faded(0.3)).level(v),
-            Look::Mark => Node::row(vec![]).background(color.faded(0.16)).level(v).level_edge(2.0, color),
-            Look::Solid => Node::row(vec![copy.key("copy")]).align(Align::Start).background(color).level(v),
-            // The line, on the straight part of the pill's edge, inside its border
-            _ => {
-                let inset = if th.glass { 0.0 } else { th.pill_border };
-                let line = Node::row(vec![]).background(color).radius(1.0).level(v).key("line");
-                Node::column(vec![Node::row(vec![line]).height(2.0).key("track")])
-                    .justify(if top { Justify::Start } else { Justify::End })
-                    .padding(if top { inset } else { 0.0 }, round[1], if top { 0.0 } else { inset }, round[0])
-                    .level(1.0)
-            }
-        };
-        fill.key("fill")
+    /// How the volumes are drawn on the pill.
+    fn on_pill(&self) -> gauge::Look {
+        match self.look {
+            Look::Pill(look) => look,
+            _ => gauge::Look::Line,
+        }
+    }
+
+    /// A volume for `gauge`, which a drag changes.
+    fn band(&self, rx: &Rx, output: bool, percent: u8, color: Rgba) -> gauge::Band {
+        let side = if output { "out" } else { "in" };
+        gauge::Band { value: percent as f64 / 100.0, color, ink: rx.theme.on_primary, dim: false, slide: Some(rx.action(&format!("volume:{side}"))) }
     }
 
     /// The pill of one device for both, whole as before the volumes were on it: the output's
     /// along its bottom half and the microphone's, in another color, along its top one, and a
     /// drag across a half changes that one.
-    fn both(&self, rx: &Rx, content: &dyn Fn(Rgba) -> Vec<Node>, output: u8, input: u8) -> Node {
+    fn both(&self, rx: &Rx, look: gauge::Look, content: &dyn Fn(Rgba) -> Vec<Node>, output: u8, input: u8) -> Node {
         let th = rx.theme;
-        let row = |color: Rgba| Node::row(content(color)).gap(5.0).padding(0.0, th.pill_padding, 0.0, th.pill_padding).height(th.pill_height);
-        let round = th.pill_radius.min(th.pill_height / 2.0);
+        let row = |color: Option<Rgba>| Node::row(content(color.unwrap_or(th.text))).gap(5.0).padding(0.0, th.pill_padding, 0.0, th.pill_padding).height(th.pill_height);
         // The microphone's color: an accent that isn't the output's
         let other = ["mauve", "blue"].iter().filter_map(|n| th.color(n)).find(|c| *c != th.primary).unwrap_or(th.subtext);
-        let half = |top: bool, side: &str, percent: u8, color: Rgba| {
-            let v = percent as f64 / 100.0;
-            // The copy of a solid fill, where the pill has it: the bottom half begins halfway down
-            let copy = row(th.on_primary).at(0.0, if top { 0.0 } else { -th.pill_height / 2.0 });
-            Node::row(vec![self.fill(rx, v, color, top, [round; 2], copy)])
-                .grow()
-                .click(rx.toggle_popup())
-                .slide(rx.action(&format!("volume:{side}")), v)
-                .key(format!("{side}-half"))
-        };
-        let halves = Node::column(vec![half(true, "in", input, other), half(false, "out", output, th.primary)]).level(1.0).key("volumes");
-        // The pill's round cuts the halves: a layer half as tall can't be as round as it is
-        rx.pill(vec![row(th.text).key("both-part").radius(round).clip().click(rx.toggle_popup()).push(halves)]).padding(0.0, 0.0, 0.0, 0.0).gap(0.0).click(rx.toggle_popup())
+        gauge::pill(rx, look, &row, Some(self.band(rx, false, input, other)), Some(self.band(rx, true, output, th.primary)), rx.toggle_popup())
     }
 
     /// The pill in parts (every `Look` but the slider): the output's, and the input's.
@@ -457,7 +421,7 @@ impl Audio {
             }
         };
         if let (true, Some(o), Volume::Level(out), Volume::Level(mic)) = (merged, output, s.output_volume, s.input_volume) {
-            return Some(self.both(rx, &device(o, out_name, true, Badges::Both), out, mic));
+            return Some(self.both(rx, self.on_pill(), &device(o, out_name, true, Badges::Both), out, mic));
         }
         let mut parts: Vec<(bool, Volume, Content)> = Vec::new();
         if let Some(o) = output {
@@ -691,7 +655,7 @@ impl Widget for Audio {
                 input = None;
             }
         }
-        if !matches!(self.look, Look::Slider | Look::None) {
+        if matches!(self.look, Look::Pill(_)) {
             return self.parts(rx, s, output, input, out_name, badges == Badges::Both);
         }
         let group = |d: &Device, name: Option<String>, output: bool, badges: Badges, key: &str| {

@@ -1324,7 +1324,9 @@ impl App {
             Mouse::Moved => {
                 if surface.dragging.is_none() {
                     // One that asks for no highlight is as if the mouse were on nothing
-                    let hit = surface.hit(p, &[HitKind::Click]).and_then(|h| Some((h.path.clone(), h.hover?)));
+                    // and one that leaves it to what's under it isn't there
+                    let lit = surface.hits.iter().rev().find(|h| h.kind == HitKind::Click && !h.hover_below && crate::ui::contains(h.rect, p));
+                    let hit = lit.and_then(|h| Some((h.path.clone(), h.hover?)));
                     match hit {
                         Some((path, hover)) => surface.set_hover(Some(path), Some(hover)),
                         None => surface.set_hover(None, None),

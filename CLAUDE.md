@@ -923,6 +923,38 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   coi dati finti: quattro stili, vetro, trascinamento delle due metà con eventi veri): sulla
   barra vera con le cuffie che fanno da uscita e microfono, linea in basso e linea in alto;
   32 MB in 2 processi, 0,40% CPU, 0 processi nei primi 30 s.
+- Uso di `claude` sulle pill (chiesto dall'utente dopo il volume di `audio`; le tre forme dei
+  mockup tutte, a scelta): `usage` = `line` (default), `veil`, `solid`, `mark`, `none`; `bars` =
+  `both` (sessione nella metà bassa, settimana più tenue in quella alta) o `session` (la
+  sessione su tutta la pill); `numbers = false` lascia scintilla e ora del reset (con
+  `usage = "none"` i numeri restano comunque). Colore dell'account, giallo e rosso da `warning`
+  e `critical` come i numeri, grigio coi dati vecchi; non si trascina. Il disegno dei livelli è
+  ora in `widgets/gauge.rs` (`Look`, `Band`, `fill`, `pill`), usato da `audio` e `claude`; nel
+  pieno il testo sopra prende `ui::ink` del colore. Provato coi dati finti sulla barra di prova
+  (tre account): ogni stile con `both` e `session`, senza numeri, due col vetro, clic di una
+  pill che apre il popup del suo account: 17 MB, 0,05% CPU, 0 processi in 20 s. Poi la pill
+  unica slim e compatta (anche senza numeri: la sola scintilla col velo), e le pagine di
+  `claude` e `audio` delle impostazioni via AX per pid: ogni scelta scrive il TOML, il valore
+  di default toglie la chiave. Screenshot di `claude` del README rifatto.
+  Imparato sulla barra vera: una metà con un clic sta sopra il testo, e il suo `hover` (di un
+  tema, un colore pieno) lo copriva; quindi una metà ha il clic solo se si trascina (`audio`),
+  e lascia l'`hover` alla pill sotto (`Node::hover_below`: l'utente non voleva la pill accesa a
+  metà, ma tutta, sempre), e quelle di `claude` lasciano il mouse alla pill sotto.
+  Sulla barra vera dal 24/11/2026, tre account.
+  A riposo, dopo un'ora e mezza: 39 MB in 2 processi, 0,48% CPU, 0 processi in 60 s. Sono
+  ~10 MB più delle ultime misure (28–29 MB), con la barra di prova coi dati finti ferma a
+  17 MB: da capire se è questo lavoro, quello non committato delle altre sessioni che la build
+  contiene, o memoria che cresce col tempo.
+  Trovato con `heap`: 3272 `NSRunningApplication` (più `NSLock`, `LSASN`, dizionari) dopo
+  110 minuti, uno ogni 2 s: il thread `dock` di `notifications` non finisce mai e non aveva un
+  autorelease pool, quindi ciò che AppKit e Accessibility rilasciano a ogni lettura del Dock
+  restava (un thread breve li libera uscendo: `cx.background` va bene così). Ora un pool per
+  giro. Barra di prova con la sola `notifications` sui dati veri, 60 s: prima da 4 a 34
+  oggetti, dopo da 1 a 1. Era nel codice da prima di questo lavoro: le misure fatte poco dopo
+  l'avvio non lo vedevano. Non spiega i ~4 MB in più già all'avvio (32 contro 28): non
+  attribuiti (`heap` senza MallocStackLogging non dice di chi sono 11 MB di allocazioni Rust).
+  Sulla barra vera dal 24/11/2026, 14:39: gli oggetti restano 1 in 90 s; due minuti dopo
+  l'avvio 32 MB in 2 processi. Da rimisurare dopo qualche ora: deve restare lì.
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a
