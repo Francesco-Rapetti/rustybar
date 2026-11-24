@@ -275,23 +275,28 @@ impl Notifications {
             let mut crashes = Vec::new();
             let defaults = defaults();
             while handle.alive() {
-                let key = (reports_modified(), seen(defaults.as_deref()).to_bits());
-                if listed != Some(key) {
-                    listed = Some(key);
-                    crashes = crash_reports(f64::from_bits(key.1));
-                }
-                let now = (dock_badges(), crashes.clone());
-                if last.as_ref() != Some(&now) {
-                    last = Some(now.clone());
-                    handle.send(move |w, cx| {
-                        (w.badges, w.crashes) = now;
-                        w.settle();
-                        w.tell_workspaces();
-                        // And whoever counts by a badge (`slack`, `teams`)
-                        runtime::after(0.0, |app| app.broadcast(&Event::Trigger { name: "dock".into(), args: HashMap::new() }));
-                        cx.redraw();
-                    });
-                }
+                // A pool for each read: this thread never ends, and what AppKit and Accessibility
+                // autorelease on the way (the Dock's NSRunningApplication, for one) would stay
+                // forever, a megabyte or so an hour
+                objc2::rc::autoreleasepool(|_| {
+                    let key = (reports_modified(), seen(defaults.as_deref()).to_bits());
+                    if listed != Some(key) {
+                        listed = Some(key);
+                        crashes = crash_reports(f64::from_bits(key.1));
+                    }
+                    let now = (dock_badges(), crashes.clone());
+                    if last.as_ref() != Some(&now) {
+                        last = Some(now.clone());
+                        handle.send(move |w, cx| {
+                            (w.badges, w.crashes) = now;
+                            w.settle();
+                            w.tell_workspaces();
+                            // And whoever counts by a badge (`slack`, `teams`)
+                            runtime::after(0.0, |app| app.broadcast(&Event::Trigger { name: "dock".into(), args: HashMap::new() }));
+                            cx.redraw();
+                        });
+                    }
+                });
                 std::thread::sleep(Duration::from_secs(2));
             }
         });
