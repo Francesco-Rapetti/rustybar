@@ -541,6 +541,25 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Il fulmine resta anche nella forma compatta (senza, da compatta la carica non si vedeva). Provato
   sulla barra vera dal 17/11/2026 con la ROG al caricatore (sale di 1–3 punti al minuto): dopo un
   riavvio, che azzera la memoria, fulmine in pill e popup ("in carica") entro 5 minuti.
+  Lofree (chiesto dall'utente il 25/11/2026: la Hyzen67 col dongle 2.4G, `388D:0025`, non c'era):
+  protocollo letto dal driver web (hyzen.lofree.tech, WebHID): report 4 della collezione
+  `FF1C`/`92`, 63 byte; una domanda è inizio (`00 00 01`), comando, fine (`00 00 02`), ognuno con
+  la sua risposta; `AA` dice se la tastiera c'è (0 = dongle da solo), `1A` il livello (byte 8 col
+  report id davanti). Quel report sta sull'interfaccia coi tasti (NKRO, report 5), l'altra
+  (consumer, feature di 64 byte) dà solo zeri, e senza aprire IOKit risponde `NotOpen`: quindi
+  `Port::open_keys`, solo con Monitoraggio input già dato (`IOHIDCheckAccess`, che non chiede
+  niente), e l'`Inbox` tiene solo il report 4 (i tasti sono scartati all'arrivo). Senza permesso
+  `Found::locked` e nel popup la riga `Leggi la batteria di …` (`IOHIDRequestAccess`, poi le
+  Impostazioni). RustyBar il permesso l'aveva già: sulla barra di prova (dati veri, `always`)
+  pill e riquadro `HYZEN67 77% · Lofree · ricevitore`, lettura 84 ms, 16 MB, 0,05% CPU,
+  0 processi in 20 s. Col cavo (`0024`, provato con l'utente lo stesso giorno) `AA` risponde 0
+  ma `1A` dà il livello: lì non si chiede `AA`, e la tastiera è in carica (fulmine). Dongle e
+  cavo hanno la stessa chiave (`lofree:<nome>`), così il dongle lasciato dentro non è una seconda
+  tastiera. Il byte dopo il livello è 1 sia col dongle sia col cavo: non usato. Sulla barra vera
+  dal 25/11/2026 (build dell'albero di lavoro, col lavoro non committato delle altre sessioni):
+  `HYZEN67 77%` col fulmine, col cavo; 31 MB in 2 processi, 0,43% CPU nei primi 30 s. Da
+  provare: la riga senza permesso (mai vista), la tastiera spenta o che dorme dietro il dongle,
+  il fulmine col dongle e il cavo di ricarica insieme (lì non c'è).
 - Senza notch il gruppo `center` non è più fisso a metà (l'utente vedeva pill compatte e la `⋯`
   a destra con ~190 pt liberi a sinistra, sul monitor da 1920 pt): i lati si dividono lo spazio
   che lascia (`Room::Shared`, una corsia sola come senza gruppo centrale; prima `Split`, metà

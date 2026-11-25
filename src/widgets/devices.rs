@@ -482,11 +482,35 @@ impl Widget for Devices {
                 );
             }
         }
+        // A keyboard whose battery is on the interface with its keys: macOS lets RustyBar read it
+        // only with Input Monitoring, asked here and never by itself
+        for f in self.wired.iter().filter(|f| f.locked) {
+            let text = format!("{} {}", t("Leggi la batteria di", "Read the battery of"), f.name);
+            rows.push(
+                rx.row_button(vec![Node::symbol("lock.fill", 11.0, Weight::Medium, th.yellow), Node::text(format!("{text}…"), th.font(), th.primary).max_width(WIDE - 60.0)], vec![], rx.action("listen"))
+                    .tip(t(
+                        "La batteria arriva dalla stessa interfaccia dei tasti: macOS la apre solo con Monitoraggio input. RustyBar ne legge solo la risposta sulla batteria, mai i tasti.",
+                        "The battery comes through the same interface as the keys: macOS opens it only with Input Monitoring. RustyBar reads only the battery's answer from it, never the keys.",
+                    ))
+                    .key(format!("listen-{}", f.key)),
+            );
+        }
         rows.push(rx.row_button(vec![Node::text(t("Impostazioni Bluetooth…", "Bluetooth Settings…"), th.font(), th.primary)], vec![], rx.action("settings")).key("settings"));
         Some(rx.popup(WIDE, rows).gap(GAP).padding(8.0, 8.0, 6.0, 8.0))
     }
 
     fn action(&mut self, name: &str, _value: Option<f64>, cx: &mut Cx) {
+        if name == "listen" && !self.mock {
+            cx.close_popup();
+            // macOS's question the first time; after a "no" only System Settings can give it
+            cx.background::<Devices, _>(hid::ask_listening, |w, given, cx| {
+                if given {
+                    w.pass(cx);
+                } else {
+                    crate::runtime::open("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent");
+                }
+            });
+        }
         if name == "settings" {
             cx.close_popup();
             if !self.mock {
@@ -823,6 +847,7 @@ fn maker_name(maker: Maker) -> Option<&'static str> {
         Maker::Logitech => Some("Logitech"),
         Maker::Asus => Some("ROG"),
         Maker::Valve => Some("Valve"),
+        Maker::Lofree => Some("Lofree"),
         Maker::Sony => Some("Sony"),
         Maker::Microsoft => Some("Xbox"),
         Maker::Other => None,
@@ -1188,7 +1213,7 @@ mod tests {
     fn a_keyboard_that_sleeps_stays_dimmed() {
         let mut d = widget();
         d.pinned = vec![Kind::Keyboard];
-        let mut keys = Found { key: "razer:keys".into(), name: "Keys".into(), kind: Kind::Keyboard, maker: Maker::Razer, link: Link::Unknown, level: None, second: None, charging: false };
+        let mut keys = Found { key: "razer:keys".into(), name: "Keys".into(), kind: Kind::Keyboard, maker: Maker::Razer, link: Link::Unknown, level: None, second: None, charging: false, locked: false };
         let mut cx_timers = Vec::new();
         let mut cx = Cx { name: "devices", generation: 0, popup_open: false, peek_open: false, timers: &mut cx_timers, effects: Vec::new() };
         // Never read since the bar started: not in the pill

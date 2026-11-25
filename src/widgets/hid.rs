@@ -3,7 +3,7 @@
 //! its battery over Bluetooth, or through Apple's and the game controllers' drivers). None of them
 //! has the standard HID battery (usage page 0x06, usage 0x20): each maker has its own way, and all
 //! of what's sent here are questions, never a setting. The same as RustyBar for Windows reads
-//! them, where they were learned from the devices:
+//! them, where they were learned from the devices (Lofree's from its web driver, on the Mac):
 //!
 //! - Razer: a 90-byte feature report, as Synapse sends; `07 80` is the battery (0–255), `07 84`
 //!   whether it charges. A HyperSpeed receiver without its device answers "timed out".
@@ -16,12 +16,17 @@
 //!   "nothing there".
 //! - Valve: a Steam Controller (2026) sends its battery (input report 0x43) every ~3.5 s among
 //!   its other reports.
+//! - Lofree: the vendor report 4 (63 bytes) its web driver talks through: a question is "start"
+//!   (`00 00 01`), the command, "end" (`00 00 02`), each answered with the same command; `AA` says
+//!   whether the keyboard is there behind the dongle (0 also on its cable), `1A` its level. That report is on the
+//!   interface with the keys, so it's read only once RustyBar has Input Monitoring (`Found::locked`
+//!   until then), and nothing but report 4 is ever kept.
 //!
 //! macOS has one `IOHIDDevice` for each USB interface, with all its collections (a receiver's
 //! short and long HID++ reports come through one); the reports here are given with their id
 //! first, 0 for a device without ids, as Windows reads them, so the answers are read at the same
-//! places. Only the interfaces of these makers are opened, and never one with a keyboard's
-//! collection: macOS would ask for Input Monitoring. Everything runs on a worker thread (`pass`),
+//! places. Only the interfaces of these makers are opened, and one with a keyboard's collection
+//! only for Lofree and with Input Monitoring already given: macOS would ask for it. Everything runs on a worker thread (`pass`),
 //! whose run loop waits for the input reports; finding the interfaces only reads the registry
 //! (~1 ms), so it's done again on each pass.
 
@@ -62,6 +67,7 @@ pub enum Maker {
     Logitech,
     Asus,
     Valve,
+    Lofree,
     Sony,
     Microsoft,
     Other,
@@ -76,14 +82,15 @@ pub fn maker(vid: u16) -> Maker {
         0x046D => Maker::Logitech,
         0x0B05 => Maker::Asus,
         0x28DE => Maker::Valve,
+        0x388D => Maker::Lofree,
         0x054C => Maker::Sony,
         0x045E => Maker::Microsoft,
         _ => Maker::Other,
     }
 }
 
-/// The vendors whose interfaces are read here: Razer, Logitech, ASUS, Valve.
-pub const VENDORS: [u16; 4] = [0x1532, 0x046D, 0x0B05, 0x28DE];
+/// The vendors whose interfaces are read here: Razer, Logitech, ASUS, Valve, Lofree.
+pub const VENDORS: [u16; 5] = [0x1532, 0x046D, 0x0B05, 0x28DE, 0x388D];
 
 /// A device with a battery, as one pass found it.
 #[derive(Clone, Debug, PartialEq)]
@@ -100,11 +107,13 @@ pub struct Found {
     /// The other half of a split keyboard.
     pub second: Option<u8>,
     pub charging: bool,
+    /// Its battery is behind the interface with the keys, and RustyBar hasn't Input Monitoring.
+    pub locked: bool,
 }
 
 impl Found {
     fn new(key: String, name: String, kind: Kind, maker: Maker, link: Link) -> Found {
-        Found { key, name, kind, maker, link, level: None, second: None, charging: false }
+        Found { key, name, kind, maker, link, level: None, second: None, charging: false, locked: false }
     }
 }
 
@@ -118,6 +127,7 @@ pub fn pass() -> (Vec<Found>, bool) {
     logitech(&colls, &mut found);
     asus(&colls, &mut found);
     valve(&colls, &mut found);
+    lofree(&colls, &mut found);
     (merge(found), !colls.is_empty())
 }
 
@@ -165,6 +175,22 @@ unsafe extern "C" {
     fn IOServiceAddMatchingNotification(port: *mut c_void, kind: *const c_char, matching: *mut c_void, callback: MatchingCallback, refcon: *mut c_void, iterator: *mut u32) -> i32;
     fn IOIteratorNext(iterator: u32) -> u32;
     fn IOObjectRelease(object: u32) -> i32;
+    fn IOHIDCheckAccess(request: u32) -> u32;
+    fn IOHIDRequestAccess(request: u32) -> bool;
+}
+
+/// `kIOHIDRequestTypeListenEvent`: Input Monitoring.
+const LISTEN: u32 = 1;
+
+/// RustyBar has Input Monitoring (asking this never shows anything).
+pub fn listening() -> bool {
+    !cfg!(test) && unsafe { IOHIDCheckAccess(LISTEN) } == 0
+}
+
+/// Asks macOS for Input Monitoring: the first time it shows its question, after a "no" nothing
+/// (the user gives it in System Settings). True if RustyBar has it.
+pub fn ask_listening() -> bool {
+    unsafe { IOHIDRequestAccess(LISTEN) }
 }
 
 unsafe extern "C" {
@@ -347,13 +373,20 @@ fn devices(colls: &[Collection], pick: impl Fn(&Collection) -> bool) -> Vec<Vec<
 
 /// The input reports that arrived and haven't been read, the oldest first.
 #[derive(Default)]
-struct Inbox(RefCell<VecDeque<Vec<u8>>>);
+struct Inbox {
+    reports: RefCell<VecDeque<Vec<u8>>>,
+    /// The only report id kept: on an interface with keys, what's typed is dropped as it arrives.
+    only: Option<u8>,
+}
 
 extern "C" fn arrived(context: *mut c_void, result: i32, _sender: *mut c_void, _kind: u32, id: u32, report: *mut u8, length: isize) {
     if result != 0 || context.is_null() || report.is_null() || length <= 0 {
         return;
     }
     let inbox = unsafe { &*(context as *const Inbox) };
+    if inbox.only.is_some_and(|only| only as u32 != id) {
+        return;
+    }
     let bytes = unsafe { std::slice::from_raw_parts(report, length as usize) };
     // As Windows reads them: the report's id first, 0 for a device without ids
     let mut r = Vec::with_capacity(bytes.len() + 1);
@@ -361,7 +394,7 @@ extern "C" fn arrived(context: *mut c_void, result: i32, _sender: *mut c_void, _
         r.push(0);
     }
     r.extend_from_slice(bytes);
-    let mut reports = inbox.0.borrow_mut();
+    let mut reports = inbox.reports.borrow_mut();
     // A controller sends hundreds a second: only the latest matter
     if reports.len() >= 512 {
         reports.pop_front();
@@ -381,6 +414,19 @@ impl Port {
         if c.keyboard() {
             return None;
         }
+        Port::open_only(c, listen, None)
+    }
+
+    /// An interface that has the keys too, for its vendor report `id` alone: only with Input
+    /// Monitoring already given, so that opening it never asks.
+    fn open_keys(c: &Collection, id: u8) -> Option<Port> {
+        if c.keyboard() && !listening() {
+            return None;
+        }
+        Port::open_only(c, true, Some(id))
+    }
+
+    fn open_only(c: &Collection, listen: bool, only: Option<u8>) -> Option<Port> {
         let device = unsafe { IOHIDDeviceCreate(std::ptr::null(), c.entry.object()) };
         if device.is_null() {
             return None;
@@ -393,7 +439,7 @@ impl Port {
         let mut port = Port { device, listening: None };
         if listen {
             let mut buffer = vec![0u8; c.input.max(64)].into_boxed_slice();
-            let inbox = Box::new(Inbox::default());
+            let inbox = Box::new(Inbox { reports: RefCell::default(), only });
             unsafe {
                 IOHIDDeviceRegisterInputReportCallback(device, buffer.as_mut_ptr(), buffer.len() as isize, Some(arrived), &*inbox as *const Inbox as *mut c_void);
                 IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
@@ -424,7 +470,7 @@ impl Port {
     }
 
     fn take(&self) -> Option<Vec<u8>> {
-        self.listening.as_ref()?.1.0.borrow_mut().pop_front()
+        self.listening.as_ref()?.1.reports.borrow_mut().pop_front()
     }
 
     /// The next input report, waiting up to `ms` for it.
@@ -932,9 +978,87 @@ fn valve(colls: &[Collection], found: &mut Vec<Found>) {
     }
 }
 
+// ---- Lofree -------------------------------------------------------------------------------------
+
+/// Lofree's vendor report, in the collection `0xFF1C`/`0x92` its web driver looks for.
+const LOFREE_REPORT: u8 = 4;
+const LOFREE_START: u8 = 0x01;
+const LOFREE_END: u8 = 0x02;
+const LOFREE_LINKED: u8 = 0xAA;
+const LOFREE_BATTERY: u8 = 0x1A;
+
+/// The first byte of the answer to a command: the report is its id, `00 00`, the command, the
+/// length and the offset of what was sent, `00`, then the data. Read from a Hyzen67's dongle:
+/// `04 00 00 1A 00 00 00 00 4D 01` at 77%.
+pub(super) fn lofree_answer(r: &[u8], cmd: u8) -> Option<u8> {
+    (r.len() >= 9 && r[0] == LOFREE_REPORT && r[3] == cmd).then(|| r[8])
+}
+
+/// Sends a frame and waits for the one that answers it.
+fn lofree_frame(port: &Port, bytes: usize, cmd: u8) -> Option<u8> {
+    let mut req = vec![0u8; bytes];
+    req[0] = LOFREE_REPORT;
+    req[3] = cmd;
+    if !port.send(OUTPUT, &req) {
+        return None;
+    }
+    let deadline = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < deadline {
+        if let Some(answer) = lofree_answer(&port.read(50)?, cmd) {
+            return Some(answer);
+        }
+    }
+    None
+}
+
+/// One question as the web driver asks it: start, the command, end (sent also when the command
+/// got no answer, so the keyboard isn't left waiting).
+fn lofree_ask(port: &Port, bytes: usize, cmd: u8) -> Option<u8> {
+    lofree_frame(port, bytes, LOFREE_START)?;
+    let answer = lofree_frame(port, bytes, cmd);
+    lofree_frame(port, bytes, LOFREE_END);
+    answer
+}
+
+fn lofree(colls: &[Collection], found: &mut Vec<Found>) {
+    for c in colls.iter().filter(|c| c.vid == 0x388D && c.has(0xFF1C, 0x92)) {
+        let Some(out) = c.outputs.iter().find(|o| o.id == LOFREE_REPORT && o.bytes >= 16) else { continue };
+        // `HYZEN67@Lofree`
+        let name = c.product.split('@').next().unwrap_or_default().trim().to_string();
+        // The Hyzen67's dongle is 0x25, the keyboard on its cable 0x24: one key for both, so the
+        // dongle left in while the cable is used isn't a second keyboard (`merge`)
+        let link = if c.pid == 0x25 || c.receiver() { Link::Receiver } else { Link::Cable };
+        let mut f = Found::new(format!("lofree:{}", name.to_lowercase()), name, Kind::Keyboard, Maker::Lofree, link);
+        match Port::open_keys(c, LOFREE_REPORT) {
+            Some(port) => {
+                // A dongle alone answers 0 to "is it there?"; so does the keyboard on its cable,
+                // which is there anyway and charges from it
+                let cable = link == Link::Cable;
+                if cable || lofree_ask(&port, out.bytes, LOFREE_LINKED).is_some_and(|linked| linked != 0) {
+                    f.level = lofree_ask(&port, out.bytes, LOFREE_BATTERY).filter(|l| (1..=100).contains(l));
+                    f.charging = cable && f.level.is_some();
+                }
+            }
+            None => f.locked = c.keyboard() && !listening(),
+        }
+        found.push(f);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lofree_answers() {
+        let mut r = vec![0u8; 64];
+        r[..10].copy_from_slice(&[0x04, 0, 0, 0x1A, 0, 0, 0, 0, 0x4D, 0x01]);
+        assert_eq!(lofree_answer(&r, LOFREE_BATTERY), Some(77));
+        // The answer to another command, and another report
+        assert_eq!(lofree_answer(&r, LOFREE_LINKED), None);
+        r[0] = 5;
+        assert_eq!(lofree_answer(&r, LOFREE_BATTERY), None);
+    }
 
     #[test]
     fn razer_requests() {
