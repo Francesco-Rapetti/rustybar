@@ -59,8 +59,8 @@
 //! With made-up data (see `mock`), the players of `now_playing.json`, whose `artwork` is relative
 //! to its folder (the `other` one with `other_apps` only); the controls change them in memory only,
 //! and ⏮ ⏭ go through the tracks of its `queue`. The made-up calls of `call.json` start with
-//! `rustybar msg trigger call service=meet` (or `slack`, `teams`; `lobby=1` before joining) and end
-//! with `service=end`.
+//! `rustybar msg trigger call service=meet` (or `slack`, `teams`, `whatsapp`; `lobby=1` before
+//! joining, or for a WhatsApp call that rings) and end with `service=end`.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -2255,6 +2255,7 @@ fn call_name(c: &Call) -> String {
         Service::Meet => "Google Meet".into(),
         Service::Slack => "Huddle".into(),
         Service::Teams => t("Riunione", "Meeting").into(),
+        Service::WhatsApp => t("Chiamata", "Call").into(),
     }
 }
 
@@ -2269,6 +2270,8 @@ fn call_line(c: &Call, now: f64) -> String {
     }
     match (c.lobby, c.join) {
         _ if c.blocked.is_some() => {}
+        // A WhatsApp call that rings
+        (true, true) if c.service == Service::WhatsApp => parts.push(t("sta squillando", "ringing").into()),
         (true, true) => parts.push(t("prima di entrare", "before joining").into()),
         // Asked to join: someone has to let you in
         (true, false) => parts.push(t("in attesa di entrare", "waiting to be let in").into()),
@@ -2405,13 +2408,18 @@ fn call_controls(rx: &Rx, c: &Call, key: bool) -> Node {
     controls.push(button("arrow.up.forward.app.fill", look.plain, "call:open", format!("{} {app}", t("Mostra la chiamata in", "Show the call in"))));
     if c.lobby && c.join {
         let (bg, fg) = look.join;
-        let join = Node::row(vec![Node::text(t("Partecipa", "Join"), th.font_with(Weight::Semibold, th.font_size), fg).key("label")])
+        // WhatsApp's is a call that rings, to answer
+        let (word, tip) = match c.service {
+            Service::WhatsApp => (t("Rispondi", "Answer"), t("Rispondi alla chiamata", "Answer the call")),
+            _ => (t("Partecipa", "Join"), t("Partecipa alla riunione", "Join the meeting")),
+        };
+        let join = Node::row(vec![Node::text(word, th.font_with(Weight::Semibold, th.font_size), fg).key("label")])
             .height(36.0)
             .align(Align::Center)
             .radius(18.0)
             .background(bg)
             .padding(0.0, 16.0, 0.0, 16.0);
-        controls.push(join.hover(bg.mix(fg, 0.18)).click(rx.action("call:join")).tip(t("Partecipa alla riunione", "Join the meeting")).key("call:join"));
+        controls.push(join.hover(bg.mix(fg, 0.18)).click(rx.action("call:join")).tip(tip).key("call:join"));
     }
     if c.leave {
         let (bg, fg) = look.leave;
@@ -2454,6 +2462,18 @@ impl Look {
                 leave: (rgb(0xdc362e), rgb(0xffffff)),
                 join: (rgb(0x0b57d0), rgb(0xffffff)),
                 radius: 12.0,
+                hover: None,
+                label: false,
+            },
+            // WhatsApp's, measured on the bar of a call: the controls dark pills, white with a
+            // dark icon when off, Leave a red pill with its icon alone, and its green to answer
+            Service::WhatsApp => Look {
+                plain: (rgb(0x323232), rgb(0xffffff)),
+                off: (rgb(0xffffff), rgb(0x1c1c1c)),
+                up: (rgb(0x323232), rgb(0xffffff)),
+                leave: (rgb(0xd84550), rgb(0xffffff)),
+                join: (rgb(0x21c063), rgb(0xffffff)),
+                radius: 18.0,
                 hover: None,
                 label: false,
             },

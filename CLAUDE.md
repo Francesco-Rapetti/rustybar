@@ -700,6 +700,33 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   dal vero con l'utente in Dia: pagina riconosciuta (microfono e videocamera spenti letti giusti),
   Partecipa dalla barra (dentro, una sola riga `joined` dalla 1.8), estensione ricaricata dalla
   barra con `meet_reload` senza la ↻ (Dia la carica dalla cartella del repo).
+  Chiamate di WhatsApp per Mac (chieste dall'utente il 26/11/2026: "come meet"; prima fatte nel
+  plugin dello Stream Deck `~/Developer/streamdeck-whatsapp`, dove sono state viste dal vero):
+  `Service::WhatsApp` in `call.rs`, per la stessa strada di Slack e Teams. Visto in chiamate vere
+  (WhatsApp 26.47, italiano): la chiamata ha una finestra sua col gruppo `Calling_Window`, e i
+  tasti si cercano solo lì (`search_whatsapp`); non hanno identificatori e si chiamano col loro
+  stato, con un U+200E davanti: `audio riattivato` (en `mute off`) a microfono acceso, `audio
+  disattivato`/`microfono disattivato` spento, `abbandona chiamata`; quindi nomi interi
+  (`ax::whatsapp`), non parole. Il tasto della videocamera è al contrario (`fotocamera
+  disattivata` con la videocamera accesa): si crede prima al riquadro col proprio video
+  (`CallUI_FloatingSelfVideoView`, "Feed video ridotto", che aggiunge "Fotocamera disattivata"
+  quando è spenta), `whatsapp_camera`; `Fotocamera non disponibile` è un Mac senza videocamera
+  (nessun tasto nella barra). I tasti di una chiamata finita rispondono ancora coi loro nomi:
+  valgono solo finché la loro finestra è fra quelle dell'app (`CFEqual`), se no la chiamata non
+  finiva mai. Nome dal titolo della finestra (`Ada - Videochiamata WhatsApp`). Una chiamata che
+  squilla non cattura: `capturing` dà WhatsApp anche quando suona (`PROCESS_OUTPUT`, ascoltato
+  solo sui suoi processi), e con Accetta al posto di Abbandona è una chiamata in `lobby`
+  (`sta squillando`, tasto verde `Rispondi`); Rifiuta nella barra non c'è. Controlli nei colori
+  di WhatsApp, misurati sulla barra di una chiamata (`Look`: pillole `#323232`, bianche da
+  spente, Abbandona `#d84550`, Rispondi `#21c063`). Dati finti: `service=whatsapp` in
+  `call.json`. Provato coi dati finti sulla barra di prova (pill, popup in chiamata e mentre
+  squilla): 24 MB, 0,37% CPU, 0 processi in 8 s, tasto della dettatura reso alla fine. Sulla
+  barra vera dal 26/11/2026, 00:08 (build dell'albero di lavoro, col lavoro non committato delle
+  altre sessioni): avvio normale, 34 MB in 2 processi, 0,60% CPU due minuti dopo l'avvio,
+  0 processi in 30 s. Dal vero nella barra una chiamata non ancora: l'utente non poteva farne; i
+  nomi dei tasti e la fine della chiamata sono quelli visti nel plugin dello Stream Deck. Mai visti dal vero: una chiamata che squilla (i nomi `Accetta`/`Rispondi`
+  vengono dalle stringhe dell'app, e non è detto che stia in `Calling_Window`), una chiamata di
+  gruppo, WhatsApp in inglese.
 - `fn_keys` (chiesto dall'utente, segni scelti dai mockup: tasto fn, pallino, mela, isola,
   AeroSpace, linguetta; uno o più, a scelta in `show`; spenti, spariscono): mentre F1, F2… sono
   tasti standard un segno lo dice. Modo letto e cambiato in-process (`fnkeys.rs`:

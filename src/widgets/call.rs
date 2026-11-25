@@ -1,5 +1,6 @@
-//! Calls, for `now_playing`: a Google Meet in a browser, a Slack huddle or a Teams meeting, with
-//! its mic, camera, raised hand and a way out (see `NowPlaying`, which shows them).
+//! Calls, for `now_playing`: a Google Meet in a browser, a Slack huddle, a Teams meeting or a
+//! WhatsApp call, with its mic, camera, raised hand and a way out (see `NowPlaying`, which shows
+//! them).
 //!
 //! - Meet, in a browser built on Chromium (Dia, Chrome, Arc, Brave, Edge…), through RustyBar's
 //!   extension (`extension/` in the repo, in the app's Resources): the Meet page tells the bar
@@ -19,6 +20,17 @@
 //!   buttons have ids that don't change with the language (seen in a real meeting, Teams 26304).
 //!   Both have a page before the call, where they capture already: Teams' "Partecipazione alla
 //!   riunione" and Slack's "Huddle Preview", a call in `lobby` as Meet's page before joining.
+//! - WhatsApp (the app for the Mac), the same way, with what is its own (seen in real calls,
+//!   WhatsApp 26.47). A call has a window of its own with a group `Calling_Window`, and only
+//!   there its buttons are looked for: the chats have a "Rispondi" too. The buttons have no ids
+//!   and are named by their state, not by what a click does ("audio riattivato" while the mic is
+//!   on), with a left-to-right mark in front: its own words are matched whole, in Italian and
+//!   English. The camera's is named the other way round ("fotocamera disattivata" while it's
+//!   on), so WhatsApp's picture of you in the call, which says when the camera is off, is
+//!   believed first. The buttons of a call that ended go on answering with their names, so they
+//!   count only while their window is still one of the app's. A call that rings plays and
+//!   doesn't capture yet: WhatsApp is asked while it plays too, and a call with Accept in place
+//!   of Leave is in `lobby`.
 //!
 //! Everything here but `watch` and `capturing` runs on a background thread: Accessibility asks the
 //! app for each attribute.
@@ -40,6 +52,7 @@ use crate::iokit::{CFTypeRef, cf, owned};
 
 pub const SLACK: &str = "com.tinyspeck.slackmacgap";
 pub const TEAMS: &str = "com.microsoft.teams2";
+pub const WHATSAPP: &str = "net.whatsapp.WhatsApp";
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Service {
@@ -47,6 +60,7 @@ pub enum Service {
     Meet,
     Slack,
     Teams,
+    WhatsApp,
 }
 
 impl Service {
@@ -55,6 +69,7 @@ impl Service {
             Service::Meet => "Google Meet",
             Service::Slack => "Slack",
             Service::Teams => "Microsoft Teams",
+            Service::WhatsApp => "WhatsApp",
         }
     }
 
@@ -64,6 +79,7 @@ impl Service {
             Service::Meet => "Meet",
             Service::Slack => "Slack",
             Service::Teams => "Teams",
+            Service::WhatsApp => "WhatsApp",
         }
     }
 
@@ -72,6 +88,7 @@ impl Service {
             Service::Meet => "meet",
             Service::Slack => "slack",
             Service::Teams => "teams",
+            Service::WhatsApp => "whatsapp",
         }
     }
 
@@ -80,6 +97,7 @@ impl Service {
         match bundle {
             SLACK => Some(Service::Slack),
             TEAMS => Some(Service::Teams),
+            WHATSAPP => Some(Service::WhatsApp),
             _ => None,
         }
     }
@@ -88,7 +106,7 @@ impl Service {
 /// What keeps RustyBar from reading a call, or from controlling it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Blocked {
-    /// RustyBar doesn't have Accessibility, for Slack and Teams.
+    /// RustyBar doesn't have Accessibility, for Slack, Teams and WhatsApp.
     Accessibility,
 }
 
@@ -112,6 +130,7 @@ pub struct Call {
     pub hand: Option<bool>,
     pub leave: bool,
     /// Meet's page before joining: the mic and camera of the preview, and Join in place of Leave.
+    /// A WhatsApp call that rings: Join answers it.
     pub lobby: bool,
     /// Join is there: not while it waits for someone to let you in.
     pub join: bool,
@@ -169,7 +188,7 @@ impl Control {
     }
 }
 
-/// Asks each target (Slack or Teams) whether it's in a call.
+/// Asks each target (Slack, Teams or WhatsApp) whether it's in a call.
 pub fn read(targets: &[Target]) -> Vec<Found> {
     targets.iter().map(ax::read).collect()
 }
@@ -204,14 +223,18 @@ pub fn dump(pid: i32) -> String {
 
 // What captures, from CoreAudio
 
-/// The widgets to tell, and the process objects listened to.
+/// The widgets to tell, the process objects listened to, and those of them that are WhatsApp's.
 struct Watch {
     handles: Vec<Handle<NowPlaying>>,
     system: bool,
     processes: Vec<u32>,
+    ringers: Vec<u32>,
 }
 
-static WATCH: Mutex<Watch> = Mutex::new(Watch { handles: Vec::new(), system: false, processes: Vec::new() });
+static WATCH: Mutex<Watch> = Mutex::new(Watch { handles: Vec::new(), system: false, processes: Vec::new(), ringers: Vec::new() });
+
+/// Whether a process plays (`kAudioProcessPropertyIsRunningOutput`).
+const PROCESS_OUTPUT: u32 = ca::fc(b"piro");
 
 extern "C" fn capture_changed(_id: u32, _count: u32, _addresses: *const ca::Address, _data: *mut c_void) -> i32 {
     let handles = WATCH.lock().map(|w| w.handles.clone()).unwrap_or_default();
@@ -232,20 +255,32 @@ pub fn watch(handle: Handle<NowPlaying>) {
     }
 }
 
-/// The apps that capture audio now, each once: its pid and bundle. Listens to the processes it
-/// doesn't know yet, so that their next start or stop is told.
+/// The apps that capture audio now, each once: its pid and bundle; and WhatsApp while it plays,
+/// since a call that rings there doesn't capture yet. Listens to the processes it doesn't know
+/// yet, so that their next start or stop is told.
 pub fn capturing() -> Vec<(i32, String)> {
     let processes = ca::objects(ca::SYSTEM, ca::address(ca::PROCESSES, ca::GLOBAL, 0));
+    let mut ringers = Vec::new();
     if let Ok(mut watch) = WATCH.lock() {
-        for &p in processes.iter().filter(|p| !watch.processes.contains(p)) {
+        let new: Vec<u32> = processes.iter().copied().filter(|p| !watch.processes.contains(p)).collect();
+        for p in new {
             unsafe { ca::AudioObjectAddPropertyListener(p, &ca::address(ca::PROCESS_INPUT, ca::GLOBAL, 0), capture_changed, std::ptr::null_mut()) };
+            // Whose it is, once: WhatsApp's is told when it plays too
+            let whatsapp = ca::get::<i32>(p, ca::address(ca::PROCESS_PID, ca::GLOBAL, 0)).and_then(app_of).is_some_and(|(_, bundle)| bundle == WHATSAPP);
+            if whatsapp {
+                unsafe { ca::AudioObjectAddPropertyListener(p, &ca::address(PROCESS_OUTPUT, ca::GLOBAL, 0), capture_changed, std::ptr::null_mut()) };
+                watch.ringers.push(p);
+            }
         }
         // The objects of processes gone are gone too, with their listeners
+        watch.ringers.retain(|p| processes.contains(p));
         watch.processes = processes.clone();
+        ringers = watch.ringers.clone();
     }
     let mut apps: Vec<(i32, String)> = Vec::new();
     for p in processes {
-        if ca::get::<u32>(p, ca::address(ca::PROCESS_INPUT, ca::GLOBAL, 0)) != Some(1) {
+        let captures = ca::get::<u32>(p, ca::address(ca::PROCESS_INPUT, ca::GLOBAL, 0)) == Some(1);
+        if !captures && !(ringers.contains(&p) && ca::get::<u32>(p, ca::address(PROCESS_OUTPUT, ca::GLOBAL, 0)) == Some(1)) {
             continue;
         }
         let Some(pid) = ca::get::<i32>(p, ca::address(ca::PROCESS_PID, ca::GLOBAL, 0)) else { continue };
@@ -280,10 +315,15 @@ fn parent(pid: i32) -> Option<i32> {
     (read == size && info.pbi_ppid > 1).then_some(info.pbi_ppid as i32)
 }
 
-// Slack and Teams, through Accessibility
+// Slack, Teams and WhatsApp, through Accessibility
 
 mod ax {
     use super::*;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFEqual(a: CFTypeRef, b: CFTypeRef) -> u8;
+    }
 
     #[link(name = "ApplicationServices", kind = "framework")]
     unsafe extern "C" {
@@ -309,6 +349,8 @@ mod ax {
     struct Found {
         controls: HashMap<Control, El>,
         window: Option<El>,
+        /// WhatsApp's picture of you in the call, which says when the camera is off.
+        own: Option<El>,
     }
 
     static CACHE: Mutex<Option<HashMap<i32, Found>>> = Mutex::new(None);
@@ -363,9 +405,55 @@ mod ax {
         words.iter().any(|w| of.contains(w))
     }
 
+    /// A name without the marks of direction WhatsApp puts in it (a left-to-right mark in front).
+    fn plain(label: &str) -> String {
+        label.chars().filter(|c| !matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect::<String>().trim().to_string()
+    }
+
+    /// The control a button of a WhatsApp call is, and whether what it controls is on, by its name
+    /// in lower case. WhatsApp names them by their state, not by what a click does: these are its
+    /// own words, Italian and English (read in real calls, and from the app's strings). The
+    /// camera's is the other way round: "disattivata" while the camera is on.
+    pub(super) fn whatsapp(label: &str) -> Option<(Control, Option<bool>)> {
+        Some(match plain(label).as_str() {
+            "audio riattivato" | "mute off" => (Control::Mic, Some(true)),
+            "microfono disattivato" | "call muted" | "audio disattivato" | "mute on" => (Control::Mic, Some(false)),
+            "fotocamera disattivata" | "camera off" => (Control::Camera, Some(true)),
+            "fotocamera attiva" | "camera on" => (Control::Camera, Some(false)),
+            // A Mac without a camera: the button is there, with nothing to turn on
+            "fotocamera non disponibile" | "camera unavailable" => (Control::Camera, None),
+            "abbandona chiamata" | "leave call" | "termina chiamata" | "end call" => (Control::Leave, None),
+            // A call that rings
+            "accetta" | "rispondi" | "accept" | "accept call" | "rispondi alla chiamata" | "answer call" | "partecipa" | "join call" => (Control::Join, None),
+            _ => return None,
+        })
+    }
+
+    /// Whether the camera of a WhatsApp call is on, None if there's none to turn on. WhatsApp's
+    /// picture of you in the call ("Feed video ridotto") adds "Fotocamera disattivata" to its name
+    /// when the camera is off: where the call has one it is believed, else the button's name.
+    pub(super) fn whatsapp_camera(button: &str, own: Option<&str>) -> Option<bool> {
+        let (_, on) = whatsapp(button).filter(|(c, _)| *c == Control::Camera)?;
+        on?;
+        if let Some(own) = own.map(plain)
+            && ["feed video ridotto", "my minimized video feed"].iter().any(|name| own.starts_with(name))
+        {
+            return Some(!(own.contains("fotocamera disattivata") || own.contains("camera off")));
+        }
+        on
+    }
+
+    /// Who a WhatsApp call is with, from its window's title: "Ada - Videochiamata WhatsApp".
+    pub(super) fn whatsapp_name(title: &str) -> String {
+        plain(title).rsplit_once(" - ").map(|(name, _)| name.trim().to_string()).unwrap_or_default()
+    }
+
     /// The control a button is, by its name, in English or Italian. Slack's leave button names the
     /// huddle; Teams' is just Leave.
     pub(super) fn classify(service: Service, label: &str) -> Option<Control> {
+        if service == Service::WhatsApp {
+            return whatsapp(label).map(|(c, _)| c);
+        }
         let w = words(label);
         const TOGGLE: [&str; 14] = ["mute", "unmute", "turn", "disattiva", "riattiva", "attiva", "start", "stop", "accendi", "spegni", "enable", "disable", "on", "off"];
         // The page before a call. Teams' "Partecipa ora" ("Join now"), not the "Partecipa" of a
@@ -475,7 +563,10 @@ mod ax {
     }
 
     fn search(service: Service, app: &El) -> Found {
-        let mut found = Found { controls: HashMap::new(), window: None };
+        if service == Service::WhatsApp {
+            return search_whatsapp(app);
+        }
+        let mut found = Found { controls: HashMap::new(), window: None, own: None };
         walk(app, |e, window, _| {
             let role = string(e, "AXRole");
             if BUTTONS.contains(&role.as_str()) {
@@ -492,6 +583,62 @@ mod ax {
             !matches!(role.as_str(), "AXMenuBar" | "AXMenu" | "AXStaticText" | "AXImage")
         });
         found
+    }
+
+    /// The group of a call in one of WhatsApp's windows: a content group, and in it
+    /// `Calling_Window`.
+    fn call_group(window: &El) -> Option<El> {
+        let mut level = vec![window.clone()];
+        for _ in 0..3 {
+            let mut next = Vec::new();
+            for e in &level {
+                for child in elements(e, "AXChildren") {
+                    if string(&child, "AXRole") != "AXGroup" {
+                        continue;
+                    }
+                    if string(&child, "AXIdentifier") == "Calling_Window" {
+                        return Some(child);
+                    }
+                    next.push(child);
+                }
+            }
+            level = next;
+        }
+        None
+    }
+
+    /// The buttons of WhatsApp's call: those of the group of a call, in the window that has one.
+    fn search_whatsapp(app: &El) -> Found {
+        for window in elements(app, "AXWindows") {
+            let Some(group) = call_group(&window) else { continue };
+            let mut controls = HashMap::new();
+            let mut own = None;
+            let mut queue = std::collections::VecDeque::from([group]);
+            let mut seen = 0;
+            while let Some(e) = queue.pop_front() {
+                seen += 1;
+                if seen > MOST {
+                    break;
+                }
+                let role = string(&e, "AXRole");
+                if BUTTONS.contains(&role.as_str()) {
+                    if let Some((c, _)) = whatsapp(&label(&e)) {
+                        controls.entry(c).or_insert(e);
+                    }
+                    continue;
+                }
+                if own.is_none() && role != "AXGroup" && string(&e, "AXIdentifier") == "CallUI_FloatingSelfVideoView" {
+                    own = Some(e.clone());
+                }
+                if !matches!(role.as_str(), "AXStaticText" | "AXImage") {
+                    queue.extend(elements(&e, "AXChildren"));
+                }
+            }
+            if controls.contains_key(&Control::Leave) || controls.contains_key(&Control::Join) {
+                return Found { controls, window: Some(window), own };
+            }
+        }
+        Found { controls: HashMap::new(), window: None, own: None }
     }
 
     /// Electron shows its pages only to an app that asks: once per process.
@@ -535,16 +682,20 @@ mod ax {
     /// The buttons of a call, each with its name now.
     type Labelled = HashMap<Control, (El, String)>;
 
-    /// The call's buttons, still there from the last read, or found again, and its window.
-    fn controls(t: &Target, app: &El) -> Option<(Labelled, Option<El>)> {
+    /// The call's buttons, still there from the last read, or found again, its window, and
+    /// WhatsApp's picture of you.
+    fn controls(t: &Target, app: &El) -> Option<(Labelled, Option<El>, Option<El>)> {
         let mut cache = CACHE.lock().ok()?;
         let cache = cache.get_or_insert_with(HashMap::new);
         // A button whose name says it's something else now isn't one of them any more
         let labelled = |f: &Found| -> Labelled { f.controls.iter().map(|(c, e)| (*c, (e.clone(), label(e)))).filter(|(c, (e, l))| kind(t.service, e, l) == Some(*c)).collect() };
         if let Some(f) = cache.get(&t.pid) {
+            // WhatsApp's buttons go on answering with their names after the call's window is gone:
+            // they count only while it is still one of the app's
+            let there = t.service != Service::WhatsApp || f.window.as_ref().is_some_and(|w| elements(app, "AXWindows").iter().any(|o| unsafe { CFEqual(cf(&*o.0), cf(&*w.0)) } != 0));
             let now = labelled(f);
-            if (now.contains_key(&Control::Leave) || now.contains_key(&Control::Join)) && now.len() == f.controls.len() {
-                return Some((now, f.window.clone()));
+            if there && (now.contains_key(&Control::Leave) || now.contains_key(&Control::Join)) && now.len() == f.controls.len() {
+                return Some((now, f.window.clone(), f.own.clone()));
             }
         }
         if t.service == Service::Teams {
@@ -552,9 +703,9 @@ mod ax {
         }
         let f = search(t.service, app);
         let now = labelled(&f);
-        let window = f.window.clone();
+        let (window, own) = (f.window.clone(), f.own.clone());
         cache.insert(t.pid, f);
-        Some((now, window))
+        Some((now, window, own))
     }
 
     pub fn read(t: &Target) -> super::Found {
@@ -562,12 +713,21 @@ mod ax {
             return super::Found::Blocked(Blocked::Accessibility);
         }
         let Some(app) = app(t.pid) else { return super::Found::Nothing };
-        show_pages(t.pid, &app);
-        let Some((controls, window)) = controls(t, &app) else { return super::Found::Nothing };
+        if t.service != Service::WhatsApp {
+            show_pages(t.pid, &app);
+        }
+        let Some((controls, window, own)) = controls(t, &app) else { return super::Found::Nothing };
         // Teams' hand is just "Mano", and says it's raised as an expanded button; the microphone and
-        // the video of Slack's page before a huddle are switches, on or off
+        // the video of Slack's page before a huddle are switches, on or off. WhatsApp's names say
+        // the state, and its camera's is read with its picture of you
         let state = |c: Control| {
             controls.get(&c).and_then(|(e, l)| {
+                if t.service == Service::WhatsApp {
+                    return match c {
+                        Control::Camera => whatsapp_camera(l, own.as_ref().map(label).as_deref()),
+                        _ => whatsapp(l).and_then(|(_, on)| on),
+                    };
+                }
                 on_now(c, l).or_else(|| match c {
                     Control::Hand => number(e, "AXExpanded").map(|n| n != 0.0),
                     Control::Mic | Control::Camera => number(e, "AXValue").map(|n| n != 0.0),
@@ -581,6 +741,14 @@ mod ax {
             (Service::Teams, Some(w)) => string(w, "AXTitle").split(" | ").map(|p| p.trim().to_string()).collect(),
             _ => Vec::new(),
         };
+        // WhatsApp's window is called after who the call is with, ringing or on
+        let (before, during) = match (t.service, &window) {
+            (Service::WhatsApp, Some(w)) => {
+                let who = whatsapp_name(&string(w, "AXTitle"));
+                (who.clone(), who)
+            }
+            _ => (title.get(1).cloned().unwrap_or_default(), title.first().cloned().unwrap_or_default()),
+        };
         // The page before joining: the microphone and the camera of the preview, and Join
         if !controls.contains_key(&Control::Leave)
             && let Some((join, _)) = controls.get(&Control::Join)
@@ -588,7 +756,7 @@ mod ax {
             return super::Found::Call(Call {
                 service: t.service,
                 bundle: t.bundle.clone(),
-                name: title.get(1).cloned().unwrap_or_default(),
+                name: before,
                 mic: state(Control::Mic),
                 camera: state(Control::Camera),
                 hand: None,
@@ -603,11 +771,10 @@ mod ax {
         if !controls.contains_key(&Control::Leave) || !controls.contains_key(&Control::Mic) {
             return super::Found::Nothing;
         }
-        let name = title.first().cloned().unwrap_or_default();
         super::Found::Call(Call {
             service: t.service,
             bundle: t.bundle.clone(),
-            name,
+            name: during,
             mic: state(Control::Mic),
             camera: state(Control::Camera),
             hand: controls.contains_key(&Control::Hand).then(|| state(Control::Hand).unwrap_or(false)),
@@ -619,14 +786,14 @@ mod ax {
 
     pub fn press(t: &Target, control: Control) -> bool {
         let Some(app) = app(t.pid) else { return false };
-        let Some((controls, _)) = controls(t, &app) else { return false };
+        let Some((controls, _, _)) = controls(t, &app) else { return false };
         let Some((e, _)) = controls.get(&control) else { return false };
         unsafe { AXUIElementPerformAction(cf(&*e.0), cf(&*NSString::from_str("AXPress"))) == 0 }
     }
 
     pub fn show(t: &Target) {
         let Some(app) = app(t.pid) else { return };
-        if let Some((_, Some(window))) = controls(t, &app) {
+        if let Some((_, Some(window), _)) = controls(t, &app) {
             unsafe { AXUIElementPerformAction(cf(&*window.0), cf(&*NSString::from_str("AXRaise"))) };
         }
     }
@@ -725,6 +892,44 @@ mod tests {
         assert_eq!(by_id(Service::Teams, "raisehands-button"), Some(Control::Hand));
         assert_eq!(by_id(Service::Teams, "share-button"), None);
         assert_eq!(by_id(Service::Slack, "hangup-button"), None);
+    }
+
+    /// WhatsApp's names, as a real call had them (Italian, with the mark it puts in front) and as
+    /// its strings have them in English: they say the state, and the camera's the opposite of it.
+    #[test]
+    fn whatsapp_names_its_buttons_by_their_state() {
+        use ax::{classify, whatsapp, whatsapp_camera, whatsapp_name};
+        let wa = |l: &str| whatsapp(&l.to_lowercase());
+        assert_eq!(wa("\u{200e}audio riattivato"), Some((Control::Mic, Some(true))));
+        assert_eq!(wa("\u{200e}audio disattivato"), Some((Control::Mic, Some(false))));
+        assert_eq!(wa("\u{200e}microfono disattivato"), Some((Control::Mic, Some(false))));
+        assert_eq!(wa("mute off"), Some((Control::Mic, Some(true))));
+        assert_eq!(wa("call muted"), Some((Control::Mic, Some(false))));
+        assert_eq!(wa("\u{200e}abbandona chiamata"), Some((Control::Leave, None)));
+        assert_eq!(wa("\u{200e}Fotocamera non disponibile"), Some((Control::Camera, None)));
+        assert_eq!(wa("\u{200e}Accetta"), Some((Control::Join, None)));
+        // What else the call's bar and the app have
+        for other in ["reaction", "\u{200e}Chat", "\u{200e}Aggiungi persone", "\u{200e}Avvia la condivisione dello schermo", "\u{200e}Selezione dei dispositivi audio", "\u{200e}Rifiuta", "\u{200e}Abbandona gruppo", "\u{200e}Avvia chiamata con Ada Lovelace"] {
+            assert_eq!(wa(other), None, "{other}");
+        }
+        assert_eq!(classify(Service::WhatsApp, "\u{200e}audio riattivato"), Some(Control::Mic));
+        assert_eq!(classify(Service::WhatsApp, "mute"), None);
+        assert_eq!(classify(Service::Teams, "audio riattivato"), None);
+        // The camera: a video call had the button on "disattivata" with the camera on, and the
+        // picture of you without "Fotocamera disattivata"
+        assert_eq!(whatsapp_camera("\u{200e}fotocamera disattivata", Some("\u{200e}feed video ridotto")), Some(true));
+        assert_eq!(whatsapp_camera("\u{200e}fotocamera disattivata", Some("\u{200e}feed video ridotto, \u{200e}microfono disattivato")), Some(true));
+        assert_eq!(whatsapp_camera("\u{200e}fotocamera attiva", Some("\u{200e}feed video ridotto, \u{200e}fotocamera disattivata")), Some(false));
+        assert_eq!(whatsapp_camera("\u{200e}fotocamera non disponibile", Some("\u{200e}feed video ridotto, \u{200e}fotocamera disattivata")), None);
+        // without the picture, the button's name the other way round
+        assert_eq!(whatsapp_camera("\u{200e}fotocamera disattivata", None), Some(true));
+        assert_eq!(whatsapp_camera("camera on", None), Some(false));
+        // and should WhatsApp put the name right, the picture still says how it is
+        assert_eq!(whatsapp_camera("\u{200e}fotocamera attiva", Some("\u{200e}feed video ridotto")), Some(true));
+        assert_eq!(whatsapp_camera("camera on", Some("my minimized video feed, camera off")), Some(false));
+        assert_eq!(whatsapp_name("\u{200e}Ada Lovelace - Videochiamata WhatsApp"), "Ada Lovelace");
+        assert_eq!(whatsapp_name("Book club - evening - Chiamata di gruppo"), "Book club - evening");
+        assert_eq!(whatsapp_name("WhatsApp"), "");
     }
 
     /// The page before a call: Teams' "Partecipazione alla riunione" and Slack's "Huddle Preview".

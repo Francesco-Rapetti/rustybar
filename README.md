@@ -18,7 +18,7 @@ processes a minute.
 | `apple` | The Apple logo | The Apple menu: About This Mac, Force Quit, Sleep, Restart, Shut Down, Lock Screen, Log Out, the switch of the function keys with a `fn_keys` in the bar (see [Function keys](#function-keys)), and last Dotfiles Settings (see [Settings window](#settings-window)) |
 | `aerospace` | [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspaces with the icons of their windows in on-screen order, the focused one under a sliding highlight, the binding mode | — (clicks switch workspace, focus a window, leave the mode) |
 | `front_app` | The app in front | — |
-| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then), with a line along the bottom for where the track is; hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music in a ring of where the track is. During a Google Meet, Slack or Teams call, the call instead: the meeting, the camera and the mic | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track. During a call: the mic, the camera, the raised hand, the call brought to the front and Leave |
+| `now_playing` | What Music or Spotify is playing, or any app with `other_apps`: the cover, the title and the artist, dimmed while paused (`paused = false` hides it then), with a line along the bottom for where the track is; hidden when nothing plays. A long title takes the room left beside it, and scrolls while it plays if it still doesn't fit. Under the mouse it grows down with the progress, ⏮ ⏯ ⏭, shuffle and repeat. In the center by default; on a screen with a notch, black around the notch as an extension of it, with bars that move to the music in a ring of where the track is. During a Google Meet, Slack, Teams or WhatsApp call, the call instead: the meeting, the camera and the mic | A player in the colors of the cover: the cover, title, artist and album, a bar to seek with the time gone and left, shuffle, previous, play/pause, next, repeat, the app's own volume, favorite (Music) and the app; a switch between the apps when more than one has a track. During a call: the mic, the camera, the raised hand, the call brought to the front and Leave |
 | `system` | CPU, GPU and memory, colored by load and memory pressure | A dashboard: CPU and GPU with the last minute as a graph; memory split into app, wired and compressed; each disk with its used, available and purgeable space (a click opens it in the Finder); the apps that use the most CPU, GPU or memory; Activity Monitor and Storage settings |
 | `battery` | The charge, with an icon for its state; while it charges and the bar has room, how long it takes and at what time it's full or at its limit (`25 min · 18:45`) | A dashboard: the state, with how long the charge takes and when it ends, and a bar of the charge that marks the limit, the Charge Limit (macOS 26.4+) as a slider with its steps and Charge to Full Now; tiles for the maximum capacity and the condition, the cycles against the ones the battery is made for, the temperature and the power the Mac draws; the adapter while one is plugged in; Battery settings |
 | `devices` | The batteries of the mice, trackpads, keyboards, controllers and headphones that run low, or of the kinds you pin, side by side: the kind, a short name, a small bar and the level, colored by how full it is, and a bolt while it charges, with how long until it's full and at what time where the bar has room (`47 min · 15:52`, from how fast its level goes up); one asleep behind its receiver stays dimmed. Not in the default layout | A tile for each connected device: its kind, name, maker, how it's connected, whether it charges and when it will be full, the level big and as a bar (one for each half of a split keyboard, each earbud and the case), tinted when it runs low; then the others, and Bluetooth settings |
@@ -120,7 +120,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Calendars | `events` | Today's events (at start) |
 | Location | `network` | The nearby Wi-Fi networks and joining them (when its popup opens); the name of the current network doesn't need it |
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
-| Accessibility | `notifications`, `now_playing`, `whatsapp`, the compose key | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls). Sending a reply and marking a chat read through WhatsApp's window. Reading the keyboard for the [compose key](#compose-key), only when it's turned on |
+| Accessibility | `notifications`, `now_playing`, `whatsapp`, the compose key | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack, Teams and WhatsApp calls (asked from the call's controls). Sending a reply and marking a chat read through WhatsApp's window. Reading the keyboard for the [compose key](#compose-key), only when it's turned on |
 | Data of other apps | `whatsapp` | Reading WhatsApp's chats from its app's folder: macOS asks each time the bar starts, unless RustyBar has Full Disk Access; without it a yellow `!` shows, whose popup says how to be asked again (`tccutil reset SystemPolicyAppData io.github.francesco-rapetti.rustybar`, or Full Disk Access) |
 | Full Disk Access | `slack`, `teams`, the apps of `notifications` | Reading what the apps notify from Notification Center's database, which macOS keeps from every app without it; without it only the Dock's number shows, and the popup opens the list |
 | Automation | `apple`, `clock`, `now_playing` | Restart, Shut Down and Log Out; showing a day in Calendar; for Music and Spotify, the position, the cover and the controls (when the popup opens or on a click); without it the bar still shows what plays |
@@ -365,14 +365,14 @@ notch = true           # on a screen with a notch, black around it as an extensi
 hover = true           # with the mouse on it, the pill grows down with quick controls
 other_apps = false     # any app, through a perl process always running
 cover_colors = true    # the popup in the colors of the cover
-calls = true           # Google Meet, Slack and Teams calls in place of the music
+calls = true           # Google Meet, Slack, Teams and WhatsApp calls in place of the music
 dictation_key = true   # during a call the dictation key 🎤 mutes and unmutes the mic
 ```
 
 #### Calls
 
-During a call of Google Meet (in the browser), a Slack huddle or a Teams meeting, `now_playing`
-shows the call: around the notch, or in the pill, the app's icon, the meeting's name, the camera
+During a call of Google Meet (in the browser), a Slack huddle, a Teams meeting or a WhatsApp call
+(the app for the Mac), `now_playing` shows the call: around the notch, or in the pill, the app's icon, the meeting's name, the camera
 (dimmed when off) and the mic (red and crossed out when muted); compact, the icon and the mic. Under
 the mouse and in the popup: the mic, the camera, the raised hand (Meet and Teams), the call brought
 to the front (its tab or window) and a red Leave, each with a tip; for a Meet in Meet's own colors,
@@ -428,6 +428,15 @@ No plugin or admin is needed:
   hand by the button's state. (Teams had a local API for this, which Microsoft retired in June
   2026.) CoreAudio doesn't always tell when an app starts to capture, so RustyBar also asks it
   again every 3 s: a few property reads in its own process.
+- **WhatsApp** (the app for the Mac), the same way, with the name of who the call is with and
+  its controls in WhatsApp's own colors (dark pills, white when off, a red pill to leave). A call
+  has a window of its own, and only there its buttons are looked for. WhatsApp names them by
+  their state, not by what a click does (`audio riattivato` while the mic is on), so its own
+  words are matched whole, in Italian and English. The camera's button is named the other way
+  round (`fotocamera disattivata` while the camera is on), so the picture of you in the call,
+  which says when the camera is off, is believed first. A call that rings shows too, with
+  *Answer* in place of Leave: WhatsApp is asked while it plays as well as while it captures,
+  since a call that rings doesn't capture yet. Nothing is installed in WhatsApp.
 
 The names of the buttons can change with an update of the app. `rustybar msg trigger call_dump`
 writes what Accessibility sees of Slack and Teams, and the buttons the extension finds in each Meet
