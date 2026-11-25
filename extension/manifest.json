@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "RustyBar",
-  "version": "1.4",
-  "description": "Google Meet's mic, camera, raised hand and Leave in RustyBar, the bar of this Mac.",
+  "version": "1.8",
+  "description": "Google Meet's mic, camera, raised hand, Join and Leave in RustyBar, the bar of this Mac.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2Op611XPV6r961U6ffHq5hIW7TMOmeCwrAB0to41VwDE5rbdGXzEDvnlH8iiH5tDGdZxn7RTAVTvn/5SbwNweI87vUmBz35Sme8VE/czIxDGUtXK5JotrvdRwyop/m86IvhNO4ffLlErvbbGCxmPPVfUluh62oIZCKTj2rwcLOLDXZp/UAm1ODqAwteHruKN8Fkir702fKd5nzJ2a+mVs9NHwbZgfuhJJ+APHlcXRV9s5d57aJlQ7kQK8WPb3p3JChVeF2DZfm0PxlD3yjippPPWFin70tM7CoFCa/Hel/uUHljWKwEWjztpjeR6xivlntTba8SPHNfr6xyBfeRH+QIDAQAB",
   "minimum_chrome_version": "116",
   "permissions": ["scripting"],

@@ -379,7 +379,10 @@ to the front (its tab or window) and a red Leave, each with a tip; for a Meet in
 as in its control bar (muted in pink, the raised hand in blue, Leave a red pill). Around the notch it grows by
 itself for a moment when a call starts, not for one already on when the bar starts. `calls = false`
 turns it off. A Meet with no name of its own takes the title of today's event with its link, from
-the calendars, or else shows its code.
+the calendars, or else shows its code. A Meet shows from its page before joining (*Ready to
+join?*): the mic and the camera of the preview, the call brought to the front and a blue Join in
+place of the hand and Leave, or *waiting to be let in* after *Ask to join*; its time counts from
+joining.
 
 With something to play too, the bar shows the latest of the two to change: the call as it starts,
 the music when it starts playing, the call again at a pause or when the mic goes on. Tabs at the top
@@ -404,7 +407,9 @@ No plugin or admin is needed:
   RustyBar's extension: the Meet page tells the bar when its call starts, changes and ends, and
   presses its own buttons when the bar asks, so nothing is read on a timer and macOS asks for no
   permission. The extension talks only to the bar, over a WebSocket on this Mac (`127.0.0.1:47823`,
-  open only while a tab is in a call), and the bar takes only the extension. It finds Meet's
+  open only while a tab is on a meeting's page), and the bar takes only the extension. While the
+  bar restarts, the extension's page in the browser lists the connections it refused: the
+  extension tries again until the bar is back. It finds Meet's
   buttons by what doesn't change with Meet's language. To install it, in the browser's extensions
   page (`chrome://extensions`, or Dia's *Extensions*) turn on *Developer mode*, click *Load
   unpacked* and pick the `extension` folder of this repository, or the one in the app: ⌘⇧G and

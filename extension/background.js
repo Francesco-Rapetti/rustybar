@@ -1,6 +1,6 @@
 // RustyBar's worker: carries what the Meet tabs say (see meet.js) to the bar, over a WebSocket to
-// it on this Mac, and the bar's clicks back to them. Open only while a tab is in a call; the bar
-// takes only this extension (by its id, fixed by the key in the manifest).
+// it on this Mac, and the bar's clicks back to them. Open only while a tab is on a meeting's page;
+// the bar takes only this extension (by its id, fixed by the key in the manifest).
 const BAR = 'ws://127.0.0.1:47823/meet';
 const tabs = new Map(); // tab id → { port, state }
 let ws = null;

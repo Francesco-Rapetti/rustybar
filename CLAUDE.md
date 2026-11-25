@@ -610,9 +610,11 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   senza cambiare versione. Dia ricarica davvero solo con la ↻ della scheda dell'estensione, non con
   quella della pagina. Nessun permesso per 127.0.0.1: Local Network Access di Chromium 158 (Dia)
   lascia passare il WebSocket del worker anche senza. Lo script parla col worker con una porta solo
-  durante una chiamata, il worker tiene un WebSocket con la barra (`ws://127.0.0.1:47823/meet`,
-  riprova 1→10 s, un messaggio ogni 20 s perché Chrome non lo fermi) solo finché una scheda è in
-  chiamata. Nella barra `meet.rs`: un server avviato una volta per processo, un thread per linea che
+  sulla pagina di una riunione (prima, durante e dopo la chiamata: così `call_dump` arriva anche a
+  una pagina che non legge come chiamata), il worker tiene un WebSocket con la barra
+  (`ws://127.0.0.1:47823/meet`, riprova 1→10 s, un messaggio ogni 20 s perché Chrome non lo fermi)
+  solo finché una scheda è lì. I tentativi rifiutati mentre la barra riparte finiscono negli Errori
+  della scheda dell'estensione (il browser li scrive comunque): innocui. Nella barra `meet.rs`: un server avviato una volta per processo, un thread per linea che
   aspetta il messaggio dopo (niente in mezzo), handshake RFC 6455 con `CC_SHA1`, solo con l'`Origin`
   dell'estensione (id `palkoaepeohmdiehbgmiglbndcebomlk`, fisso per la `key` del manifest); il
   browser dall'altra parte come fa `lsof` (`proc_pidfdinfo` di ogni processo, il socket TCP da
@@ -682,6 +684,22 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   della chiamata, reload, quit e `kill -9` (reso al riavvio successivo) rendono il tasto, la
   mappatura di Raycast resta. Col tasto preso 19 MB, 0,07% CPU, 0 processi in 30 s. Da provare:
   in una chiamata vera di Meet, con una tastiera esterna (Magic Keyboard con Touch ID).
+  Meet dalla pagina prima di entrare (chiesto dall'utente: "Vuoi partecipare?"): `lobby` dalla
+  1.5 dell'estensione, una pagina di riunione (`/abc-defg-hij`) coi toggle `data-is-muted`
+  dell'anteprima e senza Esci; nella barra come una chiamata, nel peek e nel popup microfono,
+  videocamera, mostra e `Partecipa` blu di Meet (`#0b57d0`, `Look::join`) al posto di mano ed
+  Esci, nella riga `prima di entrare` (o `in attesa di entrare` dopo Chiedi di partecipare, senza
+  Partecipa); il tempo parte dall'ingresso (`settle`: da `lobby` a chiamata, `since` = adesso).
+  Partecipa (`Control::Join`) come Esci non vale entro 0,5 s dall'apertura. Imparato dal dump
+  della pagina vera: `jsname="Qx7uuf"` è un `div` attorno al solo tasto Partecipa, che ha solo il
+  testo (niente `aria-label`, icona o `jsname`): si preme il tasto dentro. Entrando, la pagina di
+  prima va via prima che arrivino i controlli della chiamata: la barra vedeva finire una chiamata
+  e cominciarne un'altra (isola cresciuta, tasto della dettatura reso e ripreso); dalla 1.8 lo
+  script dopo una `lobby` tiene la chiamata fino a 10 s finché non arrivano. Dati finti:
+  `msg trigger call service=meet lobby=1`. Provato coi dati finti sulla barra di prova (peek) e
+  dal vero con l'utente in Dia: pagina riconosciuta (microfono e videocamera spenti letti giusti),
+  Partecipa dalla barra (dentro, una sola riga `joined` dalla 1.8), estensione ricaricata dalla
+  barra con `meet_reload` senza la ↻ (Dia la carica dalla cartella del repo).
 - `fn_keys` (chiesto dall'utente, segni scelti dai mockup: tasto fn, pallino, mela, isola,
   AeroSpace, linguetta; uno o più, a scelta in `show`; spenti, spariscono): mentre F1, F2… sono
   tasti standard un segno lo dice. Modo letto e cambiato in-process (`fnkeys.rs`:

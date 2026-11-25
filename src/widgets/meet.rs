@@ -39,6 +39,11 @@ pub enum Said {
         mic: Option<bool>,
         camera: Option<bool>,
         hand: Option<bool>,
+        /// Before joining, with Join (`join`) while it's there.
+        #[serde(default)]
+        lobby: bool,
+        #[serde(default)]
+        join: bool,
         #[serde(default)]
         name: String,
         #[serde(default)]
@@ -438,7 +443,10 @@ mod tests {
     #[test]
     fn the_extension_says_what_the_bar_reads() {
         let said: Said = serde_json::from_str(r#"{"type":"call","tab":7,"call":true,"mic":false,"camera":true,"hand":null,"name":"","code":"abc-defg-hij"}"#).unwrap();
-        assert!(matches!(said, Said::Call { tab: 7, call: true, mic: Some(false), camera: Some(true), hand: None, .. }));
+        assert!(matches!(said, Said::Call { tab: 7, call: true, mic: Some(false), camera: Some(true), hand: None, lobby: false, .. }));
+        // Before joining, from 1.5
+        let said: Said = serde_json::from_str(r#"{"type":"call","tab":7,"call":true,"lobby":true,"join":true,"mic":true,"camera":false,"hand":null,"name":"","code":"abc-defg-hij"}"#).unwrap();
+        assert!(matches!(said, Said::Call { lobby: true, join: true, mic: Some(true), .. }));
         assert!(matches!(serde_json::from_str::<Said>(r#"{"type":"ping"}"#).unwrap(), Said::Other));
     }
 }

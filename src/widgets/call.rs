@@ -17,6 +17,8 @@
 //!   goes the same way; its pages are in the web view of a child process (Edge's), which shows
 //!   them only when asked with `AXEnhancedUserInterface`, as an assistive app would, and its
 //!   buttons have ids that don't change with the language (seen in a real meeting, Teams 26304).
+//!   Both have a page before the call, where they capture already: Teams' "Partecipazione alla
+//!   riunione" and Slack's "Huddle Preview", a call in `lobby` as Meet's page before joining.
 //!
 //! Everything here but `watch` and `capturing` runs on a background thread: Accessibility asks the
 //! app for each attribute.
@@ -109,6 +111,10 @@ pub struct Call {
     /// None without the button (Slack has none).
     pub hand: Option<bool>,
     pub leave: bool,
+    /// Meet's page before joining: the mic and camera of the preview, and Join in place of Leave.
+    pub lobby: bool,
+    /// Join is there: not while it waits for someone to let you in.
+    pub join: bool,
     /// How long it's been on, in made-up data.
     #[serde(rename = "elapsed")]
     pub elapsed: f64,
@@ -147,6 +153,8 @@ pub enum Control {
     Camera,
     Hand,
     Leave,
+    /// Meet's, before joining.
+    Join,
 }
 
 impl Control {
@@ -156,6 +164,7 @@ impl Control {
             Control::Camera => "camera",
             Control::Hand => "hand",
             Control::Leave => "leave",
+            Control::Join => "join",
         }
     }
 }
@@ -359,6 +368,23 @@ mod ax {
     pub(super) fn classify(service: Service, label: &str) -> Option<Control> {
         let w = words(label);
         const TOGGLE: [&str; 14] = ["mute", "unmute", "turn", "disattiva", "riattiva", "attiva", "start", "stop", "accendi", "spegni", "enable", "disable", "on", "off"];
+        // The page before a call. Teams' "Partecipa ora" ("Join now"), not the "Partecipa" of a
+        // chat; Slack's "Start Huddle", not the "Start a Huddle" of the Huddles page nor the
+        // "Start huddle with …" of a conversation, and its two switches, which have no verb.
+        if service == Service::Teams && w.len() == 2 && ((any(&w, &["partecipa"]) && any(&w, &["ora"])) || (any(&w, &["join"]) && any(&w, &["now"]))) {
+            return Some(Control::Join);
+        }
+        if service == Service::Slack {
+            if w == ["start", "huddle"] || w == ["avvia", "huddle"] {
+                return Some(Control::Join);
+            }
+            if w.len() == 1 && any(&w, &["microphone", "microfono"]) {
+                return Some(Control::Mic);
+            }
+            if w.len() == 1 && any(&w, &["video"]) {
+                return Some(Control::Camera);
+            }
+        }
         if any(&w, &["leave", "esci", "abbandona", "lascia", "hang"]) && (service == Service::Teams || any(&w, &["huddle"])) {
             // Not a channel, a team or a community to leave, nor the devices to sign out of
             if any(&w, &["canale", "channel", "team", "community", "chat", "gruppo", "group", "dispositivi", "devices", "visualizzazione", "view"]) {
@@ -398,6 +424,7 @@ mod ax {
             "video-button" => Some(Control::Camera),
             "raisehands-button" => Some(Control::Hand),
             "hangup-button" => Some(Control::Leave),
+            "prejoin-join-button" => Some(Control::Join),
             _ => None,
         }
     }
@@ -411,6 +438,10 @@ mod ax {
     /// Whether what a button controls is on now, from its name, which says what a click does:
     /// "Mute" while the mic is on, "Raise hand" while it's down.
     pub(super) fn on_now(control: Control, label: &str) -> Option<bool> {
+        // A way out or a way in is neither on nor off
+        if matches!(control, Control::Leave | Control::Join) {
+            return None;
+        }
         let w = words(label);
         let (off_now, on_now): (&[&str], &[&str]) = match control {
             Control::Hand => (&["raise", "alza"], &["lower", "abbassa"]),
@@ -450,7 +481,8 @@ mod ax {
             if BUTTONS.contains(&role.as_str()) {
                 if let Some(c) = kind(service, e, &label(e)) {
                     found.controls.entry(c).or_insert_with(|| e.clone());
-                    if c == Control::Leave {
+                    // The call's window, or the one of the page before it
+                    if c == Control::Leave || (c == Control::Join && found.window.is_none()) {
                         found.window = Some(window.clone());
                     }
                 }
@@ -511,7 +543,7 @@ mod ax {
         let labelled = |f: &Found| -> Labelled { f.controls.iter().map(|(c, e)| (*c, (e.clone(), label(e)))).filter(|(c, (e, l))| kind(t.service, e, l) == Some(*c)).collect() };
         if let Some(f) = cache.get(&t.pid) {
             let now = labelled(f);
-            if now.contains_key(&Control::Leave) && now.len() == f.controls.len() {
+            if (now.contains_key(&Control::Leave) || now.contains_key(&Control::Join)) && now.len() == f.controls.len() {
                 return Some((now, f.window.clone()));
             }
         }
@@ -532,22 +564,46 @@ mod ax {
         let Some(app) = app(t.pid) else { return super::Found::Nothing };
         show_pages(t.pid, &app);
         let Some((controls, window)) = controls(t, &app) else { return super::Found::Nothing };
+        // Teams' hand is just "Mano", and says it's raised as an expanded button; the microphone and
+        // the video of Slack's page before a huddle are switches, on or off
+        let state = |c: Control| {
+            controls.get(&c).and_then(|(e, l)| {
+                on_now(c, l).or_else(|| match c {
+                    Control::Hand => number(e, "AXExpanded").map(|n| n != 0.0),
+                    Control::Mic | Control::Camera => number(e, "AXValue").map(|n| n != 0.0),
+                    _ => None,
+                })
+            })
+        };
+        // Teams names its windows: "Weekly sync | …" a call's, "Partecipazione alla riunione |
+        // Weekly sync | …" the page before it
+        let title: Vec<String> = match (t.service, &window) {
+            (Service::Teams, Some(w)) => string(w, "AXTitle").split(" | ").map(|p| p.trim().to_string()).collect(),
+            _ => Vec::new(),
+        };
+        // The page before joining: the microphone and the camera of the preview, and Join
+        if !controls.contains_key(&Control::Leave)
+            && let Some((join, _)) = controls.get(&Control::Join)
+        {
+            return super::Found::Call(Call {
+                service: t.service,
+                bundle: t.bundle.clone(),
+                name: title.get(1).cloned().unwrap_or_default(),
+                mic: state(Control::Mic),
+                camera: state(Control::Camera),
+                hand: None,
+                leave: false,
+                lobby: true,
+                join: number(join, "AXEnabled") != Some(0.0),
+                pid: t.pid,
+                ..Default::default()
+            });
+        }
         // A call has a way out and a microphone: a Leave alone is something else of the app
         if !controls.contains_key(&Control::Leave) || !controls.contains_key(&Control::Mic) {
             return super::Found::Nothing;
         }
-        // Teams' hand is just "Mano", and says it's raised as an expanded button
-        let state = |c: Control| {
-            controls.get(&c).and_then(|(e, l)| on_now(c, l).or_else(|| if c == Control::Hand { number(e, "AXExpanded").map(|n| n != 0.0) } else { None }))
-        };
-        // Teams names its call window after the meeting: "Weekly sync | Microsoft Teams"
-        let name = match (t.service, &window) {
-            (Service::Teams, Some(w)) => {
-                let title = string(w, "AXTitle");
-                title.split(" | ").next().unwrap_or_default().trim().to_string()
-            }
-            _ => String::new(),
-        };
+        let name = title.first().cloned().unwrap_or_default();
         super::Found::Call(Call {
             service: t.service,
             bundle: t.bundle.clone(),
@@ -669,5 +725,31 @@ mod tests {
         assert_eq!(by_id(Service::Teams, "raisehands-button"), Some(Control::Hand));
         assert_eq!(by_id(Service::Teams, "share-button"), None);
         assert_eq!(by_id(Service::Slack, "hangup-button"), None);
+    }
+
+    /// The page before a call: Teams' "Partecipazione alla riunione" and Slack's "Huddle Preview".
+    #[test]
+    fn the_page_before_a_call_has_its_way_in() {
+        use ax::{by_id, classify, on_now};
+        let slack = |l: &str| classify(Service::Slack, &l.to_lowercase());
+        let teams = |l: &str| classify(Service::Teams, &l.to_lowercase());
+        assert_eq!(by_id(Service::Teams, "prejoin-join-button"), Some(Control::Join));
+        assert_eq!(teams("Partecipa ora"), Some(Control::Join));
+        assert_eq!(teams("Join now"), Some(Control::Join));
+        assert_eq!(teams("Partecipa"), None);
+        assert_eq!(teams("Riattiva microfono (⇧ ⌘ M)"), Some(Control::Mic));
+        assert_eq!(on_now(Control::Mic, "riattiva microfono (⇧ ⌘ m)"), Some(false));
+        assert_eq!(teams("Disattiva l'altoparlante (⇧ ⌘ U)"), None);
+        assert_eq!(teams("La videocamera non è disponibile"), None);
+        assert_eq!(slack("Start Huddle"), Some(Control::Join));
+        assert_eq!(slack("Start a Huddle"), None);
+        assert_eq!(slack("Start huddle with Ada Lovelace"), None);
+        // Slack's switches there have no verb: their state is their value, not their name
+        assert_eq!(slack("Microphone"), Some(Control::Mic));
+        assert_eq!(slack("Video"), Some(Control::Camera));
+        assert_eq!(on_now(Control::Mic, "microphone"), None);
+        assert_eq!(on_now(Control::Join, "start huddle"), None);
+        assert_eq!(teams("Video"), None);
+        assert_eq!(slack("Join now"), None);
     }
 }

@@ -49,7 +49,8 @@
 //! and read): in the bar the
 //! app's icon, the meeting's name, the camera and the mic, red and crossed out when muted (the
 //! icon and the mic when compact); under the mouse and in the popup the mic, the camera, the
-//! raised hand, the call brought to the front, and a red Leave. On the island it grows by itself
+//! raised hand, the call brought to the front, and a red Leave. A Meet shows from its page before
+//! joining, with Join in place of the hand and Leave, and counts its time from joining. On the island it grows by itself
 //! for a moment when a call starts. Without Accessibility, a Slack or Teams that captures shows
 //! with what's missing and how to give it. With `dictation_key` (on by default), during a call the
 //! dictation key (🎤, F5 of Apple's keyboards) mutes and unmutes the mic in place of dictation,
@@ -58,7 +59,8 @@
 //! With made-up data (see `mock`), the players of `now_playing.json`, whose `artwork` is relative
 //! to its folder (the `other` one with `other_apps` only); the controls change them in memory only,
 //! and ⏮ ⏭ go through the tracks of its `queue`. The made-up calls of `call.json` start with
-//! `rustybar msg trigger call service=meet` (or `slack`, `teams`) and end with `service=end`.
+//! `rustybar msg trigger call service=meet` (or `slack`, `teams`; `lobby=1` before joining) and end
+//! with `service=end`.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -1257,7 +1259,8 @@ impl Widget for NowPlaying {
             }
             Event::Trigger { name, args } if name == "call" && self.mock => {
                 let service = args.get("service").map(String::as_str).unwrap_or("meet");
-                self.mock_call(service, cx);
+                let lobby = args.get("lobby").is_some_and(|v| v != "0" && v != "false");
+                self.mock_call(service, lobby, cx);
             }
             Event::Trigger { name, .. } if name == "call_dump" => self.dump_calls(cx),
             Event::Trigger { name, .. } if name == "meet_reload" => meet::reload(),
@@ -1775,7 +1778,7 @@ impl NowPlaying {
         }
         let (pid, bundle) = browser.clone().unwrap_or_default();
         match said {
-            meet::Said::Call { tab, call: true, mic, camera, hand, name, code } => {
+            meet::Said::Call { tab, call: true, mic, camera, hand, lobby, join, name, code } => {
                 let c = Call {
                     service: Service::Meet,
                     bundle,
@@ -1785,7 +1788,9 @@ impl NowPlaying {
                     mic: *mic,
                     camera: *camera,
                     hand: *hand,
-                    leave: true,
+                    leave: !*lobby,
+                    lobby: *lobby,
+                    join: *join,
                     pid,
                     tab: *tab,
                     line,
@@ -1865,6 +1870,11 @@ impl NowPlaying {
                 }
             }
             match self.call.as_ref().filter(|o| same_call(o, n)) {
+                // Its time counts from joining
+                Some(o) if o.lobby && !n.lobby => {
+                    n.since = now;
+                    crate::log(&format!("now_playing: joined the {} call", n.service.name()));
+                }
                 Some(o) => n.since = o.since,
                 None => {
                     n.since = now;
@@ -1874,14 +1884,14 @@ impl NowPlaying {
         }
         // In the log: a call that starts or ends, and what keeps one from being read
         match (&self.call, &next) {
-            (_, Some(n)) if started => crate::log(&format!("now_playing: a {} call in {}", n.service.name(), n.app)),
+            (_, Some(n)) if started => crate::log(&format!("now_playing: a {} call in {}{}", n.service.name(), n.app, if n.lobby { ", before joining" } else { "" })),
             (Some(o), Some(n)) if n.blocked.is_some() && o.blocked != n.blocked => crate::log(&format!("now_playing: {} captures, but {:?}", n.app, n.blocked)),
             (None, Some(n)) if n.blocked.is_some() => crate::log(&format!("now_playing: {} captures, but {:?}", n.app, n.blocked)),
             (Some(o), None) if o.blocked.is_none() => crate::log(&format!("now_playing: the {} call ended", o.service.name())),
             _ => {}
         }
         let changed = match (&self.call, &next) {
-            (Some(a), Some(b)) => !same_call(a, b) || (a.name.as_str(), a.mic, a.camera, a.hand, a.blocked, a.app.as_str()) != (b.name.as_str(), b.mic, b.camera, b.hand, b.blocked, b.app.as_str()),
+            (Some(a), Some(b)) => !same_call(a, b) || (a.name.as_str(), a.mic, a.camera, a.hand, a.lobby, a.join, a.blocked, a.app.as_str()) != (b.name.as_str(), b.mic, b.camera, b.hand, b.lobby, b.join, b.blocked, b.app.as_str()),
             (None, None) => false,
             _ => true,
         };
@@ -1944,10 +1954,11 @@ impl NowPlaying {
             "call:camera" => Some(Control::Camera),
             "call:hand" => Some(Control::Hand),
             "call:leave" => Some(Control::Leave),
+            "call:join" => Some(Control::Join),
             _ => None,
         };
-        // A click that came as the controls grew under the mouse isn't for Leave
-        if control == Some(Control::Leave) && now - self.opened < 0.5 {
+        // A click that came as the controls grew under the mouse isn't for Leave, nor for Join
+        if matches!(control, Some(Control::Leave | Control::Join)) && now - self.opened < 0.5 {
             return;
         }
         // The change shows at once; the next read corrects it
@@ -1972,6 +1983,10 @@ impl NowPlaying {
                     Some((line, tab)) => meet::press(line, tab, Control::Leave),
                     None => cx.background::<NowPlaying, _>(move || call::press(&target, Control::Leave), |w, _, cx| w.read_calls(cx)),
                 }
+            }
+            // Made up: in at once, as when no one has to let you in
+            (_, Some(Control::Join), _) if mock => {
+                (c.lobby, c.join, c.leave, c.hand, c.since) = (false, false, true, Some(false), now);
             }
             (_, Some(control), Some((line, tab))) if !mock => meet::press(line, tab, control),
             (_, Some(control), None) if !mock => {
@@ -1998,10 +2013,13 @@ impl NowPlaying {
         cx.redraw();
     }
 
-    /// A made-up call (see the top): `service` starts it, `end` ends it.
-    fn mock_call(&mut self, service: &str, cx: &mut Cx) {
+    /// A made-up call (see the top): `service` starts it, before joining with `lobby`; `end` ends it.
+    fn mock_call(&mut self, service: &str, lobby: bool, cx: &mut Cx) {
         let next = self.mock_calls.iter().find(|c| c.service.key() == service).cloned().map(|mut c| {
             c.since = time::now() - c.elapsed;
+            if lobby {
+                (c.lobby, c.join, c.leave, c.hand, c.since) = (true, true, false, None, time::now());
+            }
             c
         });
         let started = next.is_some() && self.call.as_ref().map(|c| c.service) != next.as_ref().map(|c| c.service);
@@ -2249,8 +2267,12 @@ fn call_line(c: &Call, now: f64) -> String {
     if (c.service == Service::Meet || c.blocked.is_some()) && !c.app.is_empty() {
         parts.push(c.app.clone());
     }
-    if c.blocked.is_none() {
-        parts.push(clock(now - c.since));
+    match (c.lobby, c.join) {
+        _ if c.blocked.is_some() => {}
+        (true, true) => parts.push(t("prima di entrare", "before joining").into()),
+        // Asked to join: someone has to let you in
+        (true, false) => parts.push(t("in attesa di entrare", "waiting to be let in").into()),
+        _ => parts.push(clock(now - c.since)),
     }
     parts.join(" · ")
 }
@@ -2348,8 +2370,9 @@ fn call_signs(th: &Theme, c: &Call, compact: bool, warning: bool) -> Vec<Node> {
 }
 
 /// The controls of a call: mic, camera and hand (as the app has them), the call to the front, and
-/// a red Leave. What's off is on red, the raised hand on yellow: a clear tint, which the tiles'
-/// would not be on the notch's black. With `key`, the mic's tip says the dictation key does it too.
+/// a red Leave, or Join before joining. What's off is on red, the raised hand on yellow: a clear
+/// tint, which the tiles' would not be on the notch's black. With `key`, the mic's tip says the
+/// dictation key does it too.
 fn call_controls(rx: &Rx, c: &Call, key: bool) -> Node {
     let th = rx.theme;
     let look = Look::of(th, c);
@@ -2380,6 +2403,16 @@ fn call_controls(rx: &Rx, c: &Call, key: bool) -> Node {
     }
     let app = if c.app.is_empty() { c.service.name().to_string() } else { c.app.clone() };
     controls.push(button("arrow.up.forward.app.fill", look.plain, "call:open", format!("{} {app}", t("Mostra la chiamata in", "Show the call in"))));
+    if c.lobby && c.join {
+        let (bg, fg) = look.join;
+        let join = Node::row(vec![Node::text(t("Partecipa", "Join"), th.font_with(Weight::Semibold, th.font_size), fg).key("label")])
+            .height(36.0)
+            .align(Align::Center)
+            .radius(18.0)
+            .background(bg)
+            .padding(0.0, 16.0, 0.0, 16.0);
+        controls.push(join.hover(bg.mix(fg, 0.18)).click(rx.action("call:join")).tip(t("Partecipa alla riunione", "Join the meeting")).key("call:join"));
+    }
     if c.leave {
         let (bg, fg) = look.leave;
         let mut leave = vec![Node::symbol("phone.down.fill", if look.label { 13.0 } else { 16.0 }, Weight::Semibold, fg).key("symbol")];
@@ -2395,12 +2428,14 @@ fn call_controls(rx: &Rx, c: &Call, key: bool) -> Node {
 
 /// How a call's buttons look: as in Meet's own control bar for a Meet (dark, whatever the theme,
 /// as Meet is during a call: muted in pink, the raised hand in blue, Leave a red pill with its
-/// icon alone), else in the theme's colors. Each is its background and its icon's color.
+/// icon alone, Join blue as on its page), else in the theme's colors. Each is its background and
+/// its icon's color.
 struct Look {
     plain: (Rgba, Rgba),
     off: (Rgba, Rgba),
     up: (Rgba, Rgba),
     leave: (Rgba, Rgba),
+    join: (Rgba, Rgba),
     radius: f64,
     /// Under the mouse; None: a veil of the icon's color, as Meet does.
     hover: Option<Rgba>,
@@ -2417,6 +2452,7 @@ impl Look {
                 off: (rgb(0xf9dedc), rgb(0x601410)),
                 up: (rgb(0xa8c7fa), rgb(0x062e6f)),
                 leave: (rgb(0xdc362e), rgb(0xffffff)),
+                join: (rgb(0x0b57d0), rgb(0xffffff)),
                 radius: 12.0,
                 hover: None,
                 label: false,
@@ -2426,6 +2462,7 @@ impl Look {
                 off: (th.red.faded(0.24), th.red),
                 up: (th.yellow.faded(0.24), th.yellow),
                 leave: (th.red, th.on_primary),
+                join: (th.primary, th.on_primary),
                 radius: 18.0,
                 hover: Some(th.highlight),
                 label: true,
@@ -3250,6 +3287,47 @@ mod tests {
         w.focus = Focus::Call;
         assert_eq!(keys(&w.peek(&rx).expect("a peek")), ["sources", "about", "access"]);
         assert_eq!(keys(&w.bar(&rx).expect("a pill")), ["icon", "title", "mic", "bars"]);
+    }
+
+    #[test]
+    fn a_meet_shows_before_joining_and_counts_from_joining() {
+        let theme = crate::theme::Theme::from_config(&crate::config::ThemeConfig::default());
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1512.0, 982.0));
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: None, notch_height: 0.0, large: false };
+        let rx = Rx::new("now_playing", &theme, &display, crate::fit::Form::Full, false);
+        let keys = |n: &Node| n.children.iter().filter_map(|c| c.key.clone()).collect::<Vec<_>>();
+        let mut w = NowPlaying::new(&Options::default());
+        let mut timers = Vec::new();
+        let mut cx = Cx { name: "now_playing", generation: 0, popup_open: false, peek_open: true, timers: &mut timers, effects: Vec::new() };
+        // As the extension says it: the page before joining, then the call
+        let lobby = Call { service: Service::Meet, bundle: "com.google.Chrome".into(), name: "Sync".into(), mic: Some(true), camera: Some(false), lobby: true, join: true, tab: 3, line: 1, ..Default::default() };
+        w.meet = vec![lobby.clone()];
+        w.settle(&mut cx);
+        let c = w.call.clone().expect("the call, before joining");
+        assert!(c.lobby && !c.leave);
+        assert!(call_line(&c, time::now()).ends_with(t("prima di entrare", "before joining")));
+        let peek = w.peek(&rx).expect("a peek");
+        let controls = peek.children.iter().find(|n| n.key.as_deref() == Some("controls")).expect("the controls");
+        assert_eq!(keys(controls), ["call:mic", "call:camera", "call:open", "call:join"]);
+        // Asked to join: no Join while someone has to let you in
+        w.meet = vec![Call { join: false, ..lobby.clone() }];
+        w.settle(&mut cx);
+        assert!(call_line(w.call.as_ref().unwrap(), time::now()).ends_with(t("in attesa di entrare", "waiting to be let in")));
+        // In: its time from now, and Leave
+        w.call.as_mut().unwrap().since = time::now() - 100.0;
+        w.meet = vec![Call { lobby: false, join: false, leave: true, hand: Some(false), ..lobby.clone() }];
+        w.settle(&mut cx);
+        let c = w.call.clone().expect("the call");
+        assert!(time::now() - c.since < 1.0 && c.leave);
+        // A Join right as the peek grew under the mouse isn't one
+        w.mock = true;
+        w.call = Some(lobby.clone());
+        w.opened = time::now();
+        w.action("call:join", None, &mut cx);
+        assert!(w.call.as_ref().unwrap().lobby);
+        w.opened = time::now() - 1.0;
+        w.action("call:join", None, &mut cx);
+        assert!(!w.call.as_ref().unwrap().lobby);
     }
 
     #[test]
