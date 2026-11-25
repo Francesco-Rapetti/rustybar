@@ -51,6 +51,12 @@ use crate::ui::{Align, Justify, Kind as NodeKind, Node};
 const EVERY: f64 = 5.0 * 60.0;
 /// IOKit tells a device's interfaces one by one: they're read this long after the last, in seconds.
 const SETTLE: f64 = 1.0;
+/// A device behind a receiver that didn't answer is asked again after these: a keyboard takes a
+/// few seconds to find its dongle (the pass a second after the dongle came found it alone), and
+/// one that sleeps wakes at the first key. After the last, every `AGAIN` while one that answered
+/// since the bar started is silent; one never heard waits for `EVERY`.
+const RETRY: [f64; 3] = [4.0, 10.0, 30.0];
+const AGAIN: f64 = 60.0;
 /// A device that doesn't say whether it charges, charging, goes up a step every few minutes (a
 /// keyboard 1–3 points a minute, slower near full); a battery at rest comes back once, or slowly
 /// over hours. So it charges while each step up comes this soon after the one before.
@@ -147,6 +153,9 @@ pub struct Devices {
     any_wired: bool,
     /// Bumped by each interface that comes or goes: the pass runs a second after the last.
     settle: u64,
+    /// How many of `RETRY` were used since an interface came or went, and the one waited for.
+    tries: usize,
+    retry: u64,
     watch: Option<hid::Watch>,
     tokens: Vec<c_int>,
     mock: bool,
@@ -178,6 +187,8 @@ impl Devices {
             again: false,
             any_wired: false,
             settle: 0,
+            tries: 0,
+            retry: 0,
             watch: None,
             tokens: Vec::new(),
             mock: false,
@@ -239,12 +250,37 @@ impl Devices {
             w.rebuild(cx);
             if std::mem::take(&mut w.again) {
                 w.pass(cx);
+            } else {
+                w.ask_again(cx);
+            }
+        });
+    }
+
+    /// After a pass with a device that didn't answer: another one soon (`RETRY`, `AGAIN`).
+    fn ask_again(&mut self, cx: &mut Cx) {
+        self.retry += 1;
+        let silent: Vec<&Found> = self.wired.iter().filter(|f| f.level.is_none() && !f.locked).collect();
+        if silent.is_empty() {
+            self.tries = 0;
+            return;
+        }
+        let delay = match RETRY.get(self.tries) {
+            Some(d) => *d,
+            None if silent.iter().any(|f| self.last.contains_key(&f.key)) => AGAIN,
+            None => return,
+        };
+        self.tries += 1;
+        let retry = self.retry;
+        cx.after::<Devices>(delay, move |w, cx| {
+            if w.retry == retry {
+                w.pass(cx);
             }
         });
     }
 
     /// One of the makers' interfaces came or went: a pass once they've all arrived.
     fn interfaces_changed(&mut self, cx: &mut Cx) {
+        self.tries = 0;
         self.settle += 1;
         let settle = self.settle;
         cx.after::<Devices>(SETTLE, move |w, cx| {
@@ -569,6 +605,9 @@ impl Widget for Devices {
         }
         match event {
             Event::Wake | Event::PopupOpened => {
+                if matches!(event, Event::Wake) {
+                    self.tries = 0;
+                }
                 self.accessories_changed(cx);
                 self.pass(cx);
             }

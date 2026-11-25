@@ -565,6 +565,14 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `pmset -g accps` e quindi non la Hyzen67): la lista del widget in JSON (`LISTING`, aggiornata
   da `publish` quando cambia), così il plugin non deve chiedere Monitoraggio input a nome di
   Stream Deck. Provato dal vero: barra vera e plugin (`battery.js`) con `HYZEN67 82%` in carica.
+  Poi, passando dal cavo al dongle, la barra la dava inattiva mentre l'utente scriveva: la
+  lettura 1 s dopo l'arrivo del dongle lo trova da solo (la tastiera ci mette qualche secondo ad
+  agganciarlo) e la successiva era dopo 5 minuti. Ora chi non risponde è richiesto dopo 4, 10 e
+  30 s (`RETRY`, da capo a ogni interfaccia che va o viene e al risveglio), poi ogni 60 s
+  (`AGAIN`) solo se ha già risposto dall'avvio. Il byte dopo il livello è la carica: 1 col cavo,
+  0 col dongle senza cavo (col dongle vale quello). Sulla barra vera: `HYZEN67 89%` col dongle,
+  anche nel plugin. Da provare con l'utente: il passaggio cavo → dongle visto dal vivo, la
+  tastiera che dorme e si sveglia, il fulmine col dongle e il caricatore.
 - Senza notch il gruppo `center` non è più fisso a metà (l'utente vedeva pill compatte e la `⋯`
   a destra con ~190 pt liberi a sinistra, sul monitor da 1920 pt): i lati si dividono lo spazio
   che lascia (`Room::Shared`, una corsia sola come senza gruppo centrale; prima `Split`, metà

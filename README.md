@@ -612,13 +612,15 @@ The batteries come from two places:
   One behind a receiver that sleeps (a keyboard left alone, a mouse that's off) stays in the bar
   dimmed, with the level it had when it last answered since the bar started.
   Only the HID interfaces of these makers are opened, and never one with a keyboard on it, so
-  macOS asks for no permission. Lofree's is the exception: the battery comes through the
-  interface with the keys, which macOS opens only with Input Monitoring. RustyBar opens it only
-  if it has that already, keeps nothing but the battery's answer, and until then the popup has
-  a row, *Read the battery of …*, that asks for it. They're read on a worker thread at the start, a second after
-  IOKit says one came or went, on wake, when the popup opens and every 5 minutes while one is
-  plugged in (a few ms; up to a few seconds of waiting for a Steam Controller's battery among its
-  other reports). `receivers = false` keeps macOS's list alone.
+  macOS asks for no permission. Lofree's is the exception: the battery comes through the interface
+  with the keys, which macOS opens only with Input Monitoring. RustyBar opens it only if it has
+  that already, keeps nothing but the battery's answer, and until then the popup has a row, *Read
+  the battery of …*, that asks for it. They're read on a worker thread at the start, a second
+  after IOKit says one came or went, on wake, when the popup opens and every 5 minutes while one
+  is plugged in; one that didn't answer (a keyboard still finding its dongle, or asleep) is asked
+  again after 4, 10 and 30 seconds, then every minute if it has answered since the bar started (a
+  few ms; up to a few seconds of waiting for a Steam Controller's battery among its other
+  reports). `receivers = false` keeps macOS's list alone.
 
 A device seen in both (paired over Bluetooth, on its receiver now) shows once.
 

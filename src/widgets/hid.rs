@@ -989,13 +989,14 @@ const LOFREE_BATTERY: u8 = 0x1A;
 
 /// The first byte of the answer to a command: the report is its id, `00 00`, the command, the
 /// length and the offset of what was sent, `00`, then the data. Read from a Hyzen67's dongle:
-/// `04 00 00 1A 00 00 00 00 4D 01` at 77%.
-pub(super) fn lofree_answer(r: &[u8], cmd: u8) -> Option<u8> {
-    (r.len() >= 9 && r[0] == LOFREE_REPORT && r[3] == cmd).then(|| r[8])
+/// `04 00 00 1A 00 00 00 00 4D 01` at 77% on its cable, `… 5A 00` at 90% away from it: the byte
+/// after the level is 1 while it charges. Both are given.
+pub(super) fn lofree_answer(r: &[u8], cmd: u8) -> Option<(u8, u8)> {
+    (r.len() >= 10 && r[0] == LOFREE_REPORT && r[3] == cmd).then(|| (r[8], r[9]))
 }
 
 /// Sends a frame and waits for the one that answers it.
-fn lofree_frame(port: &Port, bytes: usize, cmd: u8) -> Option<u8> {
+fn lofree_frame(port: &Port, bytes: usize, cmd: u8) -> Option<(u8, u8)> {
     let mut req = vec![0u8; bytes];
     req[0] = LOFREE_REPORT;
     req[3] = cmd;
@@ -1013,7 +1014,7 @@ fn lofree_frame(port: &Port, bytes: usize, cmd: u8) -> Option<u8> {
 
 /// One question as the web driver asks it: start, the command, end (sent also when the command
 /// got no answer, so the keyboard isn't left waiting).
-fn lofree_ask(port: &Port, bytes: usize, cmd: u8) -> Option<u8> {
+fn lofree_ask(port: &Port, bytes: usize, cmd: u8) -> Option<(u8, u8)> {
     lofree_frame(port, bytes, LOFREE_START)?;
     let answer = lofree_frame(port, bytes, cmd);
     lofree_frame(port, bytes, LOFREE_END);
@@ -1034,9 +1035,11 @@ fn lofree(colls: &[Collection], found: &mut Vec<Found>) {
                 // A dongle alone answers 0 to "is it there?"; so does the keyboard on its cable,
                 // which is there anyway and charges from it
                 let cable = link == Link::Cable;
-                if cable || lofree_ask(&port, out.bytes, LOFREE_LINKED).is_some_and(|linked| linked != 0) {
-                    f.level = lofree_ask(&port, out.bytes, LOFREE_BATTERY).filter(|l| (1..=100).contains(l));
-                    f.charging = cable && f.level.is_some();
+                if (cable || lofree_ask(&port, out.bytes, LOFREE_LINKED).is_some_and(|(linked, _)| linked != 0))
+                    && let Some((level, charging)) = lofree_ask(&port, out.bytes, LOFREE_BATTERY).filter(|(l, _)| (1..=100).contains(l))
+                {
+                    f.level = Some(level);
+                    f.charging = cable || charging == 1;
                 }
             }
             None => f.locked = c.keyboard() && !listening(),
@@ -1053,7 +1056,7 @@ mod tests {
     fn lofree_answers() {
         let mut r = vec![0u8; 64];
         r[..10].copy_from_slice(&[0x04, 0, 0, 0x1A, 0, 0, 0, 0, 0x4D, 0x01]);
-        assert_eq!(lofree_answer(&r, LOFREE_BATTERY), Some(77));
+        assert_eq!(lofree_answer(&r, LOFREE_BATTERY), Some((77, 1)));
         // The answer to another command, and another report
         assert_eq!(lofree_answer(&r, LOFREE_LINKED), None);
         r[0] = 5;
