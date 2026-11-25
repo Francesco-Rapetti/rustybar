@@ -1,6 +1,6 @@
 //! The settings window: what the dotfiles configure, edited in place. It opens from the Apple
 //! menu (`apple`) or with `rustybar msg settings [page]`. On the left the pages: RustyBar (the bar,
-//! the theme, the layout and each widget), AeroSpace (general, gaps, bindings, monitors, window
+//! the theme, the layout, the compose key and each widget), AeroSpace (general, gaps, bindings, monitors, window
 //! rules), the borders of JankyBorders, SwipeAeroSpace, MiddleClick and the Brewfile; on the right
 //! the page. A change is written at once (see `store`) and applied: the bar reloads by itself when
 //! its files change, AeroSpace is asked to reload its config, `borders` gets its new options,
@@ -12,6 +12,7 @@
 //! applies nothing.
 
 mod aerospace;
+mod compose;
 mod form;
 mod other;
 mod rustybar;
@@ -85,7 +86,7 @@ thread_local! {
 }
 
 /// Starts the window in a process of its own, on `page` if given (`bar`, `theme`, `layout`,
-/// `widget:<name>`, `aerospace`, `gaps`, `keys`, `monitors`, `rules`, `borders`, `swipe`,
+/// `compose`, `widget:<name>`, `aerospace`, `gaps`, `keys`, `monitors`, `rules`, `borders`, `swipe`,
 /// `middleclick`, `brew`): from the bar, with its config folder, made-up data and language.
 pub fn launch(page: Option<&str>) {
     let mut args = vec!["settings".to_string()];
@@ -428,6 +429,7 @@ fn build_page(page: &str, f: &mut Form, lua: &[String]) {
         "bar" => rustybar::bar(f),
         "theme" => rustybar::theme(f),
         "layout" => rustybar::layout(f, lua),
+        "compose" => compose::page(f),
         "aerospace" => aerospace::general(f),
         "gaps" => aerospace::gaps(f),
         "keys" => aerospace::keys(f),
@@ -473,6 +475,7 @@ fn entries(lua: &[String]) -> Vec<(&'static str, Vec<Entry>)> {
             entry("bar", t("Barra", "Bar"), "menubar.rectangle", "#e8763a"),
             entry("theme", t("Tema", "Theme"), "paintpalette.fill", "#c062d8"),
             entry("layout", t("Disposizione", "Layout"), "rectangle.split.3x1.fill", "#3a8ee8"),
+            entry("compose", t("Tasto Compose", "Compose key"), "character.cursor.ibeam", "#2f9e6e"),
         ],
     )];
     let widgets = rustybar::widget_entries(lua)

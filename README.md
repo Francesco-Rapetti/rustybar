@@ -120,7 +120,7 @@ RustyBar asks for each permission the first time a widget needs it:
 | Calendars | `events` | Today's events (at start) |
 | Location | `network` | The nearby Wi-Fi networks and joining them (when its popup opens); the name of the current network doesn't need it |
 | Bluetooth | `audio` | Connecting and disconnecting headphones and speakers (on the first click) |
-| Accessibility | `notifications`, `now_playing`, `whatsapp` | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls). Sending a reply and marking a chat read through WhatsApp's window |
+| Accessibility | `notifications`, `now_playing`, `whatsapp`, the compose key | The Dock badges (at start, only with `apps`); without it a yellow `!` shows, whose popup asks again, and the rest of the widget works. Reading and controlling Slack and Teams calls (asked from the call's controls). Sending a reply and marking a chat read through WhatsApp's window. Reading the keyboard for the [compose key](#compose-key), only when it's turned on |
 | Data of other apps | `whatsapp` | Reading WhatsApp's chats from its app's folder: macOS asks each time the bar starts, unless RustyBar has Full Disk Access; without it a yellow `!` shows, whose popup says how to be asked again (`tccutil reset SystemPolicyAppData io.github.francesco-rapetti.rustybar`, or Full Disk Access) |
 | Full Disk Access | `slack`, `teams`, the apps of `notifications` | Reading what the apps notify from Notification Center's database, which macOS keeps from every app without it; without it only the Dock's number shows, and the popup opens the list |
 | Automation | `apple`, `clock`, `now_playing` | Restart, Shut Down and Log Out; showing a day in Calendar; for Music and Spotify, the position, the cover and the controls (when the popup opens or on a click); without it the bar still shows what plays |
@@ -699,6 +699,82 @@ The disk usage is read (`/system/df` and `/networks`) when the popup opens, when
 clean-up and after each action, and the CPU and memory of the containers every few seconds while
 the dashboard shows.
 
+## Compose key
+
+The compose key of Linux, for the characters a keyboard doesn't have: tap a key, type a short
+sequence, and in its place comes a character. It's off until you turn it on:
+
+```toml
+[compose]
+enabled = true
+```
+
+The key is the right ⌘ by default. A tap of it (pressed and released within `tap` seconds)
+starts a sequence, and you can type as fast as you like: a letter that goes down before the key
+is up still belongs to the sequence. Held for longer, it's the ⌘ it always was.
+
+While the key is down and may still be a tap, a key that could begin a sequence waits to see
+which of the two it is: the sequence, if the ⌘ comes up in time, or a shortcut, as soon as that
+time has passed. So with the right ⌘ a shortcut on such a key (⌘A, ⌘S, ⌘,) arrives `tap`
+seconds after the ⌘ went down, and wants it held that long; on any other key (⌘C, ⌘V, ⌘Tab) it's
+a shortcut at once. The left ⌘ is never touched.
+
+| Keys | Text | |
+| --- | --- | --- |
+| `e` | è | each vowel alone, lowercase or capital, takes the grave accent |
+| `'` `e` | é | the acute, after `'` |
+| `"` `u` | ü | the diaeresis, after `"` |
+| `^` `o` | ô | the circumflex, after `^` |
+| `~` `n` | ñ | the tilde, on `a`, `n` and `o` |
+| `,` `c` | ç | |
+| `s` `s` | ß | |
+| `=` `e` | € | |
+| `<` `<`, `>` `>` | « » | |
+| `.` `.` | … | |
+| `-` `-` `.`, `-` `-` `-` | – — | |
+| `?` `?`, `!` `!` | ¿ ¡ | |
+
+`[compose.sequences]` adds to these, changes them and removes them, keys = text (which may be
+several characters):
+
+```toml
+[compose]
+enabled = true
+key = "right_cmd"   # or right_alt, right_ctrl, right_shift, and the left_ ones
+tap = 0.3           # seconds from press to release, at most, for a tap
+timeout = 5         # seconds without a key after which a sequence is dropped; 0: never
+mark = true         # a tab at the left edge of the bar while a sequence waits for its keys
+
+[compose.sequences]
+"->" = "→"          # a new one
+e = "ę"             # one of those above, changed
+"'e" = ""           # one of those above, removed
+```
+
+The [settings window](#settings-window) has a page for all of it, with every sequence in a row
+to change or remove and a field to try them in.
+
+While a sequence waits for its keys a small tab with the compose sign, ⎄, shows at the left edge
+of the bar, on every screen, over the bar so that nothing in it moves: you see that the next key
+is taken, as after a tap by mistake. It comes after a moment (0.15 s), so typing fast nothing
+flashes, and goes when the sequence ends or is dropped; `mark = false` turns it off.
+
+A sequence ends as soon as it's complete, so `e` and `e=` can't live together (the page says
+which is never reached). One that doesn't exist is typed as it is: a tap by mistake loses
+nothing. Esc, a click or a shortcut drop a sequence, Backspace takes its last key back, and a
+second tap cancels it. The keys are read as the characters your keyboard layout gives, so a
+sequence is the same on any layout.
+
+To tell the sequences apart RustyBar reads the keyboard with an event tap, which takes
+Accessibility: macOS asks the first time, and the key starts as soon as it's granted. It runs on
+a thread of its own, so typing never waits for the bar; nothing you type is kept or logged, only
+the keys of the sequence in progress until it ends. It doesn't reach where macOS guards the
+keyboard: password fields, and Terminal with Secure Keyboard Entry.
+
+`rustybar msg compose` says whether it's on and how the last presses of the key went: how long
+it was down and what it was taken for (never what was typed), to see why a tap wasn't one and
+set `tap`.
+
 ## Lua widgets
 
 Every `~/.config/rustybar/widgets/*.lua` file can define widgets; put their names in `[layout]`.
@@ -773,7 +849,8 @@ instead of their files:
   widget of the same kind, such as a second clock. The layout shows the bar in small and the
   widgets of each side, to reorder, move to another side or remove, and adds only widgets that
   exist and aren't in the bar yet: no name is typed. A name the bar doesn't know is in red, with
-  a button for the widget it's most likely a typo of;
+  a button for the widget it's most likely a typo of. The [compose key](#compose-key) has its
+  page there: its switch, the key, and every sequence to change, remove or add;
 - **AeroSpace**: startup, layout and behavior, gaps (with a value per monitor), the bindings of
   each mode, workspaces on monitors and the rules for new windows;
 - **borders** of [JankyBorders](https://github.com/FelixKratz/JankyBorders) (the `borders`
@@ -791,14 +868,15 @@ parse is shown, and nothing is written to it until it's fixed.
 
 The window runs in a process of its own, which ends when it closes: AppKit's controls leave some
 35 MB behind in a process even after their window has gone, and the bar stays as light as it was.
-`rustybar msg settings <page>` opens it on a page (`bar`, `theme`, `layout`, `widget:<name>`,
-`aerospace`, `gaps`, `keys`, `monitors`, `rules`, `borders`, `swipe`, `middleclick`, `brew`).
+`rustybar msg settings <page>` opens it on a page (`bar`, `theme`, `layout`, `compose`,
+`widget:<name>`, `aerospace`, `gaps`, `keys`, `monitors`, `rules`, `borders`, `swipe`,
+`middleclick`, `brew`).
 
 ## Made-up data
 
 With `RUSTYBAR_MOCK` set to a folder, every widget but the clock reads `<folder>/<widget>.json`
 instead of your Mac, and their actions do nothing (`fn_keys` switches its own made-up mode, never
-the Mac's), for screenshots and demos.
+the Mac's), for screenshots and demos. The compose key stays off, and no permission is asked.
 [examples/mock](examples/mock) has one file for each, and the settings window edits the configs in
 [examples/mock/settings](examples/mock/settings) and applies nothing. AppKit's own flags pick
 another language:
@@ -820,6 +898,7 @@ rustybar msg peek <widget>           grow a pill with its quick controls, as und
 rustybar msg notice <widget>         grow an island or a pill with its notice for a moment (the next track)
 rustybar msg settings [page]         open the settings window, on a page
 rustybar msg devices                 what `devices` shows, as JSON (name, kind, maker, link, level, charging, connected)
+rustybar msg compose                 the compose key: whether it's on, and how its last presses went
 rustybar settings [page]             the same, without the bar
 rustybar msg quit
 rustybar secret set home-assistant   save the Home Assistant token, read from stdin, in the keychain

@@ -17,6 +17,7 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub layout: LayoutConfig,
     pub displays: DisplayConfig,
+    pub compose: ComposeConfig,
     /// Options of each widget, by the name used in `[layout]`. `type` picks the kind of widget when
     /// the name isn't one (`[widgets.claude_work] type = "claude"`).
     pub widgets: BTreeMap<String, toml::Table>,
@@ -148,6 +149,32 @@ impl Default for DisplayConfig {
             slim_first: vec!["home".into(), "devices".into(), "battery".into(), "audio".into(), "system".into(), "claude".into()],
             large_width: 3840.0,
         }
+    }
+}
+
+/// The compose key (see `compose`).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default, deny_unknown_fields)]
+pub struct ComposeConfig {
+    /// Off unless asked for: it reads the keyboard, which takes Accessibility.
+    pub enabled: bool,
+    /// The modifier that starts a sequence when tapped: `right_cmd`, `right_alt`, `right_ctrl`,
+    /// `right_shift`, or the `left_` ones.
+    pub key: String,
+    /// Seconds between its press and its release, at most, for a tap.
+    pub tap: f64,
+    /// Seconds without a key after which a sequence is dropped; 0, never.
+    pub timeout: f64,
+    /// A tab at the left edge of the bar while a sequence waits for its keys.
+    pub mark: bool,
+    /// Keys → text, over the sequences RustyBar comes with: `"->" = "→"` adds one, `e = "ę"`
+    /// changes one, `"'e" = ""` removes one.
+    pub sequences: BTreeMap<String, String>,
+}
+
+impl Default for ComposeConfig {
+    fn default() -> Self {
+        ComposeConfig { enabled: false, key: "right_cmd".into(), tap: 0.3, timeout: 5.0, mark: true, sequences: BTreeMap::new() }
     }
 }
 

@@ -210,6 +210,7 @@ fn headers(spot: &Spot) -> usize {
         (Tool::RustyBar, "widgets") if key(2) == "printer" => 3,
         (Tool::RustyBar, "widgets") => 2,
         (Tool::RustyBar, "theme") if key(1) == "colors" => 2,
+        (Tool::RustyBar, "compose") if key(1) == "sequences" => 2,
         (Tool::RustyBar, _) => 1,
         (Tool::AeroSpace, "mode") => 3,
         (Tool::AeroSpace, "gaps" | "key-mapping" | "workspace-to-monitor-force-assignment") => 1,

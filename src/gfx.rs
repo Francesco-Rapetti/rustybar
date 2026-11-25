@@ -359,8 +359,8 @@ fn symbol_image(name: &str, size: f64, weight: Weight) -> Option<Retained<NSImag
 /// `laptopcomputer+speaker.wave.2.fill+mic.fill` is a symbol with badges: the others, small, at
 /// its bottom right, cut out of it with a gap around them (a Mac that plays and records).
 ///
-/// `magictrackpad.fill`, `magickeyboard.fill` and `printer3d.fill` aren't SF Symbols: they're
-/// drawn here (see `drawn_symbol`), without badges.
+/// `magictrackpad.fill`, `magickeyboard.fill`, `printer3d.fill` and `compose` aren't SF Symbols:
+/// they're drawn here (see `drawn_symbol`), without badges.
 pub fn symbol(name: &str, size: f64, weight: Weight, color: Rgba, scale: f64) -> Option<Bitmap> {
     let key = Key::Symbol(name.to_string(), (size * 100.0) as u32, weight, color.key(), (scale * 100.0) as u32);
     cached(key, || {
@@ -430,8 +430,9 @@ type Draw = fn(&CGContext, f64, Weight);
 /// The symbols SF Symbols doesn't have, drawn in the style of its `magicmouse.fill` and about as
 /// big as a symbol of `size` points: Apple's Magic Trackpad, a pad with the Apple logo cut out low
 /// as on the mouse, and Magic Keyboard, with its half-height function keys and the arrows as an
-/// inverted T; and a 3D printer, a gantry on two legs, with the head on its rail over what it prints
-/// on the bed. On whole pixels, so they stay sharp on a screen at 1x too: the unit is `size / 14`
+/// inverted T; a 3D printer, a gantry on two legs, with the head on its rail over what it prints
+/// on the bed; and the sign of the compose key, a ring with a bar that comes in from the left to
+/// its middle (⎄ in Unicode, which no font draws readably at the size of the bar). On whole pixels, so they stay sharp on a screen at 1x too: the unit is `size / 14`
 /// rounded to pixels, and every key is a whole number of units (2 wide, 1 apart). Their unit, size
 /// and how to draw them.
 fn drawn_symbol(name: &str, size: f64, scale: f64) -> Option<(f64, f64, f64, Draw)> {
@@ -440,6 +441,7 @@ fn drawn_symbol(name: &str, size: f64, scale: f64) -> Option<(f64, f64, f64, Dra
         "magictrackpad.fill" => Some((u, 17.0 * u, 12.0 * u, magic_trackpad)),
         "magickeyboard.fill" => Some((u, 21.0 * u, 14.0 * u, magic_keyboard)),
         "printer3d.fill" => Some((u, 16.0 * u, 15.0 * u, printer_3d)),
+        "compose" => Some((u, 12.0 * u, 9.0 * u, compose_sign)),
         _ => None,
     }
 }
@@ -455,6 +457,15 @@ fn magic_trackpad(ctx: &CGContext, u: f64, weight: Weight) {
     let place = NSRect::new(CGPoint::new(8.5 * u - width / 2.0, 3.7 * u - height / 2.0), CGSize::new(width, height));
     logo.drawInRect_fromRect_operation_fraction(place, NSRect::ZERO, objc2_app_kit::NSCompositingOperation::DestinationOut, 1.0);
     NSGraphicsContext::restoreGraphicsState_class();
+}
+
+fn compose_sign(ctx: &CGContext, u: f64, _: Weight) {
+    // A ring 9 units across and 2 thick, 3 units from the left; the bar, a unit thick, from the
+    // left edge through the ring's middle row to its middle
+    CGContext::add_ellipse_in_rect(Some(ctx), CGRect::new(CGPoint::new(3.0 * u, 0.0), CGSize::new(9.0 * u, 9.0 * u)));
+    CGContext::add_ellipse_in_rect(Some(ctx), CGRect::new(CGPoint::new(5.0 * u, 2.0 * u), CGSize::new(5.0 * u, 5.0 * u)));
+    CGContext::eo_fill_path(Some(ctx));
+    CGContext::fill_rect(Some(ctx), CGRect::new(CGPoint::new(0.0, 4.0 * u), CGSize::new(8.0 * u, u)));
 }
 
 fn printer_3d(ctx: &CGContext, u: f64, _: Weight) {

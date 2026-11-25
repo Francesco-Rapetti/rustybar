@@ -26,7 +26,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   toccarla; `RUSTYBAR_CONFIG_DIR=<cartella> rustybar msg …` parla con lei. Per uno schermo stretto
   basta un `margin` grande; per il notch, un gruppo `center` (stesso codice: ogni lato il suo spazio).
 - `rustybar msg query` (widget, stato, posizione, peek, isola), `msg devices` (la lista di
-  `devices` in JSON), `msg popup <widget>`, `msg peek <widget>`
+  `devices` in JSON), `msg compose` (il tasto Compose: acceso o no, e come sono andate le ultime
+  pressioni del tasto, solo tempi), `msg popup <widget>`, `msg peek <widget>`
   (la pill cresce come sotto il mouse; resta finché il mouse non passa sulla barra),
   `msg notice <widget>` (l'isola cresce da sola per 3 s, come a un cambio di traccia), `msg reload`,
   `msg trigger <evento> k=v…`, `msg settings [pagina]`, `msg quit`; `rustybar check` controlla
@@ -72,7 +73,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `ipc.rs`, `cache.rs` (ultimo stato su disco per l'avvio), `fnkeys.rs` (modo dei tasti F:
   `HIDFKeyMode` coi parametri di IOHIDSystem, preferenza e notifica di Impostazioni Tastiera),
   `hotkey.rs` (scorciatoie globali con gli hot key di Carbon, senza permessi; conta solo la prima
-  pressione finché il tasto è giù), `keymap.rs` (il tasto della dettatura preso in prestito, vedi
+  pressione finché il tasto è giù), `compose.rs` (il tasto Compose: un event tap su un thread
+  suo, vedi Stato), `keymap.rs` (il tasto della dettatura preso in prestito, vedi
   le chiamate), `service.rs` (LaunchAgent), `iokit.rs`,
   `input.rs` (il campo di testo dei popup: un `NSTextField` in un pannello figlio che prende la
   tastiera senza attivare l'app), `i18n.rs` (`t("italiano", "english")`), `mock.rs`, `net.rs` (WebSocket e richieste HTTP con
@@ -85,7 +87,7 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   e ordine restano, valore di default = chiave tolta, RustyBar nel file che ha già la chiave),
   `form.rs` i controlli (checkbox e campi numerici: `NSSwitch` e `NSSlider` portano il processo
   oltre 120 MB su macOS 26; sfondi con un layer, non `drawRect`), poi una pagina per file
-  (`rustybar.rs`, `aerospace.rs` con i bordi, `other.rs`). Dati finti: `<mock>/settings/`.
+  (`rustybar.rs`, `compose.rs` per il tasto Compose, `aerospace.rs` con i bordi, `other.rs`). Dati finti: `<mock>/settings/`.
 - `widgets/`: un file per widget, registrato in `widgets::create` (più `hid.rs`, i protocolli HID
   dei ricevitori per `devices`, `call.rs` e `meet.rs`, le chiamate per `now_playing`, con
   l'estensione del browser in `extension/`, e `wa.rs`, il database e l'invio per `whatsapp`). Il trait `Widget` ha `start`,
@@ -1021,6 +1023,108 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   memoria compresa (63 MB, 14 processi): non sono della barra. Da provare con l'utente: la luce
   della camera (cambia lo stato reale), il clic sulla pill vera, una stampa che finisce
   (`finish`, orari), gli avvisi HMS e l'errore di stampa, la stampante spenta dalla presa.
+- Tasto Compose (chiesto dall'utente il 25/11/2026, che su Windows usa WinCompose: ⌘ destro di
+  default, toccato da solo avvia una sequenza e tenuto premuto resta ⌘; `e` → è, `E` → È, `'e` →
+  é per tutte le vocali; una pagina delle impostazioni per vedere e cambiare le sequenze e per
+  accenderlo). Non è un widget: `compose.rs`, `[compose]` nella config (`enabled` spento di
+  default, `key`, `tap` 0,3 s, `timeout` 5 s, `sequences`), seguito da `compose::apply` all'avvio
+  e a ogni reload. Un event tap di sessione attivo (tasti, modificatori, clic) su un thread suo
+  col suo run loop, così scrivere non aspetta mai il main thread; serve Accessibilità, e senza
+  parte da sé quando arriva (notifica distribuita `com.apple.accessibility.api`). Il tap resta
+  per la vita del processo, acceso o spento con `CGEventTapEnable`. `Engine` è la logica, senza
+  AppKit e coi test: il tasto passa sempre (quindi tenuto premuto è il modificatore di prima); è
+  un tocco se fra pressione e rilascio non c'è altro (tasto, altro modificatore, clic) ed entro
+  `tap`, coi tempi degli eventi; poi i tasti sono inghiottiti (anche il rilascio e la
+  ripetizione) e il testo scritto con `CGEventTapPostEvent` (eventi con la stringa Unicode,
+  16 unità l'uno, dopo il tap: non rientrano). Una sequenza completa finisce subito (`e` ed
+  `e=` non stanno insieme: la pagina lo dice in rosso), una che non esiste è scritta com'è, Esc,
+  clic, scorciatoia e secondo tocco la lasciano, ⌫ toglie l'ultimo tasto. Le sequenze di serie
+  (`DEFAULTS`, 57: le vocali da sole col grave e dopo `'` con l'acuto, poi quelle di Linux che
+  non cominciano con una vocale) non stanno nel file: `[compose.sequences]` aggiunge, cambia e,
+  con un testo vuoto, toglie (`listing`, usato dalla barra e dalla pagina). Imparato: il testo
+  che un evento porta (`CGEventKeyboardGetUnicodeString`) per un evento fatto da un'altra app è
+  quello di quando è stato creato, senza Shift; quindi i tasti si traducono con `UCKeyTranslate`
+  sul layout corrente (`uchr` preso con TIS sul main thread, riletto alla notifica del cambio di
+  sorgente; tipo di tastiera dall'evento), che va su ogni thread. Mai coi dati finti né nei
+  test. Niente di ciò che si scrive va nel log. Provato sulla barra di prova (dati veri, solo
+  `clock`): il processo della sessione ha Accessibilità e può mandare eventi, quindi tasti veri
+  (`CGEvent.post` a livello HID) nel campo `Prova qui` della pagina, solo con quella finestra
+  davanti, e valore letto via AX: 17 casi (ogni vocale, maiuscole, `'e`, `"u`, `=e`, `<<`,
+  tenuto 450 ms, scorciatoia con ⌘ destro, sequenza che non esiste, Esc, ⌫, secondo tocco, in
+  mezzo a un testo). La pagina via AX per pid: aggiungi, cambia, rinomina, togli e rimetti
+  scrivono il TOML giusto e la barra li segue; interruttore spento e riacceso. 14 MB, 0% CPU,
+  0 processi in 20 s. Attenzione nelle prove: la finestra delle impostazioni di una barra di
+  prova senza `RUSTYBAR_MOCK` modifica i file veri di AeroSpace e SwipeAeroSpace; e via AX il
+  genitore di un campo non è la sua riga (un `AXPress` sul primo tasto del genitore ha aperto
+  `rustybar.toml` nell'editor): il tasto di una riga si trova per posizione. Sulla barra vera
+  dal 25/11/2026 (la build che c'era più solo questo lavoro; `[compose] enabled = true` nei
+  dotfiles): `compose: on (right_cmd, 57 sequences)` nel log, gli stessi 17 casi passati lì nel
+  campo `Prova qui`; 34 MB in 2 processi, 0,40% CPU nel primo minuto, 0 processi in 20 s.
+  Sostituire l'app sotto la barra accesa l'ha fatta uccidere da macOS (`OS_REASON_CODESIGNING`)
+  prima del `kickstart`: launchd l'ha riavviata da sé dopo qualche secondo. Da provare con
+  l'utente: la tastiera vera (il tocco a 0,3 s va bene?), la riga del permesso mancante (mai
+  vista: RustyBar ha già Accessibilità), un altro layout, le app che leggono il codice del tasto
+  invece del testo (il testo arriva col codice 0).
+- Tasto Compose, tasti sovrapposti (l'utente lo stesso giorno, dopo averlo provato: «non è
+  veloce ad attivarsi e molto spesso non mi prende le lettere accentate. Deve essere
+  istantaneo»). La prima versione faceva partire la sequenza solo al rilascio del tasto, e un
+  tasto premuto mentre era giù lo rendeva un modificatore: scrivendo veloci la lettera arriva
+  prima del rilascio di ⌘ (finiva come ⌘E, e non compariva niente), e così ⇧ per una maiuscola.
+  Ora, come un mod-tap di QMK senza permissive hold: tutto ciò che succede entro `tap` dalla
+  pressione, col tasto rilasciato entro `tap`, è un tocco. Un tasto che può cominciare una
+  sequenza (`Rules::leads`), premuto mentre il tasto Compose è giù e può ancora essere un tocco,
+  è trattenuto (`Fate::Keep`: una copia dell'evento in `State::kept`), e con lui quelli dopo e i
+  loro rilasci; al rilascio in tempo sono la sequenza (`Kept::Drop`, testo scritto subito), allo
+  scadere di `tap` (un `CFRunLoopTimer` sul thread del tap, `Engine::deadline`, `Input::Tick`) o
+  a un clic, a ⌃/⌥ o a un tasto che non scrive ripartono com'erano (`Kept::Replay`), scorciatoie
+  di ⌘ tenuto. Un tasto che non comincia nessuna sequenza (⌘C, ⌘V, ⌘Tab) è una scorciatoia
+  subito; dopo `tap` lo è tutto, senza attese. ⇧, Bloc Maiusc e fn non contano (`TYPING`): si
+  può premere ⇧ prima, durante o dopo il tocco. Costo, detto all'utente: col ⌘ destro una
+  scorciatoia su una lettera che apre una sequenza (⌘A, ⌘S) arriva `tap` secondi dopo la
+  pressione di ⌘ e lo vuole giù fino ad allora; fatta più in fretta scrive l'accento.
+  Imparato: gli eventi mandati fuori dalla callback del tap (dal timer) passano per
+  `CGEventPost` a livello sessione e rientrano nel tap: sono marcati in
+  `kCGEventSourceUserData` (`OURS`) e lasciati passare; dentro la callback resta
+  `CGEventTapPostEvent`. Un modificatore non si inghiotte e non si rimanda mai: uno che non
+  passa il tap com'è resterebbe giù per macOS. Due barre col compose acceso si pestano i piedi
+  (il testo scritto da una rientra nel tap dell'altra come tasto col codice 0): per provare
+  sulla barra di prova, spento su quella vera. `rustybar msg compose` (`report`, `PRESSES`): le
+  ultime 20 pressioni del tasto, quanto è stato giù, cosa è stato (`Outcome`), quanti tasti nel
+  frattempo, dopo quanto il primo e se è stato rilasciato prima del tasto; mai cosa si è
+  scritto. Provato sulla barra di prova e su quella vera (dal 25/11/2026, 21:18) coi tasti
+  mandati nel campo `Prova qui`: 26 casi, i 16 di prima più lettera prima del rilascio,
+  rilasciata prima di ⌘, maiuscola con ⇧ premuto durante, due tasti prima del rilascio, in
+  mezzo a una parola, ⌘ tenuto e poi `a`, `a` premuto presto e ⌘ tenuto oltre `tap` (parte dal
+  timer), ⌘←. Poi l'utente l'ha provato con la tastiera vera («Sì, funziona») e `msg compose`
+  ha detto perché prima no: nei suoi tocchi il tasto resta giù 93–191 ms e in 6 su 8 la lettera
+  è arrivata prima del rilascio (dopo 51–122 ms); una pressione di 773 ms con un tasto è passata
+  da scorciatoia. `tap` resta 0,3 s.
+- Tasto Compose, il segno nella barra (chiesto dall'utente il 25/11/2026 dopo aver visto che
+  funzionava; forma scelta da lui fra tre mockup: linguetta al bordo come quella di `fn_keys`,
+  non «al posto della mela» né «riga sotto la barra»). `compose::edge_tab`, color `peach` con
+  `ui::ink`, disegnata da `bar_tree` sopra la barra (sopra la linguetta di `fn_keys` se c'è, se
+  no sul margine: le pill non si muovono), su ogni schermo, mentre una sequenza aspetta i suoi
+  tasti; `mark = false` la toglie (interruttore nella pagina). Il thread del tap dice al main
+  thread quando `Engine::composing` cambia (`State::tell`, `show_mark`, `runtime::post`): una
+  sequenza che comincia e finisce nello stesso evento (lettera prima del rilascio: 6 tocchi su 8
+  dell'utente) non lo dice mai; di una che comincia la barra sa solo dopo `MARK_AFTER` (0,15 s,
+  col biglietto `MARK_TICKET`), così scrivendo veloci non lampeggia niente. Perché sparisca da
+  sola allo scadere di `timeout`, ora anche quello ha il timer (`Engine::deadline` è il primo
+  fra tasti trattenuti e sequenza lasciata; `Tick` conta il tempo, con `>=`): prima una sequenza
+  scaduta era tolta solo al tasto dopo. Imparato: ⎄ (U+2384, il segno del tasto Compose, nel
+  mockup) scritto come testo a 11 pt su uno schermo 1x è un quadratino illeggibile (Apple
+  Symbols). Prima una «è» in grassetto, la più leggibile di 16 segni disegnati a 1x con uno
+  script; l'utente non l'ha voluta («posso fare anche altre lettere accentate»). Quindi il
+  segno vero, disegnato in `gfx` come gli altri che SF Symbols non ha (`compose`,
+  `compose_sign`): un anello di 9 unità spesso 2 e una barretta di 1 unità dal bordo sinistro
+  al suo centro, 12×9 unità, la proporzione scelta fra 8 provate a 1x. Provato sulla barra vera coi tasti mandati (tocco
+  senza lettera, cattura dello schermo dopo 0,6 s e dopo 5,4 s): linguetta col segno su tutti e
+  due gli schermi, mela e pill ferme, via da sola al timeout; poi i 26 casi di prima. 34 MB in 2
+  processi, 0,46% CPU nel primo minuto, 0 processi. Mentre lavoravo, alle 22:00 qualcun altro
+  (un'altra sessione, o l'utente) ha messo in `/Applications` la build di `target/RustyBar.app`
+  che avevo appena fatto, col segno ancora da guardare, e ha ricaricato il LaunchAgent (`runs =
+  1`): un `msg compose` in quel momento ha dato `timeout`. Da provare con l'utente: la linguetta
+  dal vero (il ritardo di 0,15 s, il colore), sullo schermo col notch.
 - `audio` fermo dopo un cambio di dispositivo (l'utente il 25/11/2026: «non riesco a cambiare né
   input né output»): il cambio riusciva (CoreAudio aveva i default nuovi) ma barra e popup
   restavano su quelli vecchi, per sempre. Deadlock, visto con `sample`: `watch_volumes` teneva il

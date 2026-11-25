@@ -365,6 +365,7 @@ pub fn start(mtm: MainThreadMarker) {
         app.observe();
         app.watch_config();
         crate::ipc::serve();
+        crate::compose::apply(&app.config.compose);
     });
 }
 
@@ -458,6 +459,7 @@ impl App {
         }
         self.reconcile_displays();
         self.create_widgets();
+        crate::compose::apply(&self.config.compose);
         crate::log("reloaded");
     }
 
@@ -994,6 +996,14 @@ impl App {
             let tab = widgets::fn_keys::edge_tab(&self.theme, h, action);
             let x = -tab.style.padding[3];
             root.children.push(Node::row(vec![tab]).key("edge").at(x, ((height - h) / 2.0).round()));
+        }
+        // The tab of the compose key while a sequence waits for its keys (see `compose`), there
+        // too: over that of `fn_keys`, or over the margin, so that nothing in the bar moves
+        if crate::compose::mark() {
+            let h = self.theme.pill_height;
+            let tab = crate::compose::edge_tab(&self.theme, h);
+            let x = -tab.style.padding[3];
+            root.children.push(Node::row(vec![tab]).key("compose").at(x, ((height - h) / 2.0).round()));
         }
         self.beside_island = false;
         root

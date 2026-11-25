@@ -56,6 +56,23 @@ always_compact = []       # widgets compact on every screen
 slim_first = ["home", "devices", "battery", "audio", "system", "claude"]
 large_width = 3840        # from this width a screen is "large"
 
+# The compose key, as on Linux: a tap of the key, then a sequence of keys, and in their place
+# comes a character (e gives è, ' then e gives é). Held down for longer than a tap, it's the
+# modifier it always was. It reads the keyboard, which takes Accessibility
+[compose]
+enabled = false           # turn it on here
+key = "right_cmd"         # or right_alt, right_ctrl, right_shift, and the left_ ones
+tap = 0.3                 # seconds from its press to its release, at most, for a tap
+timeout = 5               # seconds without a key after which a sequence is dropped; 0: never
+mark = true               # a tab at the left edge of the bar while a sequence waits for its keys
+
+# Over the sequences RustyBar comes with (the vowels with their accents, ç, ñ, ß, €, « », … –
+# —: the settings window lists them all), keys = text:
+# [compose.sequences]
+# "->" = "→"              # a new one
+# e = "ę"                 # one of those, changed
+# "'e" = ""               # one of those, removed
+
 # Options of each widget, by its name in [layout]:
 #
 # [widgets.clock]
