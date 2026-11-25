@@ -8,9 +8,10 @@
 //!   compact;
 //! - `dot`: its own, a dot in the theme's accent;
 //! - `apple`: fn beside the Apple logo (see `apple`);
-//! - `island`: fn beside the bars of `now_playing`'s island, on the screens with a notch while it
-//!   shows one. There it's the only mark: the others are for the screens with no island, and for
-//!   a notch while nothing plays;
+//! - `island`: fn right of the notch, on the screens that have one: in the island of the widget
+//!   that extends the notch (`now_playing`'s bars, the unread chats), or as an island of its own
+//!   when no other widget is one (nothing plays). There it's the only mark: the others are for
+//!   the screens with no notch;
 //! - `aerospace`: an F after the workspaces, as a mode of AeroSpace (see `aerospace`);
 //! - `edge`: a tab at the left edge of the screen, before the bar (see `App::bar_tree`).
 //!
@@ -35,7 +36,7 @@ use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceApplicationKey
 use objc2_foundation::{NSNotification, NSObjectProtocol, NSString, NSUserDefaults, ns_string};
 use serde::Deserialize;
 
-use super::{Cx, Event, Rx, Widget};
+use super::{Cx, Event, Island, Rx, Widget};
 use crate::config::{Config, Options};
 use crate::fnkeys;
 use crate::gfx::{Rgba, Weight};
@@ -148,8 +149,17 @@ pub fn edge_tab(th: &Theme, height: f64, action: Action) -> Node {
 /// "fn" in the island of the notch (see `Mark::Island`), with room around it for the mouse: a
 /// click switches, as on the other marks.
 pub fn island_mark(th: &Theme) -> Option<Node> {
-    let action = mark(Mark::Island, true)?;
-    Some(Node::row(vec![label(th, 12.0)]).key("fn").padding(1.0, 4.0, 1.0, 4.0).radius(6.0).click(action).hover(th.primary.faded(0.25)))
+    mark(Mark::Island, true).map(|action| island_chip(th, action))
+}
+
+fn island_chip(th: &Theme, action: Action) -> Node {
+    Node::row(vec![label(th, 12.0)]).key("fn").padding(1.0, 4.0, 1.0, 4.0).radius(6.0).click(action).hover(th.primary.faded(0.25))
+}
+
+/// The widget that is the island of a notch no other widget extends (see `Mark::Island`), while
+/// F1, F2… are standard keys: the bar asks it last, wherever it is in the layout.
+pub fn island_widget() -> Option<String> {
+    shared().filter(|s| s.on && s.show.contains(&Mark::Island)).map(|s| s.widget)
 }
 
 /// The problems of the options of the `fn_keys` widgets in the layout, for `rustybar check`.
@@ -394,6 +404,16 @@ impl FnKeys {
         if self.hover { pill.hover(Rgba(0.0, 0.0, 0.0, 0.0)) } else { pill }
     }
 
+    /// The island of a notch that no other widget extends (see `Mark::Island`): fn right of the
+    /// notch, where the island of another widget has it, and nothing left of it.
+    fn island(&self, rx: &Rx, island: Island) -> Node {
+        let theme = rx.theme.notch(None);
+        // As far from the island's edge as what the other islands have there
+        let inset = ((island.height - (island.height - 12.0).clamp(12.0, 28.0)) / 2.0).round();
+        let wing = Node::row(vec![island_chip(&theme, toggle_action(rx.name))]).align(Align::Center).height(island.height).padding(0.0, inset, 0.0, 8.0).key("wing");
+        rx.island(vec![], vec![wing])
+    }
+
     /// Its own dot, in the accent, with room around it for the mouse.
     fn dot(&self, rx: &Rx) -> Node {
         let th = rx.theme;
@@ -443,6 +463,9 @@ impl Widget for FnKeys {
         if !self.on {
             return None;
         }
+        if let Some(island) = rx.island {
+            return self.show.contains(&Mark::Island).then(|| self.island(rx, island));
+        }
         let key = shows(&self.show, Mark::Key, rx.notch_island);
         if key && !rx.compact {
             Some(self.key(rx))
@@ -458,6 +481,9 @@ impl Widget for FnKeys {
         if !self.hover || !self.on {
             return None;
         }
+        // Under its island, on the notch's black
+        let theme = rx.island.map(|_| rx.theme.notch(None));
+        let rx = &Rx { theme: theme.as_ref().unwrap_or(rx.theme), ..*rx };
         let th = rx.theme;
         let switch = Node::new(Kind::Toggle { on: self.on, color: th.primary, track: th.surface }).key("toggle");
         let mut rows = vec![
@@ -554,6 +580,38 @@ mod tests {
         assert!(!shows(&show, Mark::Dot, false));
         assert!(shows(&[Mark::Edge], Mark::Edge, true));
         assert!(!shows(&[Mark::Edge], Mark::Island, true));
+    }
+
+    #[test]
+    fn it_is_the_island_of_a_notch_with_no_other() {
+        let theme = Theme::from_config(&crate::config::ThemeConfig::default());
+        let frame = objc2_core_foundation::CGRect::new(objc2_core_foundation::CGPoint::new(0.0, 0.0), objc2_core_foundation::CGSize::new(1512.0, 982.0));
+        let display = crate::display::DisplayInfo { id: 1, name: "Test".into(), frame, scale: 2.0, notch: Some((646.0, 866.0)), notch_height: 38.0, large: false };
+        let mut rx = Rx::new("fn_keys", &theme, &display, crate::fit::Form::Full, false);
+        rx.island = Some(Island { notch: 200.0, height: 38.0, ear: 6.0, radius: 10.0, left: 0.0, right: 0.0 });
+        let mut w = widget(toml::toml! { show = ["island", "edge"] });
+        // Off: no mark anywhere
+        assert!(w.bar(&rx).is_none());
+        w.on = true;
+        let n = w.bar(&rx).expect("an island");
+        assert!(n.style.notch.is_some());
+        let keys: Vec<_> = n.children.iter().map(|c| c.key.clone().unwrap_or_default()).collect();
+        assert_eq!(keys, ["left", "notch", "right"]);
+        // Nothing left of the notch, fn right of it, which switches
+        assert!(n.children[0].children.is_empty());
+        let chip = &n.children[2].children[0].children[0];
+        assert_eq!(chip.key.as_deref(), Some("fn"));
+        assert!(chip.on_click.is_some());
+        // Beside an island, of its own or of another widget, nothing else of it
+        rx.island = None;
+        rx.notch_island = true;
+        assert!(w.bar(&rx).is_none());
+        // The island isn't one of its marks: none for it
+        let mut w = widget(toml::toml! { show = ["key"] });
+        w.on = true;
+        rx.island = Some(Island { notch: 200.0, height: 38.0, ear: 6.0, radius: 10.0, left: 0.0, right: 0.0 });
+        rx.notch_island = false;
+        assert!(w.bar(&rx).is_none());
     }
 
     #[test]

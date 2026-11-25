@@ -132,8 +132,9 @@ mark = true               # a tab at the left edge of the bar while a sequence w
 #
 # [widgets.fn_keys]       # not in the layout above: add it where you like
 # show = ["key"]          # where the mark goes while F1, F2… are standard keys: key, dot, apple,
-#                         # island, aerospace, edge (any of them; [] for none). Where the island
-#                         # shows it, the others don't
+#                         # island, aerospace, edge (any of them; [] for none). island is fn
+#                         # right of the notch, also with nothing playing; on that screen the
+#                         # others don't show
 # hover = true            # under the mouse, the key or the dot grows with a switch
 # hotkey = "ctrl-alt-f"   # switches from any app, as AeroSpace writes keys; none by default
 # apps = ["com.example.game"]        # F1, F2… are standard keys while one of these is in front

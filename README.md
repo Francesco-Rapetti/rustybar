@@ -645,13 +645,13 @@ While F1, F2… are standard keys, the marks of `show` (the `key` by default) sa
 | `key` | Its own pill, drawn as the fn key: fn and the globe. A dot when the bar has no room |
 | `dot` | Its own: a dot in the theme's accent |
 | `apple` | fn up beside the Apple logo |
-| `island` | fn beside the bars of `now_playing`'s island, on a screen with a notch, while something plays. There it's the only mark: the others show on the screens with no island |
+| `island` | fn right of the notch, on a screen that has one: beside the bars of `now_playing`'s island while something plays, and with nothing in the notch as a small island of its own. There it's the only mark: the others show on the screens with no notch |
 | `aerospace` | An F after AeroSpace's workspaces, as one of its modes |
 | `edge` | A tab at the left edge of the screen; the bar moves aside for it |
 
 Each of them goes when the special features are back. To switch: a click on the key, the dot,
-the island's fn, AeroSpace's F or the tab; the key or the dot under the mouse (`hover = false` turns it off),
-which grows with a switch, the shortcut and the app it's on for; the switch in the Apple menu;
+the island's fn, AeroSpace's F or the tab; the key, the dot or its own island under the mouse (`hover = false`
+turns it off), which grows with a switch, the shortcut and the app it's on for; the switch in the Apple menu;
 `hotkey`, a shortcut of RustyBar's own from any app (`ctrl-alt-f`, `cmd-shift-f12`…: modifiers and a
 key by its place on a US keyboard, as AeroSpace writes them; it asks for no permission);
 `rustybar msg trigger fn_keys` (with `mode=on` or `mode=off` to set one), for an AeroSpace

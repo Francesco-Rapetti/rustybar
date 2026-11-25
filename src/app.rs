@@ -683,8 +683,9 @@ impl App {
     /// right one, else in its compact form the same way, else nowhere (see `place_center`). The
     /// room left beside the center group, there or in the middle, goes to the text it had to cut
     /// (see `widen`). The first widget of the center group may draw itself as an extension of the
-    /// notch there (see `Rx::island`): then it goes around the notch, the sides make room for the
-    /// least it takes, and it takes what they leave beside it. What's between the sides, the
+    /// notch there (see `Rx::island`), or with none of them `fn_keys` for its mark: then it goes
+    /// around the notch, the sides make room for the least it takes, and it takes what they leave
+    /// beside it. What's between the sides, the
     /// island or the group in the middle, is the first to give way: compact, and no wider, when
     /// that keeps a widget of the sides in a bigger form; when they give way all the same, it
     /// keeps its own form and takes the room they leave.
@@ -713,16 +714,21 @@ impl App {
         let mut island: Option<(usize, Form, Node)> = None;
         if let Some(room) = island_room {
             // The first of the center group that draws itself as one: one with nothing to show
-            // (no music) leaves the notch to the next (the unread chats)
-            for at in 0..centered.len() {
-                let (i, form) = centered[at];
+            // (no music) leaves the notch to the next (the unread chats). With none of them,
+            // `fn_keys` for its mark in the notch, wherever it is in the layout
+            let last = widgets::fn_keys::island_widget().and_then(|name| self.slots.iter().position(|s| s.name == name));
+            let own = last.map(|i| (i, self.config_form(&self.slots[i].name, &d))).filter(|(_, form)| *form != Form::Hidden);
+            let first = centered.iter().copied().filter(|(i, _)| Some(*i) != last);
+            for (i, form) in first.chain(own).collect::<Vec<_>>() {
                 if let Some(node) = self.item_wider(i, &d, form, 0.0, Some(room)).filter(is_island) {
                     island = Some((i, form, node));
-                    centered.remove(at);
+                    centered.retain(|(c, _)| *c != i);
                     break;
                 }
             }
         }
+        // The widget that is the island isn't in its side of the bar too
+        let island_slot = island.as_ref().map(|(i, ..)| *i);
         let least = island.as_ref().map(|(_, _, n)| wings(&layout, n));
         // The sides are drawn knowing of the island (see `Rx::notch_island`)
         self.beside_island = island.is_some();
@@ -776,7 +782,7 @@ impl App {
         let mut items = Vec::new();
         for left in [true, false] {
             let side = if left { Side::Left } else { Side::Right };
-            let of_side: Vec<usize> = (0..self.slots.len()).filter(|&i| self.slots[i].side == side).collect();
+            let of_side: Vec<usize> = (0..self.slots.len()).filter(|&i| self.slots[i].side == side && Some(i) != island_slot).collect();
             for (k, &i) in of_side.iter().enumerate() {
                 let rank = if left { k } else { of_side.len() - 1 - k };
                 let slim = self.config.displays.slim_first.iter().position(|n| *n == self.slots[i].name).filter(|_| self.slots[i].failed.is_none());

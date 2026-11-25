@@ -718,6 +718,21 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   mela, tasto e F di AeroSpace; clic su "fn" nell'isola e nell'isola cresciuta; linguetta sotto
   il mouse. Sulla barra vera: 27 MB in 2 processi, 0,22% CPU, 0 processi in 60 s. Da provare con
   l'utente: tastiere e Impostazioni Tastiera che seguono, il modo per app al cambio d'app.
+  Segno `island` anche senza niente nel notch (chiesto dall'utente il 24/11/2026: senza musica
+  vedeva la linguetta, non il notch): `fn_keys` è l'isola di riserva. `bar_tree` chiede l'isola
+  prima al gruppo `center` (saltando `fn_keys`, se è lì), poi a `fn_keys::island_widget`, dovunque
+  sia nel layout; il widget che fa da isola non è anche nel suo lato. Isola con la sola ala
+  destra: "fn" allo stesso posto di quando è nell'isola della musica (cliccabile), niente a
+  sinistra; sotto il mouse cresce col suo peek (interruttore, scorciatoia) sul nero del notch.
+  Sullo schermo col notch quindi `island` è sempre l'unico segno. Provato coi dati finti sulla
+  barra di prova col notch: da solo (`center = []`), clic su "fn" (via, e di nuovo con il
+  trigger), peek, con la musica (isola della musica, "fn" nello stesso punto), `now_playing` in
+  pill accanto (`notch = false`), `fn_keys` nel gruppo `center` prima di `now_playing` e da
+  solo: 16 MB, 0,03% CPU, 0 processi in 30 s. Sulla barra vera dal 24/11/2026 (build
+  dell'albero di lavoro, con dentro il lavoro non committato di un'altra sessione su chiamate ed
+  estensione; riavviata con una pagina di Meet aperta in Dia, ritrovata dopo 2 s): 28 MB in
+  2 processi, 0,25% CPU, 0 processi in 60 s. Lì i tasti F erano spenti, quindi l'isola di "fn"
+  non si è vista. Da provare con l'utente: ⌃⌥F con niente nel notch, il mouse vero sull'isola.
 - `whatsapp` (chiesto dall'utente; scelte sue: fonte l'app del Mac, leggere dalla barra non manda
   le spunte blu, nel notch chi scrive e l'anteprima, notch A e popup 1 dei mockup; non nel layout
   di default, va dopo `now_playing` in `center`): i non letti di WhatsApp, da leggere e a cui

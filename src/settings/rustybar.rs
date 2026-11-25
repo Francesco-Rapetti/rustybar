@@ -726,7 +726,7 @@ fn fn_keys(f: &mut Form, spot: &Spot, in_bar: bool) {
     mark(f, t("Tasto fn", "fn key"), t("Una pillola come il tasto fn, al posto del widget; un pallino se la barra non ha spazio", "A pill like the fn key, in the widget's place; a dot when the bar has no room"), "key");
     mark(f, t("Pallino", "Dot"), t("Solo un pallino nel colore d'accento, al posto del widget", "Just a dot in the accent color, in the widget's place"), "dot");
     mark(f, t("Sulla mela", "On the Apple logo"), t("fn in alto accanto al logo", "fn up beside the logo"), "apple");
-    mark(f, t("Nell'isola del notch", "In the notch's island"), t("fn accanto alle barre di In riproduzione, mentre suona qualcosa. Sullo schermo dell'isola gli altri segni non compaiono", "fn beside the bars of Now Playing, while something plays. On the island's screen the other marks don't show"), "island");
+    mark(f, t("Nell'isola del notch", "In the notch's island"), t("fn a destra del notch: accanto alle barre di In riproduzione, o da solo se non suona niente. Sullo schermo col notch gli altri segni non compaiono", "fn right of the notch: beside the bars of Now Playing, or by itself when nothing plays. On the screen with the notch the other marks don't show"), "island");
     mark(f, t("Dopo i workspace", "After the workspaces"), t("Una F nella pillola di AeroSpace, come uno dei suoi modi", "An F in AeroSpace's pill, as one of its modes"), "aerospace");
     mark(f, t("Linguetta al bordo", "Tab at the edge"), t("Al bordo sinistro dello schermo, prima della barra", "At the left edge of the screen, before the bar"), "edge");
     f.group(Some(t("Per cambiarli", "To switch them")));

@@ -83,9 +83,10 @@ pub struct Rx<'a> {
     /// How much wider than this form the widget may be: the room the bar has left beside it, for
     /// the widgets of the center group (0 for the others). Text cut to fit can take it.
     pub spare: f64,
-    /// On a screen with a notch, for the first widget of the center group: it may draw itself as
-    /// an extension of the notch, with `island`, and the bar puts it around the notch. Its peek,
-    /// popup and notice then grow out of it, on the notch's black.
+    /// On a screen with a notch, for the first widget of the center group (and `fn_keys`, when
+    /// none of them does): it may draw itself as an extension of the notch, with `island`, and the
+    /// bar puts it around the notch. Its peek, popup and notice then grow out of it, on the
+    /// notch's black.
     pub island: Option<Island>,
     /// The bar of this screen has an island (see `island`), which is drawn before its sides: what
     /// the island shows needn't show again beside it (`fn_keys`).
