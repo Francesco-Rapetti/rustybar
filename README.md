@@ -817,6 +817,7 @@ rustybar msg popup <widget>          open or close a popup
 rustybar msg peek <widget>           grow a pill with its quick controls, as under the mouse, or back
 rustybar msg notice <widget>         grow an island or a pill with its notice for a moment (the next track)
 rustybar msg settings [page]         open the settings window, on a page
+rustybar msg devices                 what `devices` shows, as JSON (name, kind, maker, link, level, charging, connected)
 rustybar settings [page]             the same, without the bar
 rustybar msg quit
 rustybar secret set home-assistant   save the Home Assistant token, read from stdin, in the keychain

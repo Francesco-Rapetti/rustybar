@@ -69,6 +69,7 @@ fn handle(mut stream: UnixStream) {
                 "ok".into()
             }
             Some("query") => app.describe(),
+            Some("devices") => crate::widgets::devices::listing(),
             Some("trigger") if words.len() > 1 => {
                 let args = words[2..]
                     .iter()
@@ -97,7 +98,7 @@ fn handle(mut stream: UnixStream) {
                 runtime::after(0.1, |app| app.quit());
                 "ok".into()
             }
-            _ => "usage: rustybar msg ping | reload | redraw | query | trigger <event> [key=value…] | popup <widget> | peek <widget> | notice <widget> | settings [page] | quit".into(),
+            _ => "usage: rustybar msg ping | reload | redraw | query | devices | trigger <event> [key=value…] | popup <widget> | peek <widget> | notice <widget> | settings [page] | quit".into(),
         };
         let _ = tx.send(reply);
     });

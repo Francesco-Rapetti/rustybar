@@ -105,6 +105,18 @@ struct Device {
     full_at: Option<f64>,
 }
 
+/// What the widget shows now, as JSON, for `rustybar msg devices`: other tools (a Stream Deck
+/// plugin) get from here the batteries behind receivers and cables, which macOS's own list
+/// hasn't and which they'd need permissions of their own to read.
+static LISTING: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// `rustybar msg devices`: a JSON array, one object a device (`name`, `kind`, `maker`, `link`,
+/// `level`, `charging`, `connected`); empty without the widget.
+pub fn listing() -> String {
+    let list = LISTING.lock().unwrap_or_else(|e| e.into_inner());
+    if list.is_empty() { "[]".to_string() } else { list.clone() }
+}
+
 pub struct Devices {
     /// What the pill and the popup show, made of the three below.
     devices: Vec<Device>,
@@ -283,9 +295,40 @@ impl Devices {
         pace(&mut self.paces, &mut devices, crate::time::now());
         if devices != self.devices {
             self.devices = devices;
+            self.publish();
             cx.redraw();
         }
         self.tick(cx);
+    }
+
+    /// The list for `rustybar msg devices`.
+    fn publish(&self) {
+        let list: Vec<serde_json::Value> = self
+            .devices
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "name": d.name,
+                    "kind": match d.kind {
+                        Kind::Mouse => "mouse",
+                        Kind::Keyboard => "keyboard",
+                        Kind::Controller => "controller",
+                        Kind::Other => "other",
+                    },
+                    "maker": maker_name(d.maker),
+                    "link": match d.link {
+                        Link::Bluetooth => "bluetooth",
+                        Link::Receiver => "receiver",
+                        Link::Cable => "cable",
+                        Link::Unknown => "unknown",
+                    },
+                    "level": d.level,
+                    "charging": d.charging,
+                    "connected": d.connected,
+                })
+            })
+            .collect();
+        *LISTING.lock().unwrap_or_else(|e| e.into_inner()) = serde_json::Value::Array(list).to_string();
     }
 
     /// While a device shows how long it takes, the time left goes down: drawn again every minute.
@@ -387,6 +430,7 @@ impl Widget for Devices {
             self.mock = true;
             self.devices = m.devices.into_iter().map(MockDevice::device).collect();
             sort(&mut self.devices);
+            self.publish();
             return;
         }
         self.read_accessories();
@@ -537,6 +581,7 @@ impl Widget for Devices {
 
 impl Drop for Devices {
     fn drop(&mut self) {
+        LISTING.lock().unwrap_or_else(|e| e.into_inner()).clear();
         for t in self.tokens.drain(..) {
             unsafe { notify_cancel(t) };
         }

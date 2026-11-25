@@ -25,7 +25,8 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Con un suo `RUSTYBAR_CONFIG_DIR` ha socket e cache suoi, quindi gira accanto alla barra vera senza
   toccarla; `RUSTYBAR_CONFIG_DIR=<cartella> rustybar msg …` parla con lei. Per uno schermo stretto
   basta un `margin` grande; per il notch, un gruppo `center` (stesso codice: ogni lato il suo spazio).
-- `rustybar msg query` (widget, stato, posizione, peek, isola), `msg popup <widget>`, `msg peek <widget>`
+- `rustybar msg query` (widget, stato, posizione, peek, isola), `msg devices` (la lista di
+  `devices` in JSON), `msg popup <widget>`, `msg peek <widget>`
   (la pill cresce come sotto il mouse; resta finché il mouse non passa sulla barra),
   `msg notice <widget>` (l'isola cresce da sola per 3 s, come a un cambio di traccia), `msg reload`,
   `msg trigger <evento> k=v…`, `msg settings [pagina]`, `msg quit`; `rustybar check` controlla
@@ -560,6 +561,10 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   `HYZEN67 77%` col fulmine, col cavo; 31 MB in 2 processi, 0,43% CPU nei primi 30 s. Da
   provare: la riga senza permesso (mai vista), la tastiera spenta o che dorme dietro il dongle,
   il fulmine col dongle e il cavo di ricarica insieme (lì non c'è).
+  `rustybar msg devices` (per il plugin Deck Kit dello Stream Deck, che sul Mac aveva solo
+  `pmset -g accps` e quindi non la Hyzen67): la lista del widget in JSON (`LISTING`, aggiornata
+  da `publish` quando cambia), così il plugin non deve chiedere Monitoraggio input a nome di
+  Stream Deck. Provato dal vero: barra vera e plugin (`battery.js`) con `HYZEN67 82%` in carica.
 - Senza notch il gruppo `center` non è più fisso a metà (l'utente vedeva pill compatte e la `⋯`
   a destra con ~190 pt liberi a sinistra, sul monitor da 1920 pt): i lati si dividono lo spazio
   che lascia (`Room::Shared`, una corsia sola come senza gruppo centrale; prima `Split`, metà
