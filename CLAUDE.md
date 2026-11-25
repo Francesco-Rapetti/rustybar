@@ -1021,6 +1021,15 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   memoria compresa (63 MB, 14 processi): non sono della barra. Da provare con l'utente: la luce
   della camera (cambia lo stato reale), il clic sulla pill vera, una stampa che finisce
   (`finish`, orari), gli avvisi HMS e l'errore di stampa, la stampante spenta dalla presa.
+- `audio` fermo dopo un cambio di dispositivo (l'utente il 25/11/2026: «non riesco a cambiare né
+  input né output»): il cambio riusciva (CoreAudio aveva i default nuovi) ma barra e popup
+  restavano su quelli vecchi, per sempre. Deadlock, visto con `sample`: `watch_volumes` teneva il
+  mutex dei listener mentre toglieva quelli del dispositivo di prima, e
+  `AudioObjectRemovePropertyListener` aspetta i listener in corso, che aspettavano quel mutex
+  (thread `audio-work` fermo, `reading` mai più falso). Ora `HANDLES` (preso dal listener, mai
+  tenuto su una chiamata a CoreAudio) è separato da `VOLUMES`. Sulla barra vera dal 25/11/2026,
+  22:00: default giusti all'avvio. Da provare con l'utente: il cambio dal popup (non fatto qui:
+  cambia lo stato del Mac).
 - Ancora da provare sul Mac vero, con l'utente: connessione e disconnessione Bluetooth, join di una
   Wi-Fi con password, slider del volume, cambio del dispositivo predefinito, "Aggiorna tutto" di
   Homebrew e riavvio di AeroSpace. I badge del Dock aspettano che l'utente dia Accessibilità a

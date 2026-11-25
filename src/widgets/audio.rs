@@ -939,17 +939,17 @@ pub(crate) mod ca {
 
 use ca::{Address, GLOBAL, INPUT, OUTPUT, SYSTEM, address};
 
-/// The widgets to tell, and the volumes listened to (those of the devices in use).
-struct Watch {
-    handles: Vec<Handle<Audio>>,
-    system: bool,
-    volumes: Vec<(u32, Address)>,
-}
-
-static WATCH: Mutex<Watch> = Mutex::new(Watch { handles: Vec::new(), system: false, volumes: Vec::new() });
+/// The widgets to tell. The listener takes it, on CoreAudio's threads: never held over a call
+/// to CoreAudio, since removing a listener waits for the ones running, which would wait for it.
+static HANDLES: Mutex<Vec<Handle<Audio>>> = Mutex::new(Vec::new());
+/// Whether the devices and the defaults are listened to.
+static SYSTEM_WATCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The volumes listened to (those of the devices in use). Held while they change, one read at a
+/// time: the listener doesn't take it.
+static VOLUMES: Mutex<Vec<(u32, Address)>> = Mutex::new(Vec::new());
 
 extern "C" fn audio_changed(_id: u32, _count: u32, _addresses: *const Address, _data: *mut c_void) -> i32 {
-    let handles = WATCH.lock().map(|w| w.handles.clone()).unwrap_or_default();
+    let handles = HANDLES.lock().map(|h| h.clone()).unwrap_or_default();
     for h in handles {
         h.send(|w, cx| w.changed(cx));
     }
@@ -958,11 +958,11 @@ extern "C" fn audio_changed(_id: u32, _count: u32, _addresses: *const Address, _
 
 /// Listens to the devices and the defaults; the volumes are listened to by `read_devices`.
 fn watch(handle: Handle<Audio>) {
-    let Ok(mut watch) = WATCH.lock() else { return };
-    watch.handles.retain(|h| h.alive());
-    watch.handles.push(handle);
-    if !watch.system {
-        watch.system = true;
+    if let Ok(mut handles) = HANDLES.lock() {
+        handles.retain(|h| h.alive());
+        handles.push(handle);
+    }
+    if !SYSTEM_WATCHED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         for selector in [ca::DEVICES, ca::DEFAULT_OUTPUT, ca::DEFAULT_INPUT] {
             unsafe { ca::AudioObjectAddPropertyListener(SYSTEM, &address(selector, GLOBAL, 0), audio_changed, std::ptr::null_mut()) };
         }
@@ -972,7 +972,7 @@ fn watch(handle: Handle<Audio>) {
 /// The volume of the devices in use, which also changes with the volume keys. The macOS slider's
 /// own isn't reliable to listen to, so every one they have.
 fn watch_volumes(devices: &[(u32, u32)]) {
-    let Ok(mut watch) = WATCH.lock() else { return };
+    let Ok(mut volumes) = VOLUMES.lock() else { return };
     let mut wanted = Vec::new();
     for &(id, scope) in devices {
         for a in [address(ca::VOLUME, scope, 0), address(ca::VOLUME, scope, 1), address(ca::VOLUME, scope, 2), address(ca::MUTE, scope, 0), address(ca::MAIN_VOLUME, scope, 0)] {
@@ -981,13 +981,13 @@ fn watch_volumes(devices: &[(u32, u32)]) {
             }
         }
     }
-    for old in watch.volumes.iter().filter(|o| !wanted.contains(o)) {
+    for old in volumes.iter().filter(|o| !wanted.contains(o)) {
         unsafe { ca::AudioObjectRemovePropertyListener(old.0, &old.1, audio_changed, std::ptr::null_mut()) };
     }
-    for new in wanted.iter().filter(|n| !watch.volumes.contains(n)) {
+    for new in wanted.iter().filter(|n| !volumes.contains(n)) {
         unsafe { ca::AudioObjectAddPropertyListener(new.0, &new.1, audio_changed, std::ptr::null_mut()) };
     }
-    watch.volumes = wanted;
+    *volumes = wanted;
 }
 
 fn read_devices() -> Snapshot {
