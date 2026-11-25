@@ -1040,13 +1040,17 @@ fn device(id: u32, scope: u32, default: u32, batteries: &HashMap<String, u8>) ->
 /// USB Audio spec.
 fn kind(id: u32, scope: u32) -> Type {
     let terminal = ca::objects(id, address(ca::STREAMS, scope, 0)).first().and_then(|&s| ca::get::<u32>(s, address(ca::TERMINAL, GLOBAL, 0))).unwrap_or(0);
+    let source = ca::get::<u32>(id, address(ca::DATA_SOURCE, scope, 0));
     match (&terminal.to_be_bytes(), terminal) {
+        // The microphone of what is plugged into the headphone jack ("External Microphone"): a
+        // built-in device like the Mac's own microphone, with a microphone's terminal
+        _ if source == Some(ca::fc(b"emic")) => Type::Headset,
         (b"hdph", _) | (_, 0x0302) => Type::Headphones,
         (b"hmic", _) | (_, 0x0401 | 0x0402) => Type::Headset,
         (b"spkr" | b"lfes" | b"rspk", _) | (_, 0x0301 | 0x0304..=0x0307 | 0x0403..=0x0405) => Type::Speaker,
         (b"micr" | b"rmic", _) | (_, 0x0201..=0x0206) => Type::Microphone,
         // Intel Macs switch the built-in output to the headphone jack as a data source
-        _ if ca::get::<u32>(id, address(ca::DATA_SOURCE, scope, 0)) == Some(ca::fc(b"hdpn")) => Type::Headphones,
+        _ if source == Some(ca::fc(b"hdpn")) => Type::Headphones,
         _ => Type::Unknown,
     }
 }
@@ -1176,6 +1180,7 @@ mod tests {
         assert_eq!(common_name("External Headphones", "MacBook Pro Microphone"), None);
         assert_eq!(icon(true, Badges::Both, Transport::Builtin, Type::Speaker, "MacBook Pro"), "laptopcomputer+speaker.fill+mic.fill");
         assert_eq!(icon(true, Badges::Speaker, Transport::Builtin, Type::Headphones, "External Headphones"), "headphones");
+        assert_eq!(icon(false, Badges::Microphone, Transport::Builtin, Type::Headset, "External Microphone"), "headset");
         assert_eq!(icon(true, Badges::Speaker, Transport::Bluetooth, Type::Unknown, "AirPods Pro"), "airpods.pro");
         assert_eq!(icon(false, Badges::Microphone, Transport::Bluetooth, Type::Headset, "Headset"), "headset");
         assert_eq!(icon(true, Badges::Speaker, Transport::Bluetooth, Type::Speaker, "Boom"), "hifispeaker");
