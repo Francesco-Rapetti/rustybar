@@ -906,13 +906,13 @@ RUSTYBAR_MOCK=examples/mock target/release/rustybar -AppleLanguages '(en)' -Appl
 ```
 rustybar msg reload                  reload the config
 rustybar msg query                   the widgets, their state, where they are and which gave way
+rustybar msg devices                 what `devices` shows, as JSON (name, kind, maker, link, level, charging, connected)
+rustybar msg compose                 the compose key: whether it's on, and how its last presses went
 rustybar msg trigger <event> k=v…    send an event to every widget (Lua: event(self, name, args))
 rustybar msg popup <widget>          open or close a popup
 rustybar msg peek <widget>           grow a pill with its quick controls, as under the mouse, or back
 rustybar msg notice <widget>         grow an island or a pill with its notice for a moment (the next track)
 rustybar msg settings [page]         open the settings window, on a page
-rustybar msg devices                 what `devices` shows, as JSON (name, kind, maker, link, level, charging, connected)
-rustybar msg compose                 the compose key: whether it's on, and how its last presses went
 rustybar settings [page]             the same, without the bar
 rustybar msg quit
 rustybar secret set home-assistant   save the Home Assistant token, read from stdin, in the keychain
