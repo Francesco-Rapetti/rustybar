@@ -33,6 +33,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::{c_char, c_void};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
@@ -1021,6 +1022,29 @@ fn lofree_ask(port: &Port, bytes: usize, cmd: u8) -> Option<(u8, u8)> {
     answer
 }
 
+/// A keyboard behind its dongle is asked only this long after a key (of any keyboard): the
+/// dongle passes the question on by radio, and a keyboard that sleeps would wake for it, lights
+/// and all, with nobody at it. One that sleeps has the level it had.
+const LOFREE_AWAKE: f64 = 60.0;
+
+/// What each keyboard behind a dongle answered last, level and charging; `None` for one that
+/// was asked and didn't answer, which isn't asked again either until a key.
+static LOFREE_LAST: Mutex<Vec<(String, Heard)>> = Mutex::new(Vec::new());
+
+/// Level and charging, or nothing from one that didn't answer.
+type Heard = Option<(u8, bool)>;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGEventSourceSecondsSinceLastEventType(state: i32, kind: u32) -> f64;
+}
+
+/// Seconds since the last key went down, on any keyboard (no permission needed).
+fn since_key() -> f64 {
+    // kCGEventSourceStateHIDSystemState, kCGEventKeyDown
+    unsafe { CGEventSourceSecondsSinceLastEventType(1, 10) }
+}
+
 fn lofree(colls: &[Collection], found: &mut Vec<Found>) {
     for c in colls.iter().filter(|c| c.vid == 0x388D && c.has(0xFF1C, 0x92)) {
         let Some(out) = c.outputs.iter().find(|o| o.id == LOFREE_REPORT && o.bytes >= 16) else { continue };
@@ -1030,16 +1054,32 @@ fn lofree(colls: &[Collection], found: &mut Vec<Found>) {
         // dongle left in while the cable is used isn't a second keyboard (`merge`)
         let link = if c.pid == 0x25 || c.receiver() { Link::Receiver } else { Link::Cable };
         let mut f = Found::new(format!("lofree:{}", name.to_lowercase()), name, Kind::Keyboard, Maker::Lofree, link);
+        let cable = link == Link::Cable;
+        let mut last = LOFREE_LAST.lock().unwrap_or_else(|e| e.into_inner());
+        let known = last.iter().position(|(key, _)| *key == f.key);
+        if let Some(i) = known.filter(|_| !cable && since_key() > LOFREE_AWAKE) {
+            if let Some((level, charging)) = last[i].1 {
+                f.level = Some(level);
+                f.charging = charging;
+            }
+            found.push(f);
+            continue;
+        }
+        if let Some(i) = known {
+            last.remove(i);
+        }
         match Port::open_keys(c, LOFREE_REPORT) {
             Some(port) => {
                 // A dongle alone answers 0 to "is it there?"; so does the keyboard on its cable,
                 // which is there anyway and charges from it
-                let cable = link == Link::Cable;
                 if (cable || lofree_ask(&port, out.bytes, LOFREE_LINKED).is_some_and(|(linked, _)| linked != 0))
                     && let Some((level, charging)) = lofree_ask(&port, out.bytes, LOFREE_BATTERY).filter(|(l, _)| (1..=100).contains(l))
                 {
                     f.level = Some(level);
                     f.charging = cable || charging == 1;
+                }
+                if !cable {
+                    last.push((f.key.clone(), f.level.map(|l| (l, f.charging))));
                 }
             }
             None => f.locked = c.keyboard() && !listening(),

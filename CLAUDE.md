@@ -575,6 +575,15 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   0 col dongle senza cavo (col dongle vale quello). Sulla barra vera: `HYZEN67 89%` col dongle,
   anche nel plugin. Da provare con l'utente: il passaggio cavo → dongle visto dal vivo, la
   tastiera che dorme e si sveglia, il fulmine col dongle e il caricatore.
+  Poi (26/11/2026) l'utente ha visto la tastiera, ferma da un po', accendersi da sola: la
+  domanda al dongle la sveglia. Visto così: ferma 25 minuti rispondeva a ogni lettura (ogni 5
+  minuti), e 2 minuti e mezzo dopo una lettura non rispondeva più (`AA` = 0: dorme). Ora
+  (`LOFREE_AWAKE`, `LOFREE_LAST` in `hid.rs`) dietro il dongle si chiede solo entro 60 s da un
+  tasto (di qualunque tastiera, `CGEventSourceSecondsSinceLastEventType`, senza permessi) o se
+  non le si è mai chiesto dall'avvio; se no vale l'ultima risposta, anche quando era nessuna.
+  Col cavo si chiede sempre. Dopo un riavvio della barra con la tastiera che dorme compare
+  entro 5 minuti dal primo tasto (`AGAIN` non vale per chi non ha mai risposto). Sulla barra
+  vera dal 26/11/2026, 10:49. Da provare con l'utente: che non si accenda più da sola.
 - Senza notch il gruppo `center` non è più fisso a metà (l'utente vedeva pill compatte e la `⋯`
   a destra con ~190 pt liberi a sinistra, sul monitor da 1920 pt): i lati si dividono lo spazio
   che lascia (`Room::Shared`, una corsia sola come senza gruppo centrale; prima `Split`, metà

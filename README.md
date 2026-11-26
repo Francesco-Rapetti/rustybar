@@ -634,7 +634,9 @@ The batteries come from two places:
   is plugged in; one that didn't answer (a keyboard still finding its dongle, or asleep) is asked
   again after 4, 10 and 30 seconds, then every minute if it has answered since the bar started (a
   few ms; up to a few seconds of waiting for a Steam Controller's battery among its other
-  reports). `receivers = false` keeps macOS's list alone.
+  reports). A Lofree keyboard behind its dongle is asked only within a minute of a key press (on
+  any keyboard): a question wakes one that sleeps, lights and all; until then it keeps the level
+  it had. `receivers = false` keeps macOS's list alone.
 
 A device seen in both (paired over Bluetooth, on its receiver now) shows once.
 
