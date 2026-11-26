@@ -584,6 +584,15 @@ prima `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
   Col cavo si chiede sempre. Dopo un riavvio della barra con la tastiera che dorme compare
   entro 5 minuti dal primo tasto (`AGAIN` non vale per chi non ha mai risposto). Sulla barra
   vera dal 26/11/2026, 10:49. Da provare con l'utente: che non si accenda più da sola.
+  Poi per ogni ricevitore (chiesto dall'utente lo stesso giorno), al posto di quello solo di
+  Lofree: `awake` in `pass` (Razer, Logitech, ROG, Lofree; non Valve, che ascolta soltanto)
+  rende ciò che il produttore ha risposto l'ultima volta (`ASKED`) se le interfacce sono le
+  stesse e `ask` dice di no: si chiede se uno dei suoi dispositivi è stato usato da meno di
+  `AWAKE` (60 s; tasto per una tastiera, movimento, clic o scroll per un mouse, qualunque cosa
+  per gli altri o per un ricevitore senza niente), è in carica o sul cavo, o aspetta il
+  permesso. Un mouse e una tastiera sullo stesso ricevitore si chiedono insieme. Sulla barra
+  vera dal 26/11/2026, 10:55 (`HYZEN67 61%` alla prima lettura). Gli altri ricevitori non
+  provati: l'utente non ne ha collegati.
 - Senza notch il gruppo `center` non è più fisso a metà (l'utente vedeva pill compatte e la `⋯`
   a destra con ~190 pt liberi a sinistra, sul monitor da 1920 pt): i lati si dividono lo spazio
   che lascia (`Room::Shared`, una corsia sola come senza gruppo centrale; prima `Split`, metà

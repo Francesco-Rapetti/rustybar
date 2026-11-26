@@ -124,12 +124,79 @@ impl Found {
 pub fn pass() -> (Vec<Found>, bool) {
     let colls = discover();
     let mut found = Vec::new();
-    razer(&colls, &mut found);
-    logitech(&colls, &mut found);
-    asus(&colls, &mut found);
+    awake(0x1532, &colls, &mut found, razer);
+    awake(0x046D, &colls, &mut found, logitech);
+    awake(0x0B05, &colls, &mut found, asus);
+    // A Steam Controller is only listened to
     valve(&colls, &mut found);
-    lofree(&colls, &mut found);
+    awake(0x388D, &colls, &mut found, lofree);
     (merge(found), !colls.is_empty())
+}
+
+/// A device behind a receiver is asked only this long after it was used: a receiver passes the
+/// question on by radio, and a keyboard that sleeps wakes for it, lights and all, with nobody at
+/// it (seen with a Lofree's dongle). One that sleeps has the level it had.
+const AWAKE: f64 = 60.0;
+
+/// What a maker's interfaces answered when they were last asked.
+struct Asked {
+    vid: u16,
+    /// The interfaces there were, as (location, product id): others, and they're asked again.
+    interfaces: Vec<(i64, u16)>,
+    found: Vec<Found>,
+}
+
+static ASKED: Mutex<Vec<Asked>> = Mutex::new(Vec::new());
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGEventSourceSecondsSinceLastEventType(state: i32, kind: u32) -> f64;
+}
+
+/// Seconds since a device of that kind was last used: a key down for a keyboard, a move, a
+/// click or a scroll for a mouse, anything for the others. Of any device of the kind (macOS
+/// doesn't say which), and with no permission.
+fn since(kind: Kind) -> f64 {
+    // kCGEventSourceStateHIDSystemState
+    let last = |event: u32| unsafe { CGEventSourceSecondsSinceLastEventType(1, event) };
+    match kind {
+        // kCGEventKeyDown
+        Kind::Keyboard => last(10),
+        // Left down, moved, left dragged, scroll wheel
+        Kind::Mouse => [1, 5, 6, 22].into_iter().map(last).fold(f64::INFINITY, f64::min),
+        // kCGAnyInputEventType
+        Kind::Controller | Kind::Other => last(u32::MAX),
+    }
+}
+
+/// Whether to ask again the devices that answered `found` the last time: one of them was just
+/// used, or is on a cable (it doesn't sleep, and its level goes up), or waits for a permission;
+/// with none, anything used.
+pub(super) fn ask(found: &[Found], since: impl Fn(Kind) -> f64) -> bool {
+    if found.is_empty() {
+        return since(Kind::Other) <= AWAKE;
+    }
+    found.iter().any(|f| f.locked || f.charging || f.link == Link::Cable || since(f.kind) <= AWAKE)
+}
+
+/// One maker's read, or what it found the last time when its interfaces are the same and
+/// nothing behind them was used since (`ask`).
+fn awake(vid: u16, colls: &[Collection], found: &mut Vec<Found>, read: fn(&[Collection], &mut Vec<Found>)) {
+    let mut interfaces: Vec<(i64, u16)> = colls.iter().filter(|c| c.vid == vid).map(|c| (c.location, c.pid)).collect();
+    interfaces.sort_unstable();
+    let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
+    let at = asked.iter().position(|a| a.vid == vid);
+    if let Some(a) = at.map(|i| &asked[i]).filter(|a| a.interfaces == interfaces && !ask(&a.found, since)) {
+        found.extend(a.found.iter().cloned());
+        return;
+    }
+    let from = found.len();
+    read(colls, found);
+    let now = Asked { vid, interfaces, found: found[from..].to_vec() };
+    match at {
+        Some(i) => asked[i] = now,
+        None => asked.push(now),
+    }
 }
 
 /// One device per key: the one that's connected, charging first (the cable of a device that has a
@@ -1022,29 +1089,6 @@ fn lofree_ask(port: &Port, bytes: usize, cmd: u8) -> Option<(u8, u8)> {
     answer
 }
 
-/// A keyboard behind its dongle is asked only this long after a key (of any keyboard): the
-/// dongle passes the question on by radio, and a keyboard that sleeps would wake for it, lights
-/// and all, with nobody at it. One that sleeps has the level it had.
-const LOFREE_AWAKE: f64 = 60.0;
-
-/// What each keyboard behind a dongle answered last, level and charging; `None` for one that
-/// was asked and didn't answer, which isn't asked again either until a key.
-static LOFREE_LAST: Mutex<Vec<(String, Heard)>> = Mutex::new(Vec::new());
-
-/// Level and charging, or nothing from one that didn't answer.
-type Heard = Option<(u8, bool)>;
-
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    fn CGEventSourceSecondsSinceLastEventType(state: i32, kind: u32) -> f64;
-}
-
-/// Seconds since the last key went down, on any keyboard (no permission needed).
-fn since_key() -> f64 {
-    // kCGEventSourceStateHIDSystemState, kCGEventKeyDown
-    unsafe { CGEventSourceSecondsSinceLastEventType(1, 10) }
-}
-
 fn lofree(colls: &[Collection], found: &mut Vec<Found>) {
     for c in colls.iter().filter(|c| c.vid == 0x388D && c.has(0xFF1C, 0x92)) {
         let Some(out) = c.outputs.iter().find(|o| o.id == LOFREE_REPORT && o.bytes >= 16) else { continue };
@@ -1055,19 +1099,6 @@ fn lofree(colls: &[Collection], found: &mut Vec<Found>) {
         let link = if c.pid == 0x25 || c.receiver() { Link::Receiver } else { Link::Cable };
         let mut f = Found::new(format!("lofree:{}", name.to_lowercase()), name, Kind::Keyboard, Maker::Lofree, link);
         let cable = link == Link::Cable;
-        let mut last = LOFREE_LAST.lock().unwrap_or_else(|e| e.into_inner());
-        let known = last.iter().position(|(key, _)| *key == f.key);
-        if let Some(i) = known.filter(|_| !cable && since_key() > LOFREE_AWAKE) {
-            if let Some((level, charging)) = last[i].1 {
-                f.level = Some(level);
-                f.charging = charging;
-            }
-            found.push(f);
-            continue;
-        }
-        if let Some(i) = known {
-            last.remove(i);
-        }
         match Port::open_keys(c, LOFREE_REPORT) {
             Some(port) => {
                 // A dongle alone answers 0 to "is it there?"; so does the keyboard on its cable,
@@ -1077,9 +1108,6 @@ fn lofree(colls: &[Collection], found: &mut Vec<Found>) {
                 {
                     f.level = Some(level);
                     f.charging = cable || charging == 1;
-                }
-                if !cable {
-                    last.push((f.key.clone(), f.level.map(|l| (l, f.charging))));
                 }
             }
             None => f.locked = c.keyboard() && !listening(),
@@ -1091,6 +1119,32 @@ fn lofree(colls: &[Collection], found: &mut Vec<Found>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asleep_is_left_alone() {
+        let found = |kind, link| Found::new("k".into(), "n".into(), kind, Maker::Other, link);
+        let keys_only = |kind| if kind == Kind::Keyboard { 5.0 } else { 900.0 };
+        let mouse_only = |kind| if kind == Kind::Keyboard { 900.0 } else { 5.0 };
+        // A keyboard behind its receiver: only after a key, whatever the mouse does
+        let keyboard = [found(Kind::Keyboard, Link::Receiver)];
+        assert!(ask(&keyboard, keys_only));
+        assert!(!ask(&keyboard, mouse_only));
+        // With a mouse on the same receiver, either
+        let both = [found(Kind::Keyboard, Link::Receiver), found(Kind::Mouse, Link::Receiver)];
+        assert!(ask(&both, mouse_only));
+        assert!(!ask(&both, |_| 900.0));
+        // On a cable, charging, or waiting for the permission: always
+        assert!(ask(&[found(Kind::Keyboard, Link::Cable)], |_| 900.0));
+        let mut f = found(Kind::Mouse, Link::Unknown);
+        f.charging = true;
+        assert!(ask(&[f], |_| 900.0));
+        let mut f = found(Kind::Keyboard, Link::Receiver);
+        f.locked = true;
+        assert!(ask(&[f], |_| 900.0));
+        // A receiver with nothing behind it: when anything is used
+        assert!(ask(&[], |_| 5.0));
+        assert!(!ask(&[], |_| 900.0));
+    }
 
     #[test]
     fn lofree_answers() {
